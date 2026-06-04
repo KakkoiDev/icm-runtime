@@ -21,6 +21,23 @@ ok()  { echo -e "${GREEN}[ok]${NC} $1"; }
 err() { echo -e "${RED}[err]${NC} $1"; }
 info() { echo -e "     $1"; }
 
+# Gitignore a created symlink in its repo-root .gitignore (repo-relative path), so
+# machine-specific links are not committed. No-op outside a git repo or if tracked.
+ensure_ignored() {
+    local link="$1" base dir top real_link rel gi
+    base=$(basename "$link")
+    dir=$(cd -P "$(dirname "$link")" && pwd -P)
+    top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || return 0
+    real_link="$dir/$base"
+    git -C "$dir" ls-files --error-unmatch "$real_link" >/dev/null 2>&1 && return 0
+    rel="${real_link#"$top"/}"
+    gi="$top/.gitignore"
+    if ! grep -qxF "$rel" "$gi" 2>/dev/null; then
+        printf '%s\n' "$rel" >> "$gi"
+        info "ignored: $rel"
+    fi
+}
+
 install_symlink() {
     for skill_dir in "$SOURCE_DIR"/*/; do
         [ -d "$skill_dir" ] || continue
@@ -31,17 +48,18 @@ install_symlink() {
             current=$(readlink "$target")
             if [ "$current" = "$skill_dir" ]; then
                 ok "$skill_name (already linked)"
-                continue
+            else
+                err "$skill_name symlink exists but points elsewhere: $current"
+                exit 1
             fi
-            err "$skill_name symlink exists but points elsewhere: $current"
-            exit 1
         elif [ -d "$target" ]; then
             err "$skill_name is a directory (not a symlink). Remove manually first."
             exit 1
+        else
+            ln -s "$skill_dir" "$target"
+            ok "$skill_name -> $skill_dir"
         fi
-
-        ln -s "$skill_dir" "$target"
-        ok "$skill_name $(basename "$skill_dir") -> $skill_dir"
+        ensure_ignored "$target"
     done
     info "Symlink mode: edit files in ~/Code/icm-runtime/, changes propagate immediately."
 }
@@ -58,17 +76,18 @@ install_claude_symlink() {
         if [ -L "$target" ]; then
             if [ "$(readlink "$target")" = "$skill_dir" ]; then
                 ok "claude: $skill_name (already linked)"
-                continue
+            else
+                err "claude: $skill_name symlink exists but points elsewhere: $(readlink "$target")"
+                exit 1
             fi
-            err "claude: $skill_name symlink exists but points elsewhere: $(readlink "$target")"
-            exit 1
         elif [ -e "$target" ]; then
             err "claude: $skill_name exists and is not our symlink. Remove manually first."
             exit 1
+        else
+            ln -s "$skill_dir" "$target"
+            ok "claude: $skill_name -> $skill_dir"
         fi
-
-        ln -s "$skill_dir" "$target"
-        ok "claude: $skill_name -> $skill_dir"
+        ensure_ignored "$target"
     done < <(find "$SOURCE_DIR" -name SKILL.md)
 }
 
