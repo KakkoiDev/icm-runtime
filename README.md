@@ -31,8 +31,10 @@ cd ~/Code/icm-runtime
 ./installer.sh
 ```
 
-The installer symlinks skill directories into `~/.agents/skills/`. If your coding
-agent doesn't follow symlinks during skill discovery, use `--copy` instead:
+The installer symlinks skill directories into `~/.agents/skills/` (PI, Codex - namespaced,
+discovered recursively) and into `~/.claude/skills/` (Claude Code - flattened, since Claude Code
+discovers skills only one level deep). If your coding agent doesn't follow symlinks during skill
+discovery, use `--copy` instead:
 
 ```bash
 ./installer.sh --copy
