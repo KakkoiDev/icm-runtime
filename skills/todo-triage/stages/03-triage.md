@@ -20,6 +20,8 @@ Score every item and produce the opinionated planning doc.
      - Low Narr + High crit -> DELEGATE+REVIEW (supervise; it can sink an OKR)
      - Low Narr + Med crit -> DELEGATE-MID (domain) or DELEGATE-JR (isolated)
      - Low Narr + Low crit -> DELEGATE-JR / TIMEBOX / DROP
+   - **Status `:x:` (cancelled)** -> Verdict DROP, no scoring needed (already killed); keep the row for the count reconciliation.
+   - **Important (`:sparkles:` flag from ingest)** -> the user explicitly flagged it; bump Narr one level (floor M). Importance is the user's own signal that the item leaves a trace.
 2. Build the **strategic triage** (the value-add, put it ABOVE the tables):
    - The arithmetic: total effort vs one person's capacity across all OKRs -> delegation is forced, not optional.
    - Hidden clocks: criteria like "each tool >=50% team >=1 month" are deadlines in disguise; flag every metric that needs calendar time.
@@ -38,5 +40,5 @@ Score every item and produce the opinionated planning doc.
 ## Outputs
 | Artifact | Location | Format |
 |----------|----------|--------|
-| Triage rows | output/rows.md | One row per item in the Task Triage DB vocabulary: Task, OKR (① Accounting delivery / ② AI tools / ③ PO SLO / ④ Docs / Operational), Status (done/next/paused/todo), Time (XS/S/M/L/XL), Difficulty (Jr/Mid/Sr), Narrative (H/M/L), OKR-crit (H/M/L), Verdict, Created, Deadline, Link, Notes. Ranges (M-L, Mid/Sr) -> lower bound in the field, full range in Notes. |
+| Triage rows | output/rows.md | One row per item in the Task Triage DB vocabulary: Task, OKR (① Accounting delivery / ② AI tools / ③ PO SLO / ④ Docs / Operational), Status (done/next/paused/todo/cancelled), Time (XS/S/M/L/XL), Difficulty (Jr/Mid/Sr), Narrative (H/M/L), OKR-crit (H/M/L), Verdict, Created, Deadline, Link, Notes. Ranges (M-L, Mid/Sr) -> lower bound in the field, full range in Notes. |
 | Narrative | output/narrative.md | Prose that does NOT fit DB rows: legend, strategic triage (arithmetic, hidden clocks, decision blockers), verdict buckets, suggested sequence, risk notes |

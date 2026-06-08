@@ -15,11 +15,11 @@ Pull the latest todo snapshot from the user's Slack self-DM and normalize it.
    - If no message matches, report that plainly and stop - do not fall back to a digest or an arbitrary message.
    - Channel fallback: if `D07HBM0CDLG` ever fails, find the self-DM via `slack_search_users` (email `cyril.antoni@meetsmore.com`) and read that user_id as a DM.
 3. Parse every line item. Capture: group (OKR①/②/③/④, Operational, or blockers), title, status marker, link(s), any inline `[YYYY-MM-DD ... JST]` timestamp, and indentation (sub-items like the Nako report-back children ④⑤①③⑥ belong to their parent).
-4. Map status markers: `:white_check_mark:`=done, `:white_square:`=todo, `:arrow_forward:`=next, `:double_vertical_bar:`=paused.
+4. Map status markers (a line's status is its FIRST status emoji): `:white_check_mark:`=done, `:white_square:`=todo, `:arrow_forward:`=next, `:double_vertical_bar:`=paused, `:x:`=cancelled. `:sparkles:` is an IMPORTANCE flag, not a status - it can sit anywhere on the line (leading in the old format, trailing in the new `<status> <task> :sparkles:`); record the item as important and strip it from the title. A line whose only emoji is `:sparkles:` = todo + important.
 5. Normalize Slack links `<url|text>` to `[text](url)`. Mark items that have no link.
 6. Flag duplicates (same URL listed twice) and umbrella/child relationships (a bundle ticket + its broken-out children).
 
 ## Outputs
 | Artifact | Location | Format |
 |----------|----------|--------|
-| Normalized todos | output/todos.md | Markdown grouped checklist; one row per distinct item: status, title, link, group, notes (dup / child-of / no-link / OKR weight) |
+| Normalized todos | output/todos.md | Markdown grouped checklist; one row per distinct item: status, title, link, group, important (:sparkles:), notes (dup / child-of / no-link / OKR weight) |
