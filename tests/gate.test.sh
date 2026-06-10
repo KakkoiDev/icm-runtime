@@ -20,6 +20,7 @@ mkdir -p "$TMP/skills/icm/runtime"
 # cp preserves the exec bit: a non-executable script in the repo fails here
 cp "$REPO_DIR/skills/icm/runtime/icm.sh" "$TMP/skills/icm/runtime/icm.sh"
 cp "$REPO_DIR/skills/icm/runtime/gate-hook.sh" "$TMP/skills/icm/runtime/gate-hook.sh"
+cp "$REPO_DIR/skills/icm/runtime/icm-gate.ts" "$TMP/skills/icm/runtime/icm-gate.ts"
 ICM="$TMP/skills/icm/runtime/icm.sh"
 HOOK="$TMP/skills/icm/runtime/gate-hook.sh"
 
@@ -223,7 +224,7 @@ cp "$WS2_DIR/checks/check.sh" "$run_c/checks/check.sh"
 
 # ---- case 12: gate-status registration reporting ----
 mkdir -p "$TMP/fakehome2"
-out=$(HOME="$TMP/fakehome2" "$ICM" gate-status 2>&1); rc=$?
+out=$(HOME="$TMP/fakehome2" CLAUDECODE='' "$ICM" gate-status 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "NOT REGISTERED" \
     && printf '%s' "$out" | grep -q "RESULT: FAIL"; then
     t_ok "12 gate-status: gates + no hook -> exit 1 NOT REGISTERED"
@@ -233,13 +234,31 @@ fi
 mkdir -p "$PROJECT/.claude"
 printf '{"hooks":{"PreToolUse":[{"matcher":"mcp__.*","hooks":[{"type":"command","command":"%s"}]}]}}\n' \
     "$TMP/skills/icm/runtime/gate-hook.sh" > "$PROJECT/.claude/settings.local.json"
-out=$(HOME="$TMP/fakehome2" "$ICM" gate-status 2>&1); rc=$?
+out=$(HOME="$TMP/fakehome2" CLAUDECODE='' "$ICM" gate-status 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "REGISTERED      .claude/settings.local.json"; then
     t_ok "12b gate-status: project-local registration -> exit 0"
 else
     t_fail "12b gate-status: project-local registration -> exit 0" "rc=$rc out=$out"
 fi
 rm -rf "$PROJECT/.claude"
+
+# ---- case 12c: pi-only registration satisfies the any-scope rule ----
+mkdir -p "$TMP/fakehome3/.pi/agent/extensions"
+cp "$TMP/skills/icm/runtime/icm-gate.ts" "$TMP/fakehome3/.pi/agent/extensions/icm-gate.ts"
+out=$(HOME="$TMP/fakehome3" CLAUDECODE='' "$ICM" gate-status 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "REGISTERED      $TMP/fakehome3/.pi/agent/extensions/icm-gate.ts"; then
+    t_ok "12c gate-status: pi extension registered -> exit 0 outside Claude Code"
+else
+    t_fail "12c gate-status: pi extension registered -> exit 0 outside Claude Code" "rc=$rc out=$out"
+fi
+
+# ---- case 12d: pi-only registration fails inside Claude Code (harness-aware) ----
+out=$(HOME="$TMP/fakehome3" CLAUDECODE=1 "$ICM" gate-status 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "not registered in any Claude scope"; then
+    t_ok "12d gate-status: pi-only registration under CLAUDECODE -> exit 1"
+else
+    t_fail "12d gate-status: pi-only registration under CLAUDECODE -> exit 1" "rc=$rc out=$out"
+fi
 
 # ---- case 11: installer.sh --hooks is idempotent and preserves existing keys ----
 if command -v jq >/dev/null 2>&1; then
@@ -261,6 +280,52 @@ if command -v jq >/dev/null 2>&1; then
     fi
 else
     echo "SKIP  11 installer --hooks (jq not installed)"
+fi
+
+# ---- case 13: pi extension adapter end-to-end (needs node >= 23.6 for .ts) ----
+if command -v node >/dev/null 2>&1; then
+    EXT="$TMP/skills/icm/runtime/icm-gate.ts"
+    DRIVER="$REPO_DIR/tests/pi-driver.ts"
+    sleep 1 # avoid same-second run-dir collision with earlier inits
+    run_d=$("$ICM" init testns/gated-ws 2>/dev/null)
+    out=$(cd "$PROJECT" && node "$DRIVER" "$EXT" mcp__test__send 2>/dev/null); rc=$?
+    if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '"block":true' \
+        && printf '%s' "$out" | grep -q '02-send'; then
+        t_ok "13a pi adapter: failing gate -> block with reason"
+    else
+        t_fail "13a pi adapter: failing gate -> block with reason" "rc=$rc out=$out"
+    fi
+    printf 'RESULT: PASS\n' > "$run_d/02-send/output/evidence.md"
+    out=$(cd "$PROJECT" && node "$DRIVER" "$EXT" mcp__test__send 2>/dev/null); rc=$?
+    if [ "$rc" -eq 0 ] && [ "$out" = "null" ]; then
+        t_ok "13b pi adapter: passing gate -> allow"
+    else
+        t_fail "13b pi adapter: passing gate -> allow" "rc=$rc out=$out"
+    fi
+    out=$(cd "$TMP" && node "$DRIVER" "$EXT" mcp__test__send 2>/dev/null); rc=$?
+    if [ "$rc" -eq 0 ] && [ "$out" = "null" ]; then
+        t_ok "13c pi adapter: no .icm in cwd -> allow"
+    else
+        t_fail "13c pi adapter: no .icm in cwd -> allow" "rc=$rc out=$out"
+    fi
+else
+    echo "SKIP  13 pi adapter (node not installed)"
+fi
+
+# ---- case 14: installer --hooks registers the pi extension when ~/.pi exists ----
+if command -v jq >/dev/null 2>&1; then
+    mkdir -p "$TMP/fakehome/.pi"
+    out=$(HOME="$TMP/fakehome" "$REPO_DIR/installer.sh" --hooks 2>&1); rc=$?
+    out2=$(HOME="$TMP/fakehome" "$REPO_DIR/installer.sh" --hooks 2>&1); rc2=$?
+    link="$TMP/fakehome/.pi/agent/extensions/icm-gate.ts"
+    if [ "$rc" -eq 0 ] && [ "$rc2" -eq 0 ] && [ -L "$link" ] \
+        && [ "$(readlink "$link")" = "$TMP/fakehome/.agents/skills/icm/runtime/icm-gate.ts" ]; then
+        t_ok "14 installer --hooks: pi extension symlink, idempotent"
+    else
+        t_fail "14 installer --hooks: pi extension symlink, idempotent" "rc=$rc rc2=$rc2 out=$out out2=$out2"
+    fi
+else
+    echo "SKIP  14 installer pi extension (jq not installed)"
 fi
 
 echo ""

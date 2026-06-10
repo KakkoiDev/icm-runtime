@@ -6,7 +6,7 @@
 #   ./installer.sh            Symlink skills (default, single source of truth)
 #   ./installer.sh --copy     Copy skills (safer if agent doesn't follow symlinks)
 #   ./installer.sh --remove   Remove installed skills
-#   ./installer.sh --hooks    Register the ICM gate-hook in ~/.claude/settings.json
+#   ./installer.sh --hooks    Register gate enforcement (Claude Code hook + pi extension)
 
 set -eu
 
@@ -167,9 +167,42 @@ remove() {
     done < <(find "$SOURCE_DIR" -name SKILL.md)
 }
 
-# Register the ICM gate-hook as a Claude Code PreToolUse hook in user settings.
-# Idempotent: detects an existing gate-hook entry and leaves the file alone.
-# The absolute path is written at install time so expansion quirks cannot break it.
+# Register ICM gate enforcement in every supported harness on this machine:
+# Claude Code (PreToolUse hook in ~/.claude/settings.json) and pi (tool_call
+# extension symlinked into ~/.pi/agent/extensions/). Idempotent. The absolute
+# path is written at install time so expansion quirks cannot break it.
+install_pi_extension() {
+    local ext_src="$SKILLS_DIR/icm/runtime/icm-gate.ts"
+    local ext_dir="$HOME/.pi/agent/extensions"
+    local target="$ext_dir/icm-gate.ts"
+
+    if [ ! -d "$HOME/.pi" ]; then
+        info "pi: ~/.pi not found, skipping pi extension"
+        return 0
+    fi
+    if [ ! -e "$ext_src" ]; then
+        err "pi: icm-gate.ts not installed at $ext_src. Run ./installer.sh first."
+        exit 1
+    fi
+
+    mkdir -p "$ext_dir"
+    if [ -L "$target" ]; then
+        if [ "$(readlink "$target")" = "$ext_src" ]; then
+            ok "pi: icm-gate.ts already registered"
+        else
+            err "pi: $target exists but points elsewhere: $(readlink "$target")"
+            exit 1
+        fi
+    elif [ -e "$target" ]; then
+        err "pi: $target exists and is not our symlink. Remove manually first."
+        exit 1
+    else
+        ln -s "$ext_src" "$target"
+        ok "pi: registered icm-gate.ts -> $ext_src"
+        info "pi: takes effect on next pi start (or /reload)"
+    fi
+}
+
 install_hooks() {
     if ! command -v jq >/dev/null 2>&1; then
         err "--hooks requires jq (brew install jq / apt install jq)"
@@ -191,7 +224,8 @@ install_hooks() {
     fi
 
     if jq -e '[.hooks.PreToolUse[]?.hooks[]?.command // empty] | any(contains("gate-hook.sh"))' "$settings" >/dev/null; then
-        ok "gate-hook already registered in $settings"
+        ok "claude: gate-hook already registered in $settings"
+        install_pi_extension
         return 0
     fi
 
@@ -203,9 +237,10 @@ install_hooks() {
         '.hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{"matcher": "mcp__.*", "hooks": [{"type": "command", "command": $cmd, "timeout": 15}]}])' \
         "$settings" > "$tmp"
     mv "$tmp" "$settings"
-    ok "registered gate-hook in $settings"
+    ok "claude: registered gate-hook in $settings"
     info "matcher: mcp__.* -> $hook_cmd"
     info "backup: $backup"
+    install_pi_extension
 }
 
 mkdir -p "$SKILLS_DIR"

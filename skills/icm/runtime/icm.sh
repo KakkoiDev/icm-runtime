@@ -517,21 +517,39 @@ cmd_gate_status() {
     fi
 
     echo ""
-    echo "== Hook registration (gate-hook.sh) =="
+    echo "== Enforcement registration =="
     gs_registered=0
+    gs_claude_reg=0
     for gs_settings in "${HOME:-}/.claude/settings.json" ".claude/settings.json" ".claude/settings.local.json"; do
         if [ -f "$gs_settings" ] && grep -q 'gate-hook\.sh' "$gs_settings" 2>/dev/null; then
             echo "REGISTERED      $gs_settings"
             gs_registered=1
+            gs_claude_reg=1
         else
             echo "NOT REGISTERED  $gs_settings"
         fi
     done
+    for gs_ext in "${HOME:-}/.pi/agent/extensions/icm-gate.ts" ".pi/extensions/icm-gate.ts"; do
+        if [ -e "$gs_ext" ]; then
+            echo "REGISTERED      $gs_ext"
+            gs_registered=1
+        else
+            echo "NOT REGISTERED  $gs_ext"
+        fi
+    done
 
-    if [ -n "$gs_gates" ] && [ "$gs_registered" -eq 0 ]; then
-        echo ""
-        echo "RESULT: FAIL - active runs declare gates but the hook is not registered in any scope"
-        exit 1
+    if [ -n "$gs_gates" ]; then
+        if [ "$gs_registered" -eq 0 ]; then
+            echo ""
+            echo "RESULT: FAIL - active runs declare gates but enforcement is not registered in any scope"
+            exit 1
+        fi
+        # Registration in another harness is not enforcement in this one.
+        if [ -n "${CLAUDECODE:-}" ] && [ "$gs_claude_reg" -eq 0 ]; then
+            echo ""
+            echo "RESULT: FAIL - running in Claude Code but gate-hook.sh is not registered in any Claude scope"
+            exit 1
+        fi
     fi
     exit 0
 }
