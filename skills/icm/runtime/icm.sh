@@ -11,7 +11,11 @@
 #   icm.sh gate-status [--cwd DIR]           List declared gates and hook registration per scope
 
 set -eu
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
+# Logical (not -P) resolution on purpose: when invoked via the installed symlink
+# (~/.agents/skills/icm/runtime/icm.sh), SKILLS_DIR must be ~/.agents/skills - where
+# EVERY installed skill lives - not this repo's skills/, which only holds its own.
+# Physical resolution broke init/stages for all externally-installed workspaces.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 SKILLS_DIR=$(cd "$SCRIPT_DIR/../.." && pwd)
 
 usage() {
@@ -38,8 +42,10 @@ find_workspace() {
             fi
             ;;
         *)
-            # Bare name: recursive find (backward compatible)
-            found=$(find "$SKILLS_DIR" -maxdepth 4 -type d -name "$ws" 2>/dev/null | head -1)
+            # Bare name: recursive find (backward compatible). -L because installed
+            # skills are SYMLINKS into their source repos (installer.sh default mode);
+            # without it, find -type d skips every symlinked workspace.
+            found=$(find -L "$SKILLS_DIR" -maxdepth 4 -type d -name "$ws" 2>/dev/null | head -1)
             if [ -z "$found" ]; then
                 echo "Error: workspace '$ws' not found under $SKILLS_DIR" >&2
                 echo "Tip: use namespace/name if the skill is nested, e.g. company/fix-payments" >&2

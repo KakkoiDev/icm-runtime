@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 - 2026-06-10
+
+- Fix: workspace resolution was broken for every externally-installed skill.
+  `SCRIPT_DIR` resolved physically (`pwd -P`), so invocation via the installed
+  `~/.agents/skills/icm/runtime/icm.sh` symlink pointed `SKILLS_DIR` at this repo's
+  `skills/` instead of `~/.agents/skills`; and the bare-name lookup used `find` without
+  `-L`, which skips symlinked workspaces entirely. `init`/`stages` failed for any skill
+  living in another repo (e.g. the performance-review workspaces) since their migration.
+  Now: logical `SCRIPT_DIR` + `find -L`. Verified: symlinked and direct invocation both
+  resolve; full gate deny/allow chain re-proven; `sh tests/gate.test.sh` 26/26.
+
 ## 0.2.0 - 2026-06-10
 
 - Harness-enforced stage gates: `<!-- ICM-GATE tools="..." run="..." -->` lines in stage
