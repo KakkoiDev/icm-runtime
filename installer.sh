@@ -6,6 +6,7 @@
 #   ./installer.sh            Symlink skills (default, single source of truth)
 #   ./installer.sh --copy     Copy skills (safer if agent doesn't follow symlinks)
 #   ./installer.sh --remove   Remove installed skills
+#   ./installer.sh --hooks    Register the ICM gate-hook in ~/.claude/settings.json
 
 set -eu
 
@@ -166,6 +167,47 @@ remove() {
     done < <(find "$SOURCE_DIR" -name SKILL.md)
 }
 
+# Register the ICM gate-hook as a Claude Code PreToolUse hook in user settings.
+# Idempotent: detects an existing gate-hook entry and leaves the file alone.
+# The absolute path is written at install time so expansion quirks cannot break it.
+install_hooks() {
+    if ! command -v jq >/dev/null 2>&1; then
+        err "--hooks requires jq (brew install jq / apt install jq)"
+        exit 1
+    fi
+
+    local hook_cmd="$SKILLS_DIR/icm/runtime/gate-hook.sh"
+    local settings="$HOME/.claude/settings.json"
+
+    if [ ! -e "$hook_cmd" ]; then
+        err "gate-hook.sh not installed at $hook_cmd. Run ./installer.sh first."
+        exit 1
+    fi
+
+    mkdir -p "$HOME/.claude"
+    if [ ! -f "$settings" ]; then
+        echo '{}' > "$settings"
+        info "created $settings"
+    fi
+
+    if jq -e '[.hooks.PreToolUse[]?.hooks[]?.command // empty] | any(contains("gate-hook.sh"))' "$settings" >/dev/null; then
+        ok "gate-hook already registered in $settings"
+        return 0
+    fi
+
+    local backup="$settings.bak-$$"
+    cp "$settings" "$backup"
+    local tmp
+    tmp=$(mktemp)
+    jq --arg cmd "$hook_cmd" \
+        '.hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{"matcher": "mcp__.*", "hooks": [{"type": "command", "command": $cmd, "timeout": 15}]}])' \
+        "$settings" > "$tmp"
+    mv "$tmp" "$settings"
+    ok "registered gate-hook in $settings"
+    info "matcher: mcp__.* -> $hook_cmd"
+    info "backup: $backup"
+}
+
 mkdir -p "$SKILLS_DIR"
 mkdir -p "$CLAUDE_SKILLS_DIR"
 
@@ -173,9 +215,10 @@ case "${1:-install}" in
     --symlink|-s) install_symlink; install_claude_symlink ;;
     --copy|-c)    install_copy; install_claude_copy ;;
     --remove|-r)  remove ;;
+    --hooks)      install_hooks ;;
     install)      install_symlink; install_claude_symlink ;;  # default
     *)
-        echo "Usage: $0 [--symlink|--copy|--remove]" >&2
+        echo "Usage: $0 [--symlink|--copy|--remove|--hooks]" >&2
         echo "  Default (no flag): symlink" >&2
         exit 1
         ;;

@@ -241,6 +241,28 @@ else
 fi
 rm -rf "$PROJECT/.claude"
 
+# ---- case 11: installer.sh --hooks is idempotent and preserves existing keys ----
+if command -v jq >/dev/null 2>&1; then
+    FAKEHOME="$TMP/fakehome"
+    mkdir -p "$FAKEHOME/.agents/skills" "$FAKEHOME/.claude"
+    ln -s "$TMP/skills/icm" "$FAKEHOME/.agents/skills/icm"
+    printf '{"model":"x"}\n' > "$FAKEHOME/.claude/settings.json"
+    out=$(HOME="$FAKEHOME" "$REPO_DIR/installer.sh" --hooks 2>&1); rc=$?
+    out2=$(HOME="$FAKEHOME" "$REPO_DIR/installer.sh" --hooks 2>&1); rc2=$?
+    settings="$FAKEHOME/.claude/settings.json"
+    count=$(grep -c 'gate-hook.sh' "$settings")
+    model=$(jq -r '.model' "$settings")
+    matcher=$(jq -r '.hooks.PreToolUse[0].matcher' "$settings")
+    if [ "$rc" -eq 0 ] && [ "$rc2" -eq 0 ] && [ "$count" -eq 1 ] \
+        && [ "$model" = "x" ] && [ "$matcher" = "mcp__.*" ]; then
+        t_ok "11 installer --hooks: idempotent, preserves keys"
+    else
+        t_fail "11 installer --hooks: idempotent, preserves keys" "rc=$rc rc2=$rc2 count=$count model=$model matcher=$matcher out=$out out2=$out2"
+    fi
+else
+    echo "SKIP  11 installer --hooks (jq not installed)"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
