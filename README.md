@@ -74,6 +74,66 @@ Uninstall: `./installer.sh --remove`
 5. Output of one stage becomes input to the next
 6. Human can edit any intermediate output — the next stage picks up changes
 
+## Stage gates (harness-enforced)
+
+Stage contracts are prose, and prose does not bind: an agent can skip a verification step
+it knows about. Gates make a stage's verification mechanical. A stage declares one line:
+
+```
+<!-- ICM-GATE tools="mcp__claude_ai_Slack__slack_send_message(_draft)?" run="checks/preservation.sh" -->
+```
+
+- `tools` is an ERE matched (unanchored) against the tool name the harness reports.
+- `run` is a checker command executed with cwd = the run's stage dir. Exit 0 = gate passes.
+  If its first token is a file frozen at the run root (e.g. `checks/preservation.sh`), it is
+  resolved there. The degenerate form needs no script:
+  `run="grep -Eq '^RESULT: PASS$' output/preservation.md"`.
+
+`icm.sh init` freezes the gate with the contract (plus the skill's `checks/` dir) into the
+run and writes a sha256 `.manifest`. `icm.sh gate-check --tool <name>` evaluates the latest
+run per workspace and exits 1 with `DENY` lines when a matching gate fails. Every manifest
+entry is verified first, so editing the frozen contract, deleting the gate line, or touching
+a frozen checker all deny as tampered.
+
+Enforcement is a Claude Code PreToolUse hook (`gate-hook.sh`): the harness consults it on
+every `mcp__*` tool call, outside the model's control. Register it:
+
+```bash
+./installer.sh --hooks    # user scope: merges into ~/.claude/settings.json
+```
+
+or commit this to a workspace repo's `.claude/settings.json` so enforcement travels with
+`git clone`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.agents/skills/icm/runtime/gate-hook.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Threat model: this defends against a negligent agent (skips a check, sends before
+verifying), not a malicious one. The agent can still delete the run dir or fabricate
+checker inputs; workspaces that commit `.icm/` make that loud in git history. Enforcement
+exists only where the hook is registered, and only in Claude Code: other agents (pi, Codex)
+do not read Claude Code hooks, so gates there are advisory. `icm.sh gate-status` makes
+absence loud (exit 1 when active runs declare gates but no scope registers the hook);
+publish-stage contracts should run it before sending.
+
+Pre-release check (no CI yet): `sh tests/gate.test.sh` must pass.
+
 ## Building your own workspace
 
 See `skills/jake-van-clief/ai-folder-research/` as a template. Copy the structure,

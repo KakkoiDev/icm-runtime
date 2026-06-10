@@ -51,6 +51,48 @@ Prints stage names in order.
 Removes old completed runs, keeping the N most recent (default: 5).
 **Never removes incomplete runs** — work in progress is always preserved.
 
+### gate-check --tool tool-name [--cwd dir]
+Evaluates frozen ICM-GATE lines in the latest run of every workspace under cwd's `.icm/`.
+Exit 0 (silent): no gate matches the tool, or all matching gates pass. Exit 1 with `DENY`
+lines on stdout: a matching gate's checker failed, the run's `.manifest` does not verify
+(tampered frozen contract or checker), or a gate line is malformed. Called by the
+PreToolUse hook (`gate-hook.sh`) on every `mcp__*` tool call; also callable directly.
+
+### gate-status [--cwd dir]
+Lists gates declared by installed skills and by active runs in cwd, evaluates the active
+ones, and reports hook registration per settings scope (`~/.claude/settings.json`, project
+`.claude/settings.json`, project `.claude/settings.local.json`). Exit 1 iff active runs
+declare gates but no scope registers the hook. Publish-stage contracts should run this
+before sending anything.
+
+## Stage gates
+
+A stage contract may declare a gate on a single line (attribute values double-quoted,
+single line, no embedded double quotes):
+
+```
+<!-- ICM-GATE tools="<ERE over tool names>" run="<checker command>" -->
+```
+
+Semantics:
+- `tools` is matched unanchored against the harness tool name (`mcp__<server>__<tool>`).
+  Anchor with `^...$` for exact matching.
+- `run` executes with cwd = the run's stage dir. If its first token is a relative path to a
+  file frozen at the run root (the skill's `checks/` dir is copied there by `init`), the
+  token resolves against the run root. Exit 0 = pass.
+- Checkers must be deterministic, read-only, and fast (well under the hook's 15s timeout).
+  They run on every matching MCP tool call.
+- `init` writes `.manifest` (sha256 of every frozen `CONTEXT.md` and `checks/` file).
+  `gate-check` verifies all entries before honoring anything; mismatch denies, so a gate
+  cannot be weakened mid-run by editing frozen files. Edit the live skill and re-init
+  instead.
+- Do not put a literal `<!-- ICM-GATE ` example inside a stage contract's prose; it will be
+  parsed as a real gate (and a malformed one denies).
+
+Enforcement requires the Claude Code PreToolUse hook (see README, `installer.sh --hooks`).
+Other agents do not read Claude Code hooks; there, gates are advisory and contracts should
+call `gate-check`/`gate-status` explicitly before publish steps.
+
 ## Workspace naming
 
 Workspace names support two forms:
