@@ -17,9 +17,16 @@ t_fail() { FAIL=$((FAIL + 1)); echo "FAIL  $1${2:+ [$2]}"; }
 
 # ---- fixture: skills tree mirroring ~/.agents/skills/ ----
 mkdir -p "$TMP/skills/icm/runtime"
+# cp preserves the exec bit: a non-executable script in the repo fails here
 cp "$REPO_DIR/skills/icm/runtime/icm.sh" "$TMP/skills/icm/runtime/icm.sh"
-chmod +x "$TMP/skills/icm/runtime/icm.sh"
+cp "$REPO_DIR/skills/icm/runtime/gate-hook.sh" "$TMP/skills/icm/runtime/gate-hook.sh"
 ICM="$TMP/skills/icm/runtime/icm.sh"
+HOOK="$TMP/skills/icm/runtime/gate-hook.sh"
+
+# $1=tool $2=cwd -> PreToolUse stdin JSON as the harness sends it
+hook_json() {
+    printf '{"session_id":"t","transcript_path":"/tmp/t.jsonl","cwd":"%s","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{}}' "$2" "$1"
+}
 
 WS_DIR="$TMP/skills/testns/gated-ws"
 mkdir -p "$WS_DIR/stages"
@@ -83,6 +90,33 @@ else
     t_fail "4 non-matching tool: exit 0 silent" "rc=$rc out=$out"
 fi
 
+# ---- case 8a: hook e2e in failing state -> deny JSON, exit 0 ----
+out=$(hook_json mcp__test__send "$PROJECT" | (cd "$TMP" && "$HOOK")); rc=$?
+if [ "$rc" -eq 0 ] \
+    && printf '%s' "$out" | grep -q '"permissionDecision"' \
+    && printf '%s' "$out" | grep -q '"deny"' \
+    && printf '%s' "$out" | grep -q '02-send'; then
+    t_ok "8a hook: failing gate -> deny JSON with reason"
+else
+    t_fail "8a hook: failing gate -> deny JSON with reason" "rc=$rc out=$out"
+fi
+
+# ---- case 8c: hook with cwd lacking .icm -> silent allow ----
+out=$(hook_json mcp__test__send "$TMP" | "$HOOK"); rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+    t_ok "8c hook: no .icm in cwd -> silent exit 0"
+else
+    t_fail "8c hook: no .icm in cwd -> silent exit 0" "rc=$rc out=$out"
+fi
+
+# ---- case 8d: hook with missing fields -> deny JSON (fail closed) ----
+out=$(printf '{}' | "$HOOK"); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '"deny"'; then
+    t_ok "8d hook: missing stdin fields -> deny (fail closed)"
+else
+    t_fail "8d hook: missing stdin fields -> deny (fail closed)" "rc=$rc out=$out"
+fi
+
 # ---- case 3: evidence present -> exit 0 ----
 printf 'RESULT: PASS\n' > "$run_dir/02-send/output/evidence.md"
 out=$("$ICM" gate-check --tool mcp__test__send 2>&1); rc=$?
@@ -90,6 +124,14 @@ if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
     t_ok "3 evidence present: exit 0"
 else
     t_fail "3 evidence present: exit 0" "rc=$rc out=$out"
+fi
+
+# ---- case 8b: hook e2e in passing state -> silent allow ----
+out=$(hook_json mcp__test__send "$PROJECT" | (cd "$TMP" && "$HOOK")); rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+    t_ok "8b hook: passing gate -> silent exit 0"
+else
+    t_fail "8b hook: passing gate -> silent exit 0" "rc=$rc out=$out"
 fi
 
 # ---- case 7: fully complete run -> exit 0 (no stale blocking) ----
