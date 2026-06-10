@@ -95,11 +95,15 @@ run per workspace and exits 1 with `DENY` lines when a matching gate fails. Ever
 entry is verified first, so editing the frozen contract, deleting the gate line, or touching
 a frozen checker all deny as tampered.
 
-Enforcement is a Claude Code PreToolUse hook (`gate-hook.sh`): the harness consults it on
-every `mcp__*` tool call, outside the model's control. Register it:
+Enforcement runs in the harness, outside the model's control, with one adapter per agent:
+
+- **Claude Code:** `gate-hook.sh`, a PreToolUse hook consulted on every `mcp__*` tool call.
+- **pi:** `icm-gate.ts`, a `tool_call` extension that blocks while `gate-check` denies.
+
+Register both at once (each is skipped if its harness is absent):
 
 ```bash
-./installer.sh --hooks    # user scope: merges into ~/.claude/settings.json
+./installer.sh --hooks    # Claude Code: ~/.claude/settings.json; pi: ~/.pi/agent/extensions/
 ```
 
 or commit this to a workspace repo's `.claude/settings.json` so enforcement travels with
@@ -127,10 +131,16 @@ or commit this to a workspace repo's `.claude/settings.json` so enforcement trav
 Threat model: this defends against a negligent agent (skips a check, sends before
 verifying), not a malicious one. The agent can still delete the run dir or fabricate
 checker inputs; workspaces that commit `.icm/` make that loud in git history. Enforcement
-exists only where the hook is registered, and only in Claude Code: other agents (pi, Codex)
-do not read Claude Code hooks, so gates there are advisory. `icm.sh gate-status` makes
-absence loud (exit 1 when active runs declare gates but no scope registers the hook);
-publish-stage contracts should run it before sending.
+exists only where an adapter is registered; agents without one (Codex) see gates as
+advisory only. `icm.sh gate-status` makes absence loud: exit 1 when active runs declare
+gates but no scope registers enforcement, and (harness-aware) when running inside Claude
+Code without a Claude-scope registration, since a pi-only registration is not enforcement
+there. Publish-stage contracts should run it before sending.
+
+Tool naming caveat for cross-harness gates: a `tools` regex written against Claude Code's
+MCP naming (`mcp__claude_ai_Slack__slack_send_message`) will not match a differently named
+pi tool. Matching is unanchored, so write the tool's core name
+(`slack_send_message(_draft)?`) when a gate must bind in both harnesses.
 
 Pre-release check (no CI yet): `sh tests/gate.test.sh` must pass.
 

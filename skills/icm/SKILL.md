@@ -60,10 +60,13 @@ PreToolUse hook (`gate-hook.sh`) on every `mcp__*` tool call; also callable dire
 
 ### gate-status [--cwd dir]
 Lists gates declared by installed skills and by active runs in cwd, evaluates the active
-ones, and reports hook registration per settings scope (`~/.claude/settings.json`, project
-`.claude/settings.json`, project `.claude/settings.local.json`). Exit 1 iff active runs
-declare gates but no scope registers the hook. Publish-stage contracts should run this
-before sending anything.
+ones, and reports enforcement registration per scope: Claude Code settings
+(`~/.claude/settings.json`, project `.claude/settings.json`, project
+`.claude/settings.local.json`) and pi extension paths (`~/.pi/agent/extensions/icm-gate.ts`,
+project `.pi/extensions/icm-gate.ts`). Exit 1 iff active runs declare gates and either no
+scope registers enforcement, or the process runs inside Claude Code (`CLAUDECODE` set)
+without a Claude-scope registration. Publish-stage contracts should run this before
+sending anything.
 
 ## Stage gates
 
@@ -89,9 +92,10 @@ Semantics:
 - Do not put a literal `<!-- ICM-GATE ` example inside a stage contract's prose; it will be
   parsed as a real gate (and a malformed one denies).
 
-Enforcement requires the Claude Code PreToolUse hook (see README, `installer.sh --hooks`).
-Other agents do not read Claude Code hooks; there, gates are advisory and contracts should
-call `gate-check`/`gate-status` explicitly before publish steps.
+Enforcement requires a harness adapter (see README, `installer.sh --hooks` registers all
+of them): `gate-hook.sh` for Claude Code (PreToolUse), `icm-gate.ts` for pi (`tool_call`
+extension). Agents without an adapter see gates as advisory; contracts should still call
+`gate-check`/`gate-status` explicitly before publish steps as defense in depth.
 
 ## Workspace naming
 

@@ -10,8 +10,13 @@
   `icm.sh gate-status [--cwd <dir>]`
 - `gate-hook.sh`: Claude Code PreToolUse hook that denies gated `mcp__*` tool calls while
   a matching gate fails (fails closed on missing jq or protocol mismatch)
-- `installer.sh --hooks`: idempotent registration of the hook in `~/.claude/settings.json`
-- Regression suite: `sh tests/gate.test.sh` (20 cases, the manual pre-release check)
+- `icm-gate.ts`: pi `tool_call` extension blocking gated tool calls via the same
+  `gate-check` core (fails closed when icm.sh is missing)
+- `installer.sh --hooks`: idempotent registration of both adapters
+  (`~/.claude/settings.json` hook entry, `~/.pi/agent/extensions/icm-gate.ts` symlink)
+- `gate-status` is harness-aware: pi-only registration fails the check when running
+  inside Claude Code (`CLAUDECODE` set)
+- Regression suite: `sh tests/gate.test.sh` (26 cases, the manual pre-release check)
 
 ## 0.1.0 — 2026-06-01
 
