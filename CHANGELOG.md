@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.0 - 2026-06-12
+
+- **ICM-TOOLS declarations:** stage contracts declare expected harness tools with
+  `<!-- ICM-TOOLS expect="..." -->` (whitespace-separated EREs, unanchored, same
+  semantics as ICM-GATE `tools=`). Frozen with the contract and manifest-covered.
+  `audit` matches each declared tool against actual `gate-check --tool` records in
+  the run window: ✓ seen, ✗ deviation. When no records exist (no enforcement
+  adapter), audit says so instead of counting false deviations. Prose scraping of
+  `tools/...` mentions remains as fallback for undeclared contracts.
+- Fix: `tool-calls.jsonl` was not valid JSONL when jq was installed -- the args
+  array was pretty-printed across multiple physical lines, breaking every line-based
+  consumer including audit's own window filter. Now compact (`jq -c`).
+- Fix: `reify-telemetry` transcript auto-detection took the first find hit; now
+  prefers the Claude Code project dir matching cwd, picks the newest candidate by
+  mtime, and warns when several sessions qualify. Empty stage windows now produce
+  `null` instead of malformed JSON (awk sum replaces paste|bc; bc no longer needed).
+- **Removed: ccusage fallback in `reify-telemetry`.** Session-level totals were
+  imprecise (whole session, not the run) and needed bun. Transcript parsing is the
+  only token source now; counts stay `estimated`/`null` when no transcript is found.
+- `ai-folder-research`: stage 01 declares `ICM-TOOLS expect="(search_web|web_search|WebSearch)
+  (fetch_url|web_fetch|WebFetch)"`; placeholder `tools/search.sh` and
+  `tools/synthesize.sh` deleted (they existed only to be audit-visible and made
+  every run deviate from its own contract).
+- Tests are hermetic: the suite sandboxes `$HOME` under tmp (previously
+  `icm.sh telemetry` wrote to the developer's real `~/.icm`). New cases: JSONL
+  validity, ICM-TOOLS matching, reify from transcript, newest-transcript selection.
+  45 cases total.
+- CI: GitHub Actions workflow runs the suite on ubuntu + macos.
+
 ## 0.3.0 - 2026-06-12
 
 - Tool call logging: every `icm.sh` invocation in a project with `.icm/` writes a

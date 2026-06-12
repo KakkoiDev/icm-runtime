@@ -90,21 +90,24 @@ all projects.
 **Per-stage token tracking is MANDATORY.** After every stage, workspace skills call
 `icm.sh stage-done` which writes to `telemetry/stages.jsonl` and drops a
 `.stage-telemetry` marker. The audit command flags any completed stage that lacks
-this telemetry. A post-hoc `icm.sh reify-telemetry` command fills in exact token
-counts from the conversation transcript (jq), falling back to run-level totals
-via `bunx ccusage` when per-stage transcript parsing yields nothing.
+this telemetry. A post-hoc `icm.sh reify-telemetry` command fills in exact
+per-stage token counts from the conversation transcript (requires jq; picks the
+newest matching session and warns when several qualify).
 
 ### Audit
 `icm.sh audit <workspace>` does two checks: (1) verifies every completed stage has
-per-stage telemetry (`stage-done` was called), and (2) compares expected tool calls
-(from frozen stage contracts using the `Call \`tools/...\`` convention) against
-actual tool invocations in the telemetry log. Produces a deviation report including
-per-stage token usage summary.
+per-stage telemetry (`stage-done` was called), and (2) compares expected tools,
+declared per stage via `<!-- ICM-TOOLS expect="..." -->`, against actual harness
+tool calls recorded in the telemetry log by the gate enforcement adapter. Produces
+a deviation report including per-stage token usage summary. Actual records exist
+only where an adapter is registered; audit says so instead of guessing.
 
 ### Deterministic tools
-Skills can include a `tools/` directory with shell scripts. Stage contracts reference
-them to make expected tool calls auditable. Tools are frozen into each run and added
-to the tamper-evidence `.manifest`.
+Skills can include a `tools/` directory with shell scripts for gate checkers and
+stage processing. Tools are frozen into each run and added to the tamper-evidence
+`.manifest`. Expected harness tools are declared with an ICM-TOOLS line in the
+stage contract (EREs, unanchored, one line per contract), frozen and manifest-covered
+like gates.
 
 ## Stage gates (harness-enforced)
 
@@ -174,7 +177,9 @@ MCP naming (`mcp__claude_ai_Slack__slack_send_message`) will not match a differe
 pi tool. Matching is unanchored, so write the tool's core name
 (`slack_send_message(_draft)?`) when a gate must bind in both harnesses.
 
-Pre-release check (no CI yet): `sh tests/gate.test.sh` must pass.
+CI runs `sh tests/gate.test.sh` on ubuntu and macos (`.github/workflows/test.yml`);
+run it locally before release too. The suite is hermetic: it sandboxes `$HOME`
+under a tmp dir.
 
 ## Building your own workspace
 

@@ -73,13 +73,12 @@ to fill in exact counts from the conversation transcript. Audit flags any
 completed stage without this marker as a deviation.
 
 ### reify-telemetry workspace-name [--cwd dir] [--transcript path]
-Post-hoc: reads the conversation transcript (auto-detected by harness) and fills
-in exact token counts per stage in `stages.jsonl`. Replaces `"counts": "estimated"`
-with `"counts": "transcript"`. Requires jq. If transcript parsing yields nothing
-and bun is installed, falls back to `bunx ccusage` and appends a single run-level
-total (`"stage": "*"`, `"counts": "ccusage-run-total"`) with no per-stage split.
-No-op with warning if transcript cannot be found, or if neither jq nor bun
-produces counts.
+Post-hoc: reads the conversation transcript and fills in exact token counts per
+stage in `stages.jsonl` (sums `usage.*` between consecutive stage-done timestamps).
+Replaces `"counts": "estimated"` with `"counts": "transcript"`. Requires jq.
+Auto-detection prefers the Claude Code project dir matching cwd, then picks the
+newest candidate by mtime and warns on stderr when several sessions qualify;
+pass `--transcript` to override. No-op with warning if no transcript is found.
 
 ### telemetry workspace-name --model <name> --tokens-in <N> --tokens-out <N> --cost <amount>
 Writes a summary of the completed run to `~/.icm/telemetry/skill-runs.jsonl`.
@@ -88,10 +87,16 @@ file path on success.
 
 ### audit workspace-name [--cwd dir]
 Two-part check: (1) verifies every completed stage has per-stage telemetry from
-`stage-done`, (2) compares expected tool calls from frozen stage contracts against
-actual tool invocations in `.icm/telemetry/tool-calls.jsonl`. Produces a deviation
-report on stdout including per-stage token usage summary. Exit 0 even with
-deviations (report is informational). Exit 1 if workspace or run is not found.
+`stage-done`, (2) compares expected tools against actual harness tool calls.
+Expected tools come from an `<!-- ICM-TOOLS expect="..." -->` line in the frozen
+contract; each whitespace-separated token is an ERE matched unanchored against
+actual tool names (same semantics as ICM-GATE `tools=`). Contracts without the
+declaration fall back to scraping `tools/...` mentions from prose. Actual tool
+names come from `gate-check --tool` entries in `.icm/telemetry/tool-calls.jsonl`,
+so they exist only where an enforcement adapter is registered; with no records
+in the run window, audit says so and does not count deviations. Produces a
+deviation report on stdout including per-stage token usage summary. Exit 0 even
+with deviations (report is informational). Exit 1 if workspace or run is not found.
 
 ### gate-check --tool tool-name [--cwd dir]
 Evaluates frozen ICM-GATE lines in the latest run of every workspace under cwd's `.icm/`.
@@ -112,13 +117,23 @@ sending anything.
 
 ## Deterministic Tools
 
-Skills may include a `tools/` directory with deterministic shell scripts. Stage
-contracts reference them via `Call \`tools/script.sh\``. `icm.sh init` freezes
-`tools/` into the run (like `checks/`) and adds them to the `.manifest` for
-tamper evidence. The `audit` command uses these references to verify that expected
-tools were called.
+Skills may include a `tools/` directory with deterministic shell scripts.
+`icm.sh init` freezes `tools/` into the run (like `checks/`) and adds them to
+the `.manifest` for tamper evidence. Gate checkers can reference them:
+`run="tools/verify.sh"`.
 
-Gate checkers can also reference tools: `run="tools/verify.sh"`.
+Scripts the agent runs directly via bash are NOT recorded in
+`tool-calls.jsonl` (only `icm.sh` invocations log). To make a stage's expected
+harness tools auditable, declare them explicitly in the stage contract:
+
+```
+<!-- ICM-TOOLS expect="(search_web|WebSearch) (fetch_url|WebFetch)" -->
+```
+
+One line per contract; tokens are whitespace-separated EREs matched unanchored
+against harness tool names. Frozen with the contract and covered by `.manifest`,
+so expectations cannot be quietly edited mid-run. Use alternation to cover
+per-harness tool naming differences, same as the ICM-GATE naming caveat.
 
 ## Stage gates
 
