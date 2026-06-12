@@ -14,7 +14,7 @@
 #   icm.sh reify-telemetry <workspace> [--cwd <dir>] [--transcript <path>]
 #   icm.sh audit <workspace> [--cwd <dir>]
 #   icm.sh seal <workspace> [--cwd <dir>]         Append run evidence digests to .icm-seals.log
-#   icm.sh verify-seal <workspace> [--cwd <dir>]  Recompute digests against last seal; exit 1 on mismatch
+#   icm.sh verify-seal <workspace>|--all [--cwd <dir>]  Recompute digests against last seal(s); exit 1 on mismatch
 
 set -eu
 
@@ -59,7 +59,7 @@ usage() {
     echo "       icm.sh reify-telemetry <workspace> [--cwd <dir>] [--transcript <path>]" >&2
     echo "       icm.sh audit <workspace> [--cwd <dir>]" >&2
     echo "       icm.sh seal <workspace> [--cwd <dir>]" >&2
-    echo "       icm.sh verify-seal <workspace> [--cwd <dir>]" >&2
+    echo "       icm.sh verify-seal <workspace>|--all [--cwd <dir>]" >&2
     exit 1
 }
 
@@ -582,6 +582,18 @@ cmd_clean() {
         fi
     done
 
+    # Rotate the shared tool-call log: the wide hook matcher writes one line
+    # per tool call, which is unbounded in long-lived projects. Audit pruned
+    # runs before cleaning; rotation drops their actual-tool records.
+    _tc_log=".icm/telemetry/tool-calls.jsonl"
+    if [ -f "$_tc_log" ]; then
+        _tc_lines=$(wc -l < "$_tc_log" | tr -d ' ')
+        if [ "$_tc_lines" -gt 10000 ]; then
+            tail -n 10000 "$_tc_log" > "$_tc_log.tmp" && mv "$_tc_log.tmp" "$_tc_log"
+            echo "Rotated tool-calls.jsonl: kept last 10000 of $_tc_lines lines."
+        fi
+    fi
+
     echo "Cleaned $removed complete run(s). Kept up to $keep most recent. Incomplete runs preserved."
 }
 
@@ -1020,16 +1032,77 @@ cmd_seal() {
     echo "sealed $ws/$latest -> .icm-seals.log (commit this file)"
 }
 
+# Verify one seal-log line. $1=line $2=workspace $3=run_id. Prints SEAL OK
+# or SEAL MISMATCH lines; returns 1 on any mismatch.
+_verify_seal_line() {
+    vs_line=$1
+    vs_ws=$2
+    vs_run_id=$3
+    vs_run_dir=".icm/$vs_ws/$vs_run_id"
+    vs_sealed=$(printf '%s' "$vs_line" | sed 's/.*"sealed":{//;s/}}$//')
+    vs_bad=0
+    for vs_pair in $(printf '%s' "$vs_sealed" | tr ',' '\n'); do
+        vs_f=$(printf '%s' "$vs_pair" | sed 's/^"//;s/":".*//')
+        vs_want=$(printf '%s' "$vs_pair" | sed 's/.*":"//;s/"$//')
+        if [ ! -f "$vs_run_dir/$vs_f" ]; then
+            echo "SEAL MISMATCH $vs_ws/$vs_run_id $vs_f: file missing"
+            vs_bad=1
+            continue
+        fi
+        vs_got=$( (cd "$vs_run_dir" && sha_file "$vs_f") | awk '{print $1}')
+        if [ "$vs_got" != "$vs_want" ]; then
+            echo "SEAL MISMATCH $vs_ws/$vs_run_id $vs_f: sha256 differs from sealed digest"
+            vs_bad=1
+        fi
+    done
+    if [ "$vs_bad" -eq 0 ]; then
+        echo "SEAL OK $vs_ws/$vs_run_id"
+        return 0
+    fi
+    return 1
+}
+
 cmd_verify_seal() {
     ws=""
+    all=0
     while [ $# -gt 0 ]; do
         case "$1" in
+            --all) all=1; shift ;;
             --cwd) cd "$2"; shift 2 ;;
             *) ws="$1"; shift ;;
         esac
     done
+    if [ ! -f .icm-seals.log ]; then
+        echo "verify-seal: no .icm-seals.log in $PWD" >&2
+        exit 1
+    fi
+
+    if [ "$all" -eq 1 ]; then
+        # Verify the last seal of every (workspace, run) in the log. Runs
+        # pruned by clean are reported as skipped, not failed: deleting old
+        # evidence is normal lifecycle, altering surviving evidence is not.
+        _vs_keys=$(sed -n 's/.*"workspace":"\([^"]*\)","run_id":"\([^"]*\)".*/\1 \2/p' .icm-seals.log | awk '!seen[$0]++')
+        if [ -z "$_vs_keys" ]; then
+            echo "verify-seal: no seals in .icm-seals.log" >&2
+            exit 1
+        fi
+        _vs_status=0
+        while IFS=' ' read -r _vs_w _vs_r; do
+            [ -n "$_vs_w" ] || continue
+            if [ ! -d ".icm/$_vs_w/$_vs_r" ]; then
+                echo "SEAL SKIP $_vs_w/$_vs_r: run pruned"
+                continue
+            fi
+            _vs_l=$(grep "\"workspace\":\"$_vs_w\",\"run_id\":\"$_vs_r\"" .icm-seals.log | tail -1)
+            _verify_seal_line "$_vs_l" "$_vs_w" "$_vs_r" || _vs_status=1
+        done <<ICM_VS_EOF
+$_vs_keys
+ICM_VS_EOF
+        exit "$_vs_status"
+    fi
+
     if [ -z "$ws" ]; then
-        echo "verify-seal requires workspace name" >&2
+        echo "verify-seal requires workspace name (or --all)" >&2
         exit 1
     fi
     latest=$(latest_run "$ws")
@@ -1037,34 +1110,12 @@ cmd_verify_seal() {
         echo "no runs for $ws" >&2
         exit 1
     fi
-    run_dir=".icm/$ws/$latest"
-    if [ ! -f .icm-seals.log ]; then
-        echo "verify-seal: no .icm-seals.log in $PWD" >&2
-        exit 1
-    fi
     line=$(grep "\"workspace\":\"$ws\",\"run_id\":\"$latest\"" .icm-seals.log 2>/dev/null | tail -1 || :)
     if [ -z "$line" ]; then
         echo "verify-seal: no seal recorded for $ws/$latest" >&2
         exit 1
     fi
-    sealed=$(printf '%s' "$line" | sed 's/.*"sealed":{//;s/}}$//')
-    bad=0
-    for pair in $(printf '%s' "$sealed" | tr ',' '\n'); do
-        f=$(printf '%s' "$pair" | sed 's/^"//;s/":".*//')
-        want=$(printf '%s' "$pair" | sed 's/.*":"//;s/"$//')
-        if [ ! -f "$run_dir/$f" ]; then
-            echo "SEAL MISMATCH $ws/$latest $f: file missing"
-            bad=1
-            continue
-        fi
-        got=$( (cd "$run_dir" && sha_file "$f") | awk '{print $1}')
-        if [ "$got" != "$want" ]; then
-            echo "SEAL MISMATCH $ws/$latest $f: sha256 differs from sealed digest"
-            bad=1
-        fi
-    done
-    if [ "$bad" -eq 0 ]; then
-        echo "SEAL OK $ws/$latest"
+    if _verify_seal_line "$line" "$ws" "$latest"; then
         exit 0
     fi
     exit 1

@@ -165,6 +165,39 @@ remove() {
             ok "claude: $skill_name (not installed)"
         fi
     done < <(find "$SOURCE_DIR" -name SKILL.md)
+
+    unregister_hooks
+}
+
+# Remove enforcement adapter registrations. A dangling gate-hook with the
+# wide ".*" matcher would error on every tool call once the skill files are
+# gone, so --remove must unregister, not just delete symlinks.
+unregister_hooks() {
+    local settings="$HOME/.claude/settings.json"
+    if [ -f "$settings" ] && command -v jq >/dev/null 2>&1 \
+        && jq -e '[.hooks.PreToolUse[]?.hooks[]?.command // empty] | any(contains("gate-hook.sh"))' "$settings" >/dev/null 2>&1; then
+        local tmp
+        tmp=$(mktemp)
+        jq '.hooks.PreToolUse = [(.hooks.PreToolUse // [])[] | select(([.hooks[]?.command // empty] | any(contains("gate-hook.sh"))) | not)]
+            | if .hooks.PreToolUse == [] then del(.hooks.PreToolUse) else . end
+            | if .hooks == {} then del(.hooks) else . end' "$settings" > "$tmp"
+        write_settings "$tmp" "$settings"
+        ok "claude: gate-hook unregistered from $settings"
+    fi
+
+    local ext="$HOME/.pi/agent/extensions/icm-gate.ts"
+    if [ -L "$ext" ] || [ -f "$ext" ]; then
+        rm -f "$ext"
+        ok "pi: icm-gate extension removed"
+    fi
+}
+
+# Write $1 over $2 in place (cat, not mv): mv swaps the inode, which silently
+# breaks setups where settings.json is a hardlink or symlink into a dotfiles
+# repo. cat preserves the existing inode and any links to it.
+write_settings() {
+    cat "$1" > "$2"
+    rm -f "$1"
 }
 
 # Register ICM gate enforcement in every supported harness on this machine:
@@ -231,7 +264,7 @@ install_hooks() {
             mig=$(mktemp)
             jq '(.hooks.PreToolUse[]? | select([.hooks[]?.command // empty] | any(contains("gate-hook.sh"))) | .matcher) |= ".*"' \
                 "$settings" > "$mig"
-            mv "$mig" "$settings"
+            write_settings "$mig" "$settings"
             ok "claude: widened gate-hook matcher to .* in $settings"
         else
             ok "claude: gate-hook already registered in $settings"
@@ -247,7 +280,7 @@ install_hooks() {
     jq --arg cmd "$hook_cmd" \
         '.hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{"matcher": ".*", "hooks": [{"type": "command", "command": $cmd, "timeout": 15}]}])' \
         "$settings" > "$tmp"
-    mv "$tmp" "$settings"
+    write_settings "$tmp" "$settings"
     ok "claude: registered gate-hook in $settings"
     info "matcher: .* -> $hook_cmd"
     info "backup: $backup"

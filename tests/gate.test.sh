@@ -328,6 +328,18 @@ if command -v node >/dev/null 2>&1; then
     else
         t_fail "13c pi adapter: no .icm in cwd -> allow" "rc=$rc out=$out"
     fi
+
+    # ---- case 13d: pi adapter records newest session transcript path ----
+    mkdir -p "$HOME/.pi/agent/sessions"
+    printf '{"ts":"x"}\n' > "$HOME/.pi/agent/sessions/pi-session.jsonl"
+    rm -f "$PROJECT/.icm/telemetry/transcript-path"
+    out=$(cd "$PROJECT" && node "$DRIVER" "$EXT" mcp__test__send 2>/dev/null) || true
+    if [ "$(cat "$PROJECT/.icm/telemetry/transcript-path" 2>/dev/null)" = "$HOME/.pi/agent/sessions/pi-session.jsonl" ]; then
+        t_ok "13d pi adapter: records newest session transcript path"
+    else
+        t_fail "13d pi adapter: records newest session transcript path" "got=$(cat "$PROJECT/.icm/telemetry/transcript-path" 2>/dev/null)"
+    fi
+    rm -f "$PROJECT/.icm/telemetry/transcript-path"
 else
     echo "SKIP  13 pi adapter (node not installed)"
 fi
@@ -343,6 +355,18 @@ if command -v jq >/dev/null 2>&1; then
         t_ok "14 installer --hooks: pi extension symlink, idempotent"
     else
         t_fail "14 installer --hooks: pi extension symlink, idempotent" "rc=$rc rc2=$rc2 out=$out out2=$out2"
+    fi
+
+    # ---- case 14b: --remove unregisters hook + pi extension ----
+    out=$(HOME="$FAKEHOME" "$REPO_DIR/installer.sh" --remove 2>&1); rc=$?
+    settings="$FAKEHOME/.claude/settings.json"
+    hook_left=$(grep -c 'gate-hook.sh' "$settings" || true)
+    model=$(jq -r '.model' "$settings")
+    if [ "$rc" -eq 0 ] && [ "$hook_left" -eq 0 ] && [ "$model" = "x" ] \
+        && [ ! -e "$FAKEHOME/.pi/agent/extensions/icm-gate.ts" ]; then
+        t_ok "14b installer --remove: unregisters hook and pi extension"
+    else
+        t_fail "14b installer --remove: unregisters hook and pi extension" "rc=$rc hook_left=$hook_left model=$model out=$out"
     fi
 else
     echo "SKIP  14 installer pi extension (jq not installed)"
@@ -699,6 +723,37 @@ if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
     t_ok "27b hook: built-in tool allowed once checker passes"
 else
     t_fail "27b hook: built-in tool allowed once checker passes" "rc=$rc out=$out"
+fi
+
+# ---- case 28: verify-seal --all across workspaces, skip pruned runs ----
+"$ICM" seal testns/builtin-ws >/dev/null 2>&1
+v_all=$("$ICM" verify-seal --all 2>&1); rc_all=$?
+if [ "$rc_all" -eq 1 ] \
+    && printf '%s' "$v_all" | grep -q "SEAL OK testns/builtin-ws" \
+    && printf '%s' "$v_all" | grep -q "SEAL MISMATCH testns/tool-ws"; then
+    t_ok "28 verify-seal --all: aggregates OK and MISMATCH across workspaces"
+else
+    t_fail "28 verify-seal --all: aggregates OK and MISMATCH across workspaces" "rc=$rc_all out=$v_all"
+fi
+_latest_run=$(cd .icm/testns/tool-ws && ls -1 2>/dev/null | sort -r | head -1)
+rm -rf ".icm/testns/tool-ws/$_latest_run"
+v_all=$("$ICM" verify-seal --all 2>&1); rc_all=$?
+if [ "$rc_all" -eq 0 ] && printf '%s' "$v_all" | grep -q "SEAL SKIP testns/tool-ws"; then
+    t_ok "28b verify-seal --all: pruned run skipped, exit 0"
+else
+    t_fail "28b verify-seal --all: pruned run skipped, exit 0" "rc=$rc_all out=$v_all"
+fi
+
+# ---- case 29: clean rotates tool-calls.jsonl past 10000 lines ----
+awk 'BEGIN{for(i=0;i<10500;i++)print "{\"ts\":\"2026-01-01T00:00:00Z\",\"tool\":\"icm.sh\",\"cmd\":\"pad\",\"args\":[\"pad\"],\"cwd\":\"/\",\"ec\":0}"}' \
+    >> .icm/telemetry/tool-calls.jsonl
+out=$("$ICM" clean testns/tool-ws --keep 5 2>&1); rc=$?
+# clean's own exit appends one telemetry line after rotating: 10000 + 1.
+lines=$(wc -l < .icm/telemetry/tool-calls.jsonl | tr -d ' ')
+if [ "$rc" -eq 0 ] && [ "$lines" -le 10001 ] && printf '%s' "$out" | grep -q "Rotated tool-calls.jsonl"; then
+    t_ok "29 clean: rotates tool-calls.jsonl to last 10000 lines"
+else
+    t_fail "29 clean: rotates tool-calls.jsonl to last 10000 lines" "rc=$rc lines=$lines out=$out"
 fi
 
 echo ""
