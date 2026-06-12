@@ -224,7 +224,18 @@ install_hooks() {
     fi
 
     if jq -e '[.hooks.PreToolUse[]?.hooks[]?.command // empty] | any(contains("gate-hook.sh"))' "$settings" >/dev/null; then
-        ok "claude: gate-hook already registered in $settings"
+        # Migrate pre-0.6 registrations from "mcp__.*" to ".*" so built-in
+        # tools (WebSearch, Bash, ...) are gated and logged too.
+        if jq -e '[.hooks.PreToolUse[]? | select([.hooks[]?.command // empty] | any(contains("gate-hook.sh"))) | .matcher] | any(. == "mcp__.*")' "$settings" >/dev/null 2>&1; then
+            local mig
+            mig=$(mktemp)
+            jq '(.hooks.PreToolUse[]? | select([.hooks[]?.command // empty] | any(contains("gate-hook.sh"))) | .matcher) |= ".*"' \
+                "$settings" > "$mig"
+            mv "$mig" "$settings"
+            ok "claude: widened gate-hook matcher to .* in $settings"
+        else
+            ok "claude: gate-hook already registered in $settings"
+        fi
         install_pi_extension
         return 0
     fi
@@ -234,11 +245,11 @@ install_hooks() {
     local tmp
     tmp=$(mktemp)
     jq --arg cmd "$hook_cmd" \
-        '.hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{"matcher": "mcp__.*", "hooks": [{"type": "command", "command": $cmd, "timeout": 15}]}])' \
+        '.hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{"matcher": ".*", "hooks": [{"type": "command", "command": $cmd, "timeout": 15}]}])' \
         "$settings" > "$tmp"
     mv "$tmp" "$settings"
     ok "claude: registered gate-hook in $settings"
-    info "matcher: mcp__.* -> $hook_cmd"
+    info "matcher: .* -> $hook_cmd"
     info "backup: $backup"
     install_pi_extension
 }

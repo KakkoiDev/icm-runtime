@@ -32,18 +32,14 @@ _log_start() {
 _log_end() {
     [ -d "$ICM_TELEMETRY_DIR" ] || return 0
     [ -n "${ICM_LOG_START:-}" ] || return 0
-    local _ts _ec _args_json
-    _ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     _ec=${1:-0}
-    if command -v jq >/dev/null 2>&1; then
-        # -c is load-bearing: without it jq pretty-prints and the log entry
-        # spans multiple physical lines, breaking every JSONL consumer.
-        _args_json=$(printf '%s' "$ICM_LOG_CMD" | jq -R -s -c 'split(" ")')
-    else
-        _args_json="\"$ICM_LOG_CMD\""
-    fi
+    # Single sed fork builds the compact JSON array (escape \ and ", split on
+    # spaces). This runs on every hooked tool call; keep it fork-lean. Must
+    # stay one physical line: multi-line entries break every JSONL consumer.
+    _args_json=$(printf '%s' "$ICM_LOG_CMD" \
+        | sed 's/\\/\\\\/g; s/"/\\"/g; s/ /","/g; s/^/["/; s/$/"]/')
     printf '{"ts":"%s","tool":"icm.sh","cmd":"%s","args":%s,"cwd":"%s","ec":%s}\n' \
-        "$ICM_LOG_START" "$(printf '%s' "$ICM_LOG_CMD" | cut -d' ' -f1)" \
+        "$ICM_LOG_START" "${ICM_LOG_CMD%% *}" \
         "$_args_json" "$PWD" "$_ec" \
         >> "$ICM_TELEMETRY_DIR/tool-calls.jsonl" 2>/dev/null || true
 }
@@ -224,7 +220,7 @@ latest_runs() {
         lr_prev_parent=""
         lr_prev=""
         while IFS= read -r lr_path; do
-            lr_parent=$(dirname "$lr_path")
+            lr_parent=${lr_path%/*}
             if [ -n "$lr_prev" ] && [ "$lr_parent" != "$lr_prev_parent" ]; then
                 printf '%s\n' "$lr_prev"
             fi
@@ -237,28 +233,31 @@ latest_runs() {
     }
 }
 
+# Batch-verify checksums read from stdin in "<hash>  <path>" format.
+sha_check() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum -c -
+    else
+        shasum -a 256 -c -
+    fi
+}
+
 # Verify every entry of a run's .manifest. Prints the first bad relpath and
-# returns 1 on hash mismatch or missing file.
+# returns 1 on hash mismatch or missing file. One checksum process for the
+# whole manifest: this runs on every hooked tool call, per-file forks were
+# the dominant gate-check cost.
 verify_manifest() {
     vm_run=$1
-    while IFS= read -r vm_line; do
-        [ -n "$vm_line" ] || continue
-        vm_want=${vm_line%% *}
-        vm_rel=${vm_line#* }
-        vm_rel=${vm_rel# }
-        vm_rel=${vm_rel#\*}
-        if [ ! -f "$vm_run/$vm_rel" ]; then
-            echo "$vm_rel"
-            return 1
-        fi
-        vm_got=$( (cd "$vm_run" && sha_file "$vm_rel") )
-        vm_got=${vm_got%% *}
-        if [ "$vm_got" != "$vm_want" ]; then
-            echo "$vm_rel"
-            return 1
-        fi
-    done < "$vm_run/.manifest"
-    return 0
+    [ -s "$vm_run/.manifest" ] || return 0
+    if vm_out=$( (cd "$vm_run" && sha_check < .manifest) 2>&1 ); then
+        return 0
+    fi
+    vm_bad=$(printf '%s\n' "$vm_out" | awk -F': ' '/: FAILED/ {print $1; exit}')
+    if [ -z "$vm_bad" ]; then
+        vm_bad=$(printf '%s\n' "$vm_out" | head -1)
+    fi
+    echo "$vm_bad"
+    return 1
 }
 
 # Evaluate one run's frozen gates. $1=run dir, $2=tool name ("" = evaluate every
@@ -269,9 +268,9 @@ verify_manifest() {
 check_run() {
     cr_run=$1
     cr_tool=$2
-    cr_ws=$(dirname "$cr_run")
+    cr_ws=${cr_run%/*}
     cr_ws=${cr_ws#.icm/}
-    cr_ts=$(basename "$cr_run")
+    cr_ts=${cr_run##*/}
 
     if [ -f "$cr_run/.manifest" ]; then
         if ! vm_bad=$(verify_manifest "$cr_run"); then
@@ -280,11 +279,14 @@ check_run() {
         fi
     fi
 
-    for cr_ctx in "$cr_run"/[0-9]*/CONTEXT.md; do
-        [ -f "$cr_ctx" ] || continue
-        cr_stage_dir=$(dirname "$cr_ctx")
-        cr_stage=$(basename "$cr_stage_dir")
-        grep -F '<!-- ICM-GATE ' "$cr_ctx" 2>/dev/null | while IFS= read -r cr_line; do
+    # One grep across all frozen contracts (runs on every hooked tool call).
+    # /dev/null forces the "path:" prefix even with a single match file.
+    grep -F '<!-- ICM-GATE ' "$cr_run"/[0-9]*/CONTEXT.md /dev/null 2>/dev/null \
+        | while IFS= read -r cr_hit; do
+            cr_ctx=${cr_hit%%:*}
+            cr_line=${cr_hit#*:}
+            cr_stage_dir=${cr_ctx%/CONTEXT.md}
+            cr_stage=${cr_stage_dir##*/}
             cr_tools=$(gate_attr "$cr_line" tools)
             cr_runcmd=$(gate_attr "$cr_line" run)
             if [ -z "$cr_tools" ] || [ -z "$cr_runcmd" ]; then
@@ -325,7 +327,6 @@ check_run() {
                 fi
             fi
         done
-    done
 }
 
 # ---- init ----

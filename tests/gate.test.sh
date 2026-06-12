@@ -280,10 +280,23 @@ if command -v jq >/dev/null 2>&1; then
     model=$(jq -r '.model' "$settings")
     matcher=$(jq -r '.hooks.PreToolUse[0].matcher' "$settings")
     if [ "$rc" -eq 0 ] && [ "$rc2" -eq 0 ] && [ "$count" -eq 1 ] \
-        && [ "$model" = "x" ] && [ "$matcher" = "mcp__.*" ]; then
-        t_ok "11 installer --hooks: idempotent, preserves keys"
+        && [ "$model" = "x" ] && [ "$matcher" = ".*" ]; then
+        t_ok "11 installer --hooks: idempotent, preserves keys, wide matcher"
     else
-        t_fail "11 installer --hooks: idempotent, preserves keys" "rc=$rc rc2=$rc2 count=$count model=$model matcher=$matcher out=$out out2=$out2"
+        t_fail "11 installer --hooks: idempotent, preserves keys, wide matcher" "rc=$rc rc2=$rc2 count=$count model=$model matcher=$matcher out=$out out2=$out2"
+    fi
+
+    # ---- case 11b: --hooks migrates a pre-0.6 mcp__.* registration ----
+    printf '{"model":"x","hooks":{"PreToolUse":[{"matcher":"mcp__.*","hooks":[{"type":"command","command":"%s","timeout":15}]}]}}\n' \
+        "$FAKEHOME/.agents/skills/icm/runtime/gate-hook.sh" > "$settings"
+    out=$(HOME="$FAKEHOME" "$REPO_DIR/installer.sh" --hooks 2>&1); rc=$?
+    count=$(grep -c 'gate-hook.sh' "$settings")
+    matcher=$(jq -r '.hooks.PreToolUse[0].matcher' "$settings")
+    model=$(jq -r '.model' "$settings")
+    if [ "$rc" -eq 0 ] && [ "$count" -eq 1 ] && [ "$matcher" = ".*" ] && [ "$model" = "x" ]; then
+        t_ok "11b installer --hooks: migrates mcp__.* matcher to .*"
+    else
+        t_fail "11b installer --hooks: migrates mcp__.* matcher to .*" "rc=$rc count=$count matcher=$matcher out=$out"
     fi
 else
     echo "SKIP  11 installer --hooks (jq not installed)"
@@ -662,6 +675,30 @@ if [ "$rc" -eq 0 ] && [ -f .icm-seals.log ] \
     t_ok "26 seal: digests recorded, verify-seal detects tampering"
 else
     t_fail "26 seal: digests recorded, verify-seal detects tampering" "rc=$rc rc_ok=$rc_ok rc_bad=$rc_bad ok=$v_ok bad=$v_bad"
+fi
+
+# ---- case 27: built-in tool names gate end-to-end through the hook ----
+WS5_DIR="$TMP/skills/testns/builtin-ws"
+mkdir -p "$WS5_DIR/stages"
+cat > "$WS5_DIR/stages/01-send.md" <<'EOF'
+# Stage 01
+<!-- ICM-GATE tools="^WebSearch$" run="grep -Eq '^RESULT: PASS$' output/evidence.md" -->
+EOF
+run_m=$("$ICM" init testns/builtin-ws 2>/dev/null)
+out=$(hook_json WebSearch "$PROJECT" | (cd "$TMP" && "$HOOK")); rc=$?
+out2=$(hook_json Bash "$PROJECT" | (cd "$TMP" && "$HOOK")); rc2=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '"deny"' && printf '%s' "$out" | grep -q '01-send' \
+    && [ "$rc2" -eq 0 ] && [ -z "$out2" ]; then
+    t_ok "27 hook: built-in tool gated (WebSearch deny, Bash untouched)"
+else
+    t_fail "27 hook: built-in tool gated (WebSearch deny, Bash untouched)" "rc=$rc out=$out rc2=$rc2 out2=$out2"
+fi
+printf 'RESULT: PASS\n' > "$run_m/01-send/output/evidence.md"
+out=$(hook_json WebSearch "$PROJECT" | (cd "$TMP" && "$HOOK")); rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+    t_ok "27b hook: built-in tool allowed once checker passes"
+else
+    t_fail "27b hook: built-in tool allowed once checker passes" "rc=$rc out=$out"
 fi
 
 echo ""
