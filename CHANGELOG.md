@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0 - 2026-06-12
+
+- **Hook matcher widened from `mcp__.*` to `.*`:** built-in tools (WebSearch,
+  WebFetch, Bash, ...) are now gated and logged in Claude Code, closing the gap
+  where ICM-TOOLS expectations on built-ins could never be verified.
+  `installer.sh --hooks` migrates existing registrations.
+- Performance, since gate-check now runs on every tool call: batched manifest
+  verification (one `sha256sum -c` instead of a fork per frozen file), one jq
+  fork in the hook instead of three, single grep across frozen contracts,
+  parameter expansion instead of dirname/basename/cut/date forks. Full gate
+  evaluation ~60-80ms per call (was ~165ms); outside `.icm` projects ~25ms.
+- Missing jq with the wide matcher fails closed only inside `.icm` projects;
+  everywhere else the hook allows, so a missing dependency cannot brick
+  unrelated work.
+
 ## 0.5.0 - 2026-06-12
 
 - **Per-stage transcript snapshots:** `stage-done` now snapshots the session

@@ -145,7 +145,11 @@ a frozen checker all deny as tampered.
 
 Enforcement runs in the harness, outside the model's control, with one adapter per agent:
 
-- **Claude Code:** `gate-hook.sh`, a PreToolUse hook consulted on every `mcp__*` tool call.
+- **Claude Code:** `gate-hook.sh`, a PreToolUse hook consulted on every tool call
+  (matcher `.*`), so built-in tools (WebSearch, WebFetch, Bash, ...) are gated and
+  logged, not just MCP tools. Outside `.icm` projects it exits in ~25ms; inside,
+  a full gate evaluation is ~60-80ms per call. Re-run `installer.sh --hooks` to
+  migrate a pre-0.6 `mcp__.*` registration.
 - **pi:** `icm-gate.ts`, a `tool_call` extension that blocks while `gate-check` denies.
 
 Register both at once (each is skipped if its harness is absent):
@@ -162,7 +166,7 @@ or commit this to a workspace repo's `.claude/settings.json` so enforcement trav
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "mcp__.*",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
@@ -188,7 +192,9 @@ there. Publish-stage contracts should run it before sending.
 Tool naming caveat for cross-harness gates: a `tools` regex written against Claude Code's
 MCP naming (`mcp__claude_ai_Slack__slack_send_message`) will not match a differently named
 pi tool. Matching is unanchored, so write the tool's core name
-(`slack_send_message(_draft)?`) when a gate must bind in both harnesses.
+(`slack_send_message(_draft)?`) when a gate must bind in both harnesses. The same applies
+to built-in tools: Claude Code says `WebSearch`/`WebFetch`, pi says `search_web`/`fetch_url`;
+use alternation (`(search_web|WebSearch)`) in gates and ICM-TOOLS lines.
 
 CI runs `sh tests/gate.test.sh` on ubuntu and macos (`.github/workflows/test.yml`);
 run it locally before release too. The suite is hermetic: it sandboxes `$HOME`

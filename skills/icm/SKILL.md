@@ -131,7 +131,9 @@ Evaluates frozen ICM-GATE lines in the latest run of every workspace under cwd's
 Exit 0 (silent): no gate matches the tool, or all matching gates pass. Exit 1 with `DENY`
 lines on stdout: a matching gate's checker failed, the run's `.manifest` does not verify
 (tampered frozen contract or checker), or a gate line is malformed. Called by the
-PreToolUse hook (`gate-hook.sh`) on every `mcp__*` tool call; also callable directly.
+PreToolUse hook (`gate-hook.sh`) on every tool call, built-ins included; also callable
+directly. Runs on every hooked call, so it is kept fork-lean (batched sha256, no
+per-file subshells); keep it that way when editing.
 
 ### gate-status [--cwd dir]
 Lists gates declared by installed skills and by active runs in cwd, evaluates the active
@@ -173,7 +175,8 @@ single line, no embedded double quotes):
 ```
 
 Semantics:
-- `tools` is matched unanchored against the harness tool name (`mcp__<server>__<tool>`).
+- `tools` is matched unanchored against the harness tool name: MCP form
+  (`mcp__<server>__<tool>`) or built-in names (`WebSearch`, `Bash`, ...).
   Anchor with `^...$` for exact matching.
 - `run` executes with cwd = the run's stage dir. If its first token is a relative path to a
   file frozen at the run root (the skill's `checks/` dir is copied there by `init`), the
