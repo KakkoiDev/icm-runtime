@@ -9,6 +9,13 @@ REPO_DIR=$(cd "$(dirname "$0")/.." && pwd -P)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
+# Hermetic HOME: icm.sh telemetry writes to ~/.icm and installer touches
+# ~/.claude / ~/.pi. Without this the suite mutates the developer's real HOME
+# and can false-pass against leftover local state.
+HOME="$TMP/home"
+export HOME
+mkdir -p "$HOME"
+
 PASS=0
 FAIL=0
 
@@ -341,6 +348,20 @@ else
     t_fail "15 tool-calls.jsonl exists" "file not found at $LOG_FILE"
 fi
 
+# ---- case 15b: log is real JSONL -- one valid JSON object per line ----
+# Regression: jq without -c pretty-printed the args array across lines.
+bad_lines=$(grep -cv '^{.*}$' "$LOG_FILE" 2>/dev/null | tr -d ' ')
+if command -v jq >/dev/null 2>&1; then
+    jq -e . "$LOG_FILE" >/dev/null 2>&1; jq_rc=$?
+else
+    jq_rc=0
+fi
+if [ "${bad_lines:-1}" -eq 0 ] && [ "$jq_rc" -eq 0 ]; then
+    t_ok "15b tool-calls.jsonl: one valid JSON object per line"
+else
+    t_fail "15b tool-calls.jsonl: one valid JSON object per line" "bad_lines=$bad_lines jq_rc=$jq_rc"
+fi
+
 # ---- case 16: tools/ directory frozen into run ----
 WS3_DIR="$TMP/skills/testns/tool-ws"
 mkdir -p "$WS3_DIR/stages" "$WS3_DIR/tools"
@@ -393,16 +414,13 @@ later_run=$("$ICM" init testns/tool-ws 2>/dev/null)
 printf 'done\n' > "$later_run/01-work/output/done.md"
 "$ICM" stage-done testns/tool-ws --stage 01-work --model claude-test \
     --tokens-in 500 --tokens-out 200 2>/dev/null || true
-telemetry_dir="$TMP/fakehome/.icm/telemetry"
-mkdir -p "$telemetry_dir"
-GLOBAL_TELEM="$telemetry_dir/skill-runs.jsonl"
+GLOBAL_TELEM="$HOME/.icm/telemetry/skill-runs.jsonl"
 OUT=$(cd "$PROJECT" && "$ICM" telemetry testns/tool-ws \
     --model claude-test --tokens-in 500 --tokens-out 200 --cost 0.001 2>&1) || true
-if [ -f "$GLOBAL_TELEM" ]; then
+if [ -f "$GLOBAL_TELEM" ] && grep -q 'tool-ws' "$GLOBAL_TELEM"; then
     t_ok "18 icm.sh telemetry: writes to ~/.icm/telemetry/skill-runs.jsonl"
 else
-    # The global file goes to $HOME which may be real HOME during test.
-    echo "INFO 18 icm.sh telemetry: global file check (HOME=$HOME)"
+    t_fail "18 icm.sh telemetry: writes to ~/.icm/telemetry/skill-runs.jsonl" "out=$OUT"
 fi
 
 # ---- case 18b: stage-done writes to stages.jsonl ----
@@ -488,6 +506,79 @@ if [ "$rc" -eq 1 ]; then
     t_ok "20 audit: exit 1 for non-existent workspace"
 else
     t_fail "20 audit: exit 1 for non-existent workspace" "rc=$rc"
+fi
+
+# ---- case 21: ICM-TOOLS declaration drives expected-vs-actual matching ----
+WS4_DIR="$TMP/skills/testns/icmtools-ws"
+mkdir -p "$WS4_DIR/stages"
+cat > "$WS4_DIR/stages/01-pub.md" <<'EOF'
+# Stage 01
+<!-- ICM-TOOLS expect="mcp__test__send mcp__never__called" -->
+Do it.
+EOF
+run_g=$("$ICM" init testns/icmtools-ws 2>/dev/null)
+printf 'done\n' > "$run_g/01-pub/output/done.md"
+"$ICM" stage-done testns/icmtools-ws --stage 01-pub --model m >/dev/null 2>&1
+"$ICM" gate-check --tool mcp__test__send >/dev/null 2>&1 || true
+audit_out=$("$ICM" audit testns/icmtools-ws 2>&1); rc=$?
+if [ "$rc" -eq 0 ] \
+    && printf '%s' "$audit_out" | grep -q "✓ mcp__test__send" \
+    && printf '%s' "$audit_out" | grep -q "✗ mcp__never__called"; then
+    t_ok "21 audit: ICM-TOOLS matched against gate-check telemetry"
+else
+    t_fail "21 audit: ICM-TOOLS matched against gate-check telemetry" "rc=$rc out=$audit_out"
+fi
+if printf '%s' "$audit_out" | grep -q "Deviations: 1"; then
+    t_ok "21b audit: missing expected tool counted as deviation"
+else
+    t_fail "21b audit: missing expected tool counted as deviation" "out=$audit_out"
+fi
+
+# ---- case 22: reify-telemetry fills per-stage counts from --transcript ----
+if command -v jq >/dev/null 2>&1; then
+    sleep 1
+    run_h=$("$ICM" init testns/tool-ws 2>/dev/null)
+    printf 'done\n' > "$run_h/01-work/output/done.md"
+    "$ICM" stage-done testns/tool-ws --stage 01-work --model m >/dev/null 2>&1
+    cat > "$TMP/transcript.jsonl" <<'EOF'
+{"ts":"2020-01-01T00:00:00Z","usage":{"input_tokens":100,"output_tokens":50}}
+{"ts":"2020-01-01T00:00:01Z","usage":{"input_tokens":200,"output_tokens":70}}
+EOF
+    out=$("$ICM" reify-telemetry testns/tool-ws --transcript "$TMP/transcript.jsonl" 2>&1); rc=$?
+    sj="$run_h/telemetry/stages.jsonl"
+    if [ "$rc" -eq 0 ] && grep -q '"counts":"transcript"' "$sj" \
+        && grep -q '"tokens_in":300' "$sj" && grep -q '"tokens_out":120' "$sj"; then
+        t_ok "22 reify-telemetry: per-stage counts summed from transcript"
+    else
+        t_fail "22 reify-telemetry: per-stage counts summed from transcript" "rc=$rc out=$out sj=$(cat "$sj" 2>/dev/null)"
+    fi
+else
+    echo "SKIP  22 reify-telemetry transcript (jq not installed)"
+fi
+
+# ---- case 23: reify-telemetry auto-detect picks newest transcript, warns ----
+if command -v jq >/dev/null 2>&1; then
+    sleep 1
+    run_i=$("$ICM" init testns/tool-ws 2>/dev/null)
+    printf 'done\n' > "$run_i/01-work/output/done.md"
+    "$ICM" stage-done testns/tool-ws --stage 01-work --model m >/dev/null 2>&1
+    proj_dir="$HOME/.claude/projects/some-session"
+    mkdir -p "$proj_dir"
+    printf '{"ts":"2020-01-01T00:00:00Z","usage":{"input_tokens":1,"output_tokens":1}}\n' > "$proj_dir/old.jsonl"
+    sleep 1
+    printf '{"ts":"2020-01-01T00:00:00Z","usage":{"input_tokens":7,"output_tokens":3}}\n' > "$proj_dir/new.jsonl"
+    out=$(CLAUDECODE=1 "$ICM" reify-telemetry testns/tool-ws 2>&1); rc=$?
+    sj="$run_i/telemetry/stages.jsonl"
+    if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "picked newest" \
+        && printf '%s' "$out" | grep -q "new.jsonl" \
+        && grep -q '"tokens_in":7' "$sj"; then
+        t_ok "23 reify-telemetry: auto-detect picks newest by mtime + warns"
+    else
+        t_fail "23 reify-telemetry: auto-detect picks newest by mtime + warns" "rc=$rc out=$out sj=$(cat "$sj" 2>/dev/null)"
+    fi
+    rm -rf "$HOME/.claude/projects"
+else
+    echo "SKIP  23 reify-telemetry auto-detect (jq not installed)"
 fi
 
 echo ""

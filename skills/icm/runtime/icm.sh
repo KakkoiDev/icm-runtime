@@ -34,7 +34,9 @@ _log_end() {
     _ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     _ec=${1:-0}
     if command -v jq >/dev/null 2>&1; then
-        _args_json=$(printf '%s\n' "$ICM_LOG_CMD" | jq -R -s 'split(" ")')
+        # -c is load-bearing: without it jq pretty-prints and the log entry
+        # spans multiple physical lines, breaking every JSONL consumer.
+        _args_json=$(printf '%s' "$ICM_LOG_CMD" | jq -R -s -c 'split(" ")')
     else
         _args_json="\"$ICM_LOG_CMD\""
     fi
@@ -634,12 +636,34 @@ cmd_reify_telemetry() {
         exit 1
     fi
 
-    # Auto-detect transcript path
+    # Auto-detect transcript path. Claude Code encodes the project cwd into the
+    # transcript dir name (/ and . become -), so prefer that dir when it exists;
+    # otherwise scan all sessions. Pick the newest candidate by mtime, not find
+    # order: with parallel sessions the first hit is arbitrary.
     if [ -z "$transcript" ]; then
+        _search_dir=""
         if [ -n "${CLAUDECODE:-}" ]; then
-            transcript=$(find "${HOME}/.claude/projects" -name '*.jsonl' -newer "$run_dir/.manifest" 2>/dev/null | head -1)
+            _munged=$(pwd | sed 's,[/.],-,g')
+            if [ -d "${HOME}/.claude/projects/$_munged" ]; then
+                _search_dir="${HOME}/.claude/projects/$_munged"
+            else
+                _search_dir="${HOME}/.claude/projects"
+            fi
         elif [ -d "${HOME}/.pi" ]; then
-            transcript=$(find "${HOME}/.pi/agent/sessions" -name '*.jsonl' -newer "$run_dir/.manifest" 2>/dev/null | head -1)
+            _search_dir="${HOME}/.pi/agent/sessions"
+        fi
+        if [ -n "$_search_dir" ]; then
+            _n=0
+            for _c in $(find "$_search_dir" -name '*.jsonl' -newer "$run_dir/.manifest" 2>/dev/null); do
+                _n=$((_n + 1))
+                if [ -z "$transcript" ] || [ "$_c" -nt "$transcript" ]; then
+                    transcript=$_c
+                fi
+            done
+            if [ "$_n" -gt 1 ]; then
+                echo "reify-telemetry: $_n candidate transcripts; picked newest: $transcript" >&2
+                echo "Pass --transcript <path> if this is the wrong session." >&2
+            fi
         fi
     fi
 
@@ -660,11 +684,11 @@ cmd_reify_telemetry() {
             _tokens_in=$(jq --arg start "$_prev_ts" --arg end "$_ts" '
                 select(.ts >= $start and .ts < $end and .usage.input_tokens)
                 | .usage.input_tokens
-            ' "$transcript" 2>/dev/null | paste -sd+ - | bc 2>/dev/null || echo "null")
+            ' "$transcript" 2>/dev/null | awk '{s+=$1} END {if (NR==0) print "null"; else print s}')
             _tokens_out=$(jq --arg start "$_prev_ts" --arg end "$_ts" '
                 select(.ts >= $start and .ts < $end and .usage.output_tokens)
                 | .usage.output_tokens
-            ' "$transcript" 2>/dev/null | paste -sd+ - | bc 2>/dev/null || echo "null")
+            ' "$transcript" 2>/dev/null | awk '{s+=$1} END {if (NR==0) print "null"; else print s}')
             printf '{"ts":"%s","stage":"%s","model":"(from transcript)","tokens_in":%s,"tokens_out":%s,"counts":"transcript"}\n' \
                 "$_ts" "$_stage" "$_tokens_in" "$_tokens_out"
             _prev_ts="$_ts"
@@ -677,27 +701,8 @@ cmd_reify_telemetry() {
         rm -f "$_tmp"
     fi
 
-    # --- Strategy 2: ccusage fallback (run-level totals) ---
-    if command -v bun >/dev/null 2>&1; then
-        echo "reify-telemetry: trying ccusage fallback for run-level totals..."
-        _harness="claude"
-        [ -n "${CLAUDECODE:-}" ] || _harness="pi"
-        _cc_json=$(bunx ccusage "$_harness" session --json --no-cost 2>/dev/null | jq -c '.[]' 2>/dev/null) || true
-        if [ -n "$_cc_json" ]; then
-            _ti=$(printf '%s\n' "$_cc_json" | jq -r '.input_tokens // 0' 2>/dev/null | tail -1)
-            _to=$(printf '%s\n' "$_cc_json" | jq -r '.output_tokens // 0' 2>/dev/null | tail -1)
-            _m=$(printf '%s\n' "$_cc_json" | jq -r '.model // "unknown"' 2>/dev/null | tail -1)
-            printf '{"ts":"%s","stage":"*","model":"%s","tokens_in":%s,"tokens_out":%s,"counts":"ccusage-run-total"}\n' \
-                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_m" "$_ti" "$_to" \
-                >> "$stages_jsonl"
-            echo "reify-telemetry: ccusage run-level totals appended to $stages_jsonl"
-            echo "reify-telemetry: per-stage splits unavailable -- totals are for the full session."
-            return 0
-        fi
-    fi
-
-    echo "reify-telemetry: cannot reify token counts -- no transcript, no ccusage." >&2
-    echo "Install jq for transcript parsing or bun for ccusage." >&2
+    echo "reify-telemetry: cannot reify token counts from transcript." >&2
+    echo "Install jq for transcript parsing, or pass --transcript <path>." >&2
     echo "Stage markers are still valid; token counts remain as estimated." >&2
     exit 0
 }
@@ -784,22 +789,58 @@ cmd_audit() {
     fi
 
     # --- Check 2: expected tools vs actual tool calls ---
+    # Expected side: an explicit <!-- ICM-TOOLS expect="..." --> declaration in the
+    # frozen contract. Each whitespace-separated token is an ERE matched unanchored
+    # against actual harness tool names (same semantics as ICM-GATE tools=).
+    # Contracts without the declaration fall back to scraping `tools/...` mentions
+    # from prose. Actual side: harness tool names recorded by gate-check --tool
+    # invocations in tool-calls.jsonl; scripts run directly via bash are not logged.
+    telemetry_log="$run_dir/../../../telemetry/tool-calls.jsonl"
+    run_start=$(printf '%s' "$latest" | sed 's/_/T/' | sed 's/-\([0-9][0-9]\)$/:\1/')
+    actual_tools=""
+    if [ -f "$telemetry_log" ]; then
+        _window=$(awk -v start="$run_start" -F '"' '/"ts":"/ { if ($4 >= start) print }' "$telemetry_log" 2>/dev/null || true)
+        actual_tools=$( { printf '%s\n' "$_window" | grep -o '"--tool","[^"]*"' | sed 's/"--tool","//;s/"$//' || true; \
+                          printf '%s\n' "$_window" | grep -o -- '--tool [^" ]*' | sed 's/--tool //' || true; } | sort -u)
+    fi
+
     for stage_dir in "$run_dir"/[0-9]*/; do
         [ -d "$stage_dir" ] || continue
         stage_name=$(basename "$stage_dir")
         ctx="$stage_dir/CONTEXT.md"
         [ -f "$ctx" ] || continue
 
-        expected=$(grep -Eo '\x60?(bash )?tools/[^\x60" ]+(\.sh)?\x60?' "$ctx" 2>/dev/null | tr -d '\x60' | sort -u || true)
+        icm_tools=$(grep -o '<!-- ICM-TOOLS expect="[^"]*"' "$ctx" 2>/dev/null | head -1 | sed 's/.*expect="//;s/"$//' || true)
+        legacy=""
+        if [ -z "$icm_tools" ]; then
+            legacy=$(grep -Eo '\x60?(bash )?tools/[^\x60" ]+(\.sh)?\x60?' "$ctx" 2>/dev/null | tr -d '\x60' | sort -u || true)
+        fi
         gates=$(grep -Eo 'run="(tools/)?[^"]+"' "$ctx" 2>/dev/null | sed 's/run="//;s/"$//' | sort -u || true)
 
-        if [ -n "$expected" ] || [ -n "$gates" ]; then
+        if [ -n "$icm_tools" ] || [ -n "$legacy" ] || [ -n "$gates" ]; then
             echo "STAGE $stage_name -- TOOL CALL CHECK"
             echo "──────────────────────────────────────"
 
-            if [ -n "$expected" ]; then
-                echo "Expected tools:"
-                printf '%s\n' "$expected" | while IFS= read -r tool; do
+            if [ -n "$icm_tools" ]; then
+                echo "Expected tools (ICM-TOOLS):"
+                for tool in $icm_tools; do
+                    if [ -z "$actual_tools" ]; then
+                        echo "  ? $tool -- no harness tool-call records in run window"
+                    elif printf '%s\n' "$actual_tools" | grep -Eq -- "$tool"; then
+                        echo "  ✓ $tool"
+                    else
+                        echo "  ✗ $tool -- not seen in telemetry"
+                        deviations=$((deviations + 1))
+                    fi
+                done
+                if [ -z "$actual_tools" ]; then
+                    echo "  (no gate-check records; enforcement adapter likely not registered -- cannot verify)"
+                fi
+            fi
+
+            if [ -n "$legacy" ]; then
+                echo "Expected tools (prose scrape, declare ICM-TOOLS instead):"
+                printf '%s\n' "$legacy" | while IFS= read -r tool; do
                     echo "  $tool"
                 done
             fi
@@ -811,21 +852,15 @@ cmd_audit() {
                 done
             fi
 
-            telemetry_log="$run_dir/../../../telemetry/tool-calls.jsonl"
             if [ -f "$telemetry_log" ]; then
-                echo "Actual tool calls during run window:"
-                run_start=$(printf '%s' "$latest" | sed 's/_/T/' | sed 's/-\([0-9][0-9]\)$/:\1/')
-                awk -v start="$run_start" -F '"' '
-                    /"ts":"/ {
-                        ts=$4
-                        if (ts >= start) {
-                            if (index(ts, substr(start,1,13)) == 1) print
-                        }
-                    }
-                ' "$telemetry_log" 2>/dev/null | while IFS= read -r line; do
-                    cmd=$(printf '%s' "$line" | grep -o '"cmd":"[^"]*"' | sed 's/"cmd":"//;s/"$//' 2>/dev/null || echo "?")
-                    echo "  $cmd"
-                done
+                echo "Actual harness tools during run window:"
+                if [ -n "$actual_tools" ]; then
+                    printf '%s\n' "$actual_tools" | while IFS= read -r t; do
+                        echo "  $t"
+                    done
+                else
+                    echo "  (none recorded)"
+                fi
             else
                 echo "No telemetry available (tool-calls.jsonl not found)"
                 deviations=$((deviations + 1))
