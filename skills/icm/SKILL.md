@@ -75,8 +75,11 @@ completed stage without this marker as a deviation.
 ### reify-telemetry workspace-name [--cwd dir] [--transcript path]
 Post-hoc: reads the conversation transcript (auto-detected by harness) and fills
 in exact token counts per stage in `stages.jsonl`. Replaces `"counts": "estimated"`
-with `"counts": "transcript"`. Requires jq. No-op with warning if transcript
-cannot be found.
+with `"counts": "transcript"`. Requires jq. If transcript parsing yields nothing
+and bun is installed, falls back to `bunx ccusage` and appends a single run-level
+total (`"stage": "*"`, `"counts": "ccusage-run-total"`) with no per-stage split.
+No-op with warning if transcript cannot be found, or if neither jq nor bun
+produces counts.
 
 ### telemetry workspace-name --model <name> --tokens-in <N> --tokens-out <N> --cost <amount>
 Writes a summary of the completed run to `~/.icm/telemetry/skill-runs.jsonl`.

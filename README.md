@@ -91,7 +91,8 @@ all projects.
 `icm.sh stage-done` which writes to `telemetry/stages.jsonl` and drops a
 `.stage-telemetry` marker. The audit command flags any completed stage that lacks
 this telemetry. A post-hoc `icm.sh reify-telemetry` command fills in exact token
-counts from the conversation transcript.
+counts from the conversation transcript (jq), falling back to run-level totals
+via `bunx ccusage` when per-stage transcript parsing yields nothing.
 
 ### Audit
 `icm.sh audit <workspace>` does two checks: (1) verifies every completed stage has
