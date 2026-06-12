@@ -173,6 +173,40 @@ find_transcript() {
     [ -z "$ft_found" ] || echo "$ft_found"
 }
 
+# Print deduped usage events from transcript $1 within window [$2, $3] as
+# compact JSONL: {ts, model, tokens_in, cache_creation, cache_read, tokens_out}.
+# Accepts flat events ({ts, usage}) and Claude Code session format
+# ({timestamp, message: {model, usage}}). Claude Code logs the same API message
+# several times as content streams; dedup by message.id keeping the last
+# occurrence, else counts inflate 2-3x. Requires jq; silent without it.
+transcript_usage() {
+    jq -c -s --arg start "$2" --arg end "$3" '
+        [ to_entries[]
+          | .key as $i | .value
+          | (.ts // .timestamp // empty) as $t
+          | select($t >= $start and $t <= $end)
+          | (.usage // .message.usage // empty) as $u
+          | select((($u.input_tokens // 0) + ($u.output_tokens // 0)) > 0)
+          | {dedup: (.message.id // "line-\($i)"),
+             ts: $t,
+             model: (.model // .message.model // null),
+             tokens_in: ($u.input_tokens // 0),
+             cache_creation: ($u.cache_creation_input_tokens // 0),
+             cache_read: ($u.cache_read_input_tokens // 0),
+             tokens_out: ($u.output_tokens // 0)} ]
+        | group_by(.dedup) | map(last) | sort_by(.ts) | .[]
+        | del(.dedup)
+    ' "$1" 2>/dev/null || true
+}
+
+# Sum a transcript_usage stream into "tokens_in tokens_out" (or "null null").
+# tokens_in includes cache reads/writes: it is the context actually fed to the
+# model, not just the uncached slice.
+usage_sums() {
+    jq -r '"\(.tokens_in + .cache_creation + .cache_read) \(.tokens_out)"' 2>/dev/null \
+        | awk '{i+=$1; o+=$2} END {if (NR==0) print "null null"; else print i, o}'
+}
+
 # Extract a double-quoted attribute value from an ICM-GATE line. $1=line $2=attr name.
 # Values must be double-quoted, single-line, with no embedded double quotes.
 gate_attr() {
@@ -652,25 +686,19 @@ cmd_stage_done() {
     if command -v jq >/dev/null 2>&1; then
         [ -n "$transcript" ] || transcript=$(find_transcript "$run_dir")
         if [ -n "$transcript" ] && [ -f "$transcript" ]; then
-            jq -c --arg start "$_prev_ts" --arg end "$_now" --arg stage "$stage" '
-                (.ts // .timestamp // empty) as $t
-                | select($t >= $start and $t <= $end)
-                | (.usage // .message.usage // empty) as $u
-                | select((($u.input_tokens // 0) + ($u.output_tokens // 0)) > 0)
-                | {ts: $t, stage: $stage, model: (.model // .message.model // null),
-                   tokens_in: ($u.input_tokens // 0), tokens_out: ($u.output_tokens // 0)}
-            ' "$transcript" 2>/dev/null >> "$telemetry_dir/usage.jsonl" || true
+            _snap=$(mktemp)
+            transcript_usage "$transcript" "$_prev_ts" "$_now" \
+                | jq -c --arg stage "$stage" '. + {stage: $stage}' 2>/dev/null > "$_snap" || true
+            if [ -s "$_snap" ]; then
+                cat "$_snap" >> "$telemetry_dir/usage.jsonl"
+            fi
             if [ "$tokens_in" = "null" ] && [ "$tokens_out" = "null" ]; then
-                _sums=$(jq -r --arg start "$_prev_ts" --arg end "$_now" '
-                    (.ts // .timestamp // empty) as $t
-                    | select($t >= $start and $t <= $end)
-                    | (.usage // .message.usage // empty) as $u
-                    | "\($u.input_tokens // 0) \($u.output_tokens // 0)"
-                ' "$transcript" 2>/dev/null | awk '{i+=$1; o+=$2} END {if (NR==0) print "null null"; else print i, o}')
+                _sums=$(usage_sums < "$_snap")
                 tokens_in=${_sums% *}
                 tokens_out=${_sums#* }
                 [ "$tokens_in" = "null" ] || _counts="transcript"
             fi
+            rm -f "$_snap"
             if [ "$full" -eq 1 ]; then
                 mkdir -p "$run_dir/$stage"
                 jq -c --arg start "$_prev_ts" --arg end "$_now" '
@@ -752,14 +780,9 @@ cmd_reify_telemetry() {
         _prev_ts="1970-01-01T00:00:00Z"
         jq -r '[.ts, .stage] | @tsv' "$stages_jsonl" 2>/dev/null | while IFS='	' read -r _ts _stage; do
             [ -n "$_ts" ] || continue
-            _tokens_in=$(jq --arg start "$_prev_ts" --arg end "$_ts" '
-                select(.ts >= $start and .ts < $end and .usage.input_tokens)
-                | .usage.input_tokens
-            ' "$transcript" 2>/dev/null | awk '{s+=$1} END {if (NR==0) print "null"; else print s}')
-            _tokens_out=$(jq --arg start "$_prev_ts" --arg end "$_ts" '
-                select(.ts >= $start and .ts < $end and .usage.output_tokens)
-                | .usage.output_tokens
-            ' "$transcript" 2>/dev/null | awk '{s+=$1} END {if (NR==0) print "null"; else print s}')
+            _sums=$(transcript_usage "$transcript" "$_prev_ts" "$_ts" | usage_sums)
+            _tokens_in=${_sums% *}
+            _tokens_out=${_sums#* }
             printf '{"ts":"%s","stage":"%s","model":"(from transcript)","tokens_in":%s,"tokens_out":%s,"counts":"transcript"}\n' \
                 "$_ts" "$_stage" "$_tokens_in" "$_tokens_out"
             _prev_ts="$_ts"

@@ -615,6 +615,25 @@ if command -v jq >/dev/null 2>&1; then
     else
         t_fail "24b stage-done --full: raw window frozen into stage dir" "ft=$(cat "$ft" 2>/dev/null)"
     fi
+    # ---- case 24c: Claude Code format -- nested usage, dup message ids, cache ----
+    sleep 1
+    run_l=$("$ICM" init testns/tool-ws 2>/dev/null)
+    ts_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$TMP/sess.jsonl" <<EOF
+{"type":"assistant","timestamp":"$ts_now","message":{"id":"msg_1","model":"claude-x","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"cache_creation_input_tokens":5,"output_tokens":40}}}
+{"type":"assistant","timestamp":"$ts_now","message":{"id":"msg_1","model":"claude-x","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"cache_creation_input_tokens":5,"output_tokens":40}}}
+{"type":"assistant","timestamp":"$ts_now","message":{"id":"msg_2","model":"claude-x","usage":{"input_tokens":2,"output_tokens":8}}}
+EOF
+    printf 'done\n' > "$run_l/01-work/output/done.md"
+    "$ICM" stage-done testns/tool-ws --stage 01-work --model m >/dev/null 2>&1
+    uj="$run_l/telemetry/usage.jsonl"
+    sj="$run_l/telemetry/stages.jsonl"
+    if [ "$(grep -c '"stage":"01-work"' "$uj" 2>/dev/null)" -eq 2 ] \
+        && grep -q '"tokens_in":1017' "$sj" && grep -q '"tokens_out":48' "$sj"; then
+        t_ok "24c stage-done: Claude format deduped by message.id, cache included"
+    else
+        t_fail "24c stage-done: Claude format deduped by message.id, cache included" "uj=$(cat "$uj" 2>/dev/null) sj=$(cat "$sj" 2>/dev/null)"
+    fi
     rm -f .icm/telemetry/transcript-path
 else
     echo "SKIP  24 stage-done snapshot (jq not installed)"
