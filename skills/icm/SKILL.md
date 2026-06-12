@@ -32,9 +32,11 @@ to `.icm/telemetry/tool-calls.jsonl`. Each ICM run gets a `telemetry/run.json` w
 metadata and stage names.
 
 **Per-stage token tracking is MANDATORY.** After every stage completes, workspace
-skills call `icm.sh stage-done` with token counts. This writes to the run's
-`telemetry/stages.jsonl` and drops a `.stage-telemetry` marker. The audit command
-flags any completed stage that lacks this telemetry.
+skills call `icm.sh stage-done`. This writes to the run's `telemetry/stages.jsonl`,
+drops a `.stage-telemetry` marker, and snapshots the stage's usage events
+(token counts per API call, no conversation content) into `telemetry/usage.jsonl`
+so counts survive harness transcript cleanup and can be recomputed anytime.
+The audit command flags any completed stage that lacks this telemetry.
 
 Workspace skills MUST also call `icm.sh telemetry` after completion to write
 a summary to `~/.icm/telemetry/skill-runs.jsonl`.
@@ -65,20 +67,33 @@ Prints stage names in order.
 Removes old completed runs, keeping the N most recent (default: 5).
 **Never removes incomplete runs** — work in progress is always preserved.
 
-### stage-done workspace-name --stage <name> --model <m> [--tokens-in <N> --tokens-out <N>]
+### stage-done workspace-name --stage <name> --model <m> [--tokens-in <N> --tokens-out <N>] [--full] [--transcript <path>]
 MANDATORY. Records a stage boundary marker to `telemetry/stages.jsonl` and drops
-a `.stage-telemetry` marker. Token counts are OPTIONAL (the model cannot access
-them programmatically mid-session). After the full run, call `reify-telemetry`
-to fill in exact counts from the conversation transcript. Audit flags any
-completed stage without this marker as a deviation.
+a `.stage-telemetry` marker. Audit flags any completed stage without it.
+
+Snapshots the session transcript for the stage window (previous boundary to now)
+while the file still exists: usage events (timestamps and token counts only, no
+conversation content) are appended to `telemetry/usage.jsonl`, and token counts
+are computed on the spot when `--tokens-in/--tokens-out` are not passed
+(`"counts": "transcript"`). The transcript is located via the path recorded by
+`gate-hook.sh`, falling back to harness session dirs; `--transcript` overrides.
+Requires jq for snapshotting; without it the boundary is still recorded with
+null counts.
+
+`--full` additionally freezes the raw transcript window into
+`<stage>/transcript.jsonl`. That is full conversation content: prompts, fetched
+pages, everything. Do not commit runs containing `--full` snapshots without
+deciding that deliberately.
 
 ### reify-telemetry workspace-name [--cwd dir] [--transcript path]
-Post-hoc: reads the conversation transcript and fills in exact token counts per
-stage in `stages.jsonl` (sums `usage.*` between consecutive stage-done timestamps).
-Replaces `"counts": "estimated"` with `"counts": "transcript"`. Requires jq.
-Auto-detection prefers the Claude Code project dir matching cwd, then picks the
-newest candidate by mtime and warns on stderr when several sessions qualify;
+Post-hoc fallback for runs where `stage-done` could not snapshot (no jq, no
+transcript at the time): reads the conversation transcript and fills in exact
+token counts per stage in `stages.jsonl` (sums `usage.*` between consecutive
+stage-done timestamps). Replaces `"counts": "estimated"` with
+`"counts": "transcript"`. Requires jq. Transcript located like stage-done
+(hook-recorded path, then newest session by mtime; warns when several qualify);
 pass `--transcript` to override. No-op with warning if no transcript is found.
+Must run while the harness still has the session file.
 
 ### telemetry workspace-name --model <name> --tokens-in <N> --tokens-out <N> --cost <amount>
 Writes a summary of the completed run to `~/.icm/telemetry/skill-runs.jsonl`.
@@ -97,6 +112,19 @@ so they exist only where an enforcement adapter is registered; with no records
 in the run window, audit says so and does not count deviations. Produces a
 deviation report on stdout including per-stage token usage summary. Exit 0 even
 with deviations (report is informational). Exit 1 if workspace or run is not found.
+
+### seal workspace-name [--cwd dir]
+Appends a digest line for the latest run's evidence files (`.manifest`,
+`telemetry/run.json`, `telemetry/stages.jsonl`, `telemetry/usage.jsonl`) to
+`.icm-seals.log` at the project root. The log is committable while `.icm/`
+stays gitignored; commit it after each sealed run. Tamper evidence, not
+prevention: until the log is committed and pushed it is an editable file like
+any other. Call at run end, after `stage-done` and `telemetry`.
+
+### verify-seal workspace-name [--cwd dir]
+Recomputes digests for the latest run against its last seal line. Prints
+`SEAL OK` (exit 0) or `SEAL MISMATCH` per altered/missing file (exit 1).
+Exit 1 too when no seal exists for the run.
 
 ### gate-check --tool tool-name [--cwd dir]
 Evaluates frozen ICM-GATE lines in the latest run of every workspace under cwd's `.icm/`.

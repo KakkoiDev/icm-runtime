@@ -71,3 +71,12 @@ After a run completes, verify all steps were followed:
 ```
 bash ~/.agents/skills/icm/runtime/icm.sh audit jake-van-clief/ai-folder-research
 ```
+
+## Seal
+
+After audit, seal the run's evidence and tell the user to commit the log:
+```
+bash ~/.agents/skills/icm/runtime/icm.sh seal jake-van-clief/ai-folder-research
+```
+This appends digests to `.icm-seals.log` at the project root. Suggest committing
+it; do not commit it yourself without being asked.

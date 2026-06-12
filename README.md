@@ -88,11 +88,24 @@ after completion. The global file is the single place to find every skill run ac
 all projects.
 
 **Per-stage token tracking is MANDATORY.** After every stage, workspace skills call
-`icm.sh stage-done` which writes to `telemetry/stages.jsonl` and drops a
-`.stage-telemetry` marker. The audit command flags any completed stage that lacks
-this telemetry. A post-hoc `icm.sh reify-telemetry` command fills in exact
-per-stage token counts from the conversation transcript (requires jq; picks the
-newest matching session and warns when several qualify).
+`icm.sh stage-done` which writes to `telemetry/stages.jsonl`, drops a
+`.stage-telemetry` marker, and snapshots the stage's usage events from the live
+session transcript into `telemetry/usage.jsonl` (timestamps and token counts per
+API call, no conversation content). Counts are computed on the spot and survive
+harness transcript cleanup. `stage-done --full` additionally freezes the raw
+transcript window into the stage dir for forensics; that IS conversation content,
+so leave it gitignored unless you decide otherwise. The transcript path comes from
+the gate hook when registered, else newest-session detection. `icm.sh
+reify-telemetry` remains as a post-hoc fallback. The audit command flags any
+completed stage that lacks stage-done telemetry.
+
+### Seal
+`icm.sh seal <workspace>` appends a sha256 digest line for the latest run's
+evidence files to `.icm-seals.log` at the project root; commit that file (it
+lives outside the gitignored `.icm/`). `icm.sh verify-seal <workspace>` recomputes
+and exits 1 on mismatch. This is tamper evidence, not prevention: it converts a
+silent telemetry edit into a visible digest mismatch and git diff, within the
+same negligent-not-malicious threat model as gates.
 
 ### Audit
 `icm.sh audit <workspace>` does two checks: (1) verifies every completed stage has

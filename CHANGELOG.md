@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 - 2026-06-12
+
+- **Per-stage transcript snapshots:** `stage-done` now snapshots the session
+  transcript window (previous boundary to now) while the file still exists.
+  Default appends usage events only (ts, model, token counts -- no conversation
+  content) to `telemetry/usage.jsonl` and computes the stage's token counts on
+  the spot (`"counts": "transcript"`). `--full` additionally freezes the raw
+  window into `<stage>/transcript.jsonl` (full conversation content -- keep
+  gitignored unless deliberate). `reify-telemetry` demoted to post-hoc fallback.
+- `gate-hook.sh` records the harness-provided `transcript_path` into
+  `.icm/telemetry/transcript-path` on every hook invocation; `stage-done` and
+  `reify-telemetry` prefer it over newest-session guessing (shared
+  `find_transcript` helper).
+- **Seal:** `icm.sh seal <workspace>` appends sha256 digests of the latest run's
+  evidence files (`.manifest`, `run.json`, `stages.jsonl`, `usage.jsonl`) to a
+  committable `.icm-seals.log` at the project root; `verify-seal` recomputes and
+  exits 1 on mismatch. Tamper evidence once committed, not prevention.
+- Tests: cases 24-26 (snapshot, --full, hook transcript-path recording,
+  seal/verify/tamper). 49 total.
+
 ## 0.4.0 - 2026-06-12
 
 - **ICM-TOOLS declarations:** stage contracts declare expected harness tools with
