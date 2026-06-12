@@ -11,6 +11,14 @@
 3. Write a draft with: Introduction, Body (3-5 sections), Conclusion
 4. Follow voice-rules if present (check for `../../_config/voice-rules.md` in the run dir)
 
+## After Output (MANDATORY)
+Call `stage-done` immediately after writing output:
+```bash
+bash ~/.agents/skills/icm/runtime/icm.sh stage-done jake-van-clief/ai-folder-research \
+  --stage 02-draft --model <current-model> \
+  --tokens-in <approx> --tokens-out <approx>
+```
+
 ## Outputs
 | Artifact | Location | Format |
 |----------|----------|--------|

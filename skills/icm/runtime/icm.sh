@@ -9,8 +9,40 @@
 #   icm.sh clean  <workspace-name> [--keep N]  Remove old completed runs, keep N most recent
 #   icm.sh gate-check --tool <tool-name> [--cwd DIR]  Evaluate frozen ICM-GATE lines; exit 1 + DENY on failure
 #   icm.sh gate-status [--cwd DIR]           List declared gates and hook registration per scope
+#   icm.sh telemetry <workspace> --model <m> --tokens-in <n> --tokens-out <n> --cost <c> [--cwd <dir>]
+#   icm.sh stage-done <workspace> --stage <name> --model <m> [--tokens-in <n> --tokens-out <n>] [--cwd <dir>]
+#   icm.sh reify-telemetry <workspace> [--cwd <dir>] [--transcript <path>]
+#   icm.sh audit <workspace> [--cwd <dir>]
 
 set -eu
+
+# --- telemetry ---
+ICM_TELEMETRY_DIR=".icm/telemetry"
+ICM_LOG_START=""
+ICM_LOG_CMD=""
+
+_log_start() {
+    [ -d "$ICM_TELEMETRY_DIR" ] || return 0
+    ICM_LOG_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    ICM_LOG_CMD="$*"
+}
+
+_log_end() {
+    [ -d "$ICM_TELEMETRY_DIR" ] || return 0
+    [ -n "${ICM_LOG_START:-}" ] || return 0
+    local _ts _ec _args_json
+    _ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    _ec=${1:-0}
+    if command -v jq >/dev/null 2>&1; then
+        _args_json=$(printf '%s\n' "$ICM_LOG_CMD" | jq -R -s 'split(" ")')
+    else
+        _args_json="\"$ICM_LOG_CMD\""
+    fi
+    printf '{"ts":"%s","tool":"icm.sh","cmd":"%s","args":%s,"cwd":"%s","ec":%s}\n' \
+        "$ICM_LOG_START" "$(printf '%s' "$ICM_LOG_CMD" | cut -d' ' -f1)" \
+        "$_args_json" "$PWD" "$_ec" \
+        >> "$ICM_TELEMETRY_DIR/tool-calls.jsonl" 2>/dev/null || true
+}
 # Logical (not -P) resolution on purpose: when invoked via the installed symlink
 # (~/.agents/skills/icm/runtime/icm.sh), SKILLS_DIR must be ~/.agents/skills - where
 # EVERY installed skill lives - not this repo's skills/, which only holds its own.
@@ -22,6 +54,10 @@ usage() {
     echo "Usage: icm.sh <init|next|list|diff|stages|clean> <workspace-name> [--keep N]" >&2
     echo "       icm.sh gate-check --tool <tool-name> [--cwd <dir>]" >&2
     echo "       icm.sh gate-status [--cwd <dir>]" >&2
+    echo "       icm.sh telemetry <workspace> --model <m> --tokens-in <n> --tokens-out <n> --cost <c> [--cwd <dir>]" >&2
+    echo "       icm.sh stage-done <workspace> --stage <name> --model <m> [--tokens-in <n> --tokens-out <n>] [--cwd <dir>]" >&2
+    echo "       icm.sh reify-telemetry <workspace> [--cwd <dir>] [--transcript <path>]" >&2
+    echo "       icm.sh audit <workspace> [--cwd <dir>]" >&2
     exit 1
 }
 
@@ -220,6 +256,10 @@ cmd_init() {
 
     mkdir -p "$run_dir"
 
+    # Create telemetry directories (per-run + global tool-calls.jsonl)
+    mkdir -p "$run_dir/telemetry"
+    mkdir -p ".icm/telemetry"
+
     for stage_file in "$stages_dir"/*.md; do
         [ -f "$stage_file" ] || continue
         stage_name=$(basename "$stage_file" .md)
@@ -233,6 +273,10 @@ cmd_init() {
     if [ -d "$ws_dir/checks" ]; then
         cp -R "$ws_dir/checks" "$run_dir/checks"
     fi
+    # Freeze deterministic tools and add to manifest
+    if [ -d "$ws_dir/tools" ]; then
+        cp -R "$ws_dir/tools" "$run_dir/tools"
+    fi
     (
         cd "$run_dir"
         for ctx in [0-9]*/CONTEXT.md; do
@@ -244,7 +288,33 @@ cmd_init() {
                 sha_file "$cf"
             done
         fi
+        if [ -d tools ]; then
+            find tools -type f | sort | while IFS= read -r tf; do
+                sha_file "$tf"
+            done
+        fi
     ) > "$run_dir/.manifest"
+
+    # Write run metadata with stage list
+    _stage_names=""
+    for _sf in "$stages_dir"/*.md; do
+        [ -f "$_sf" ] || continue
+        _sn=$(basename "$_sf" .md)
+        if [ -z "$_stage_names" ]; then
+            _stage_names="\"$_sn\""
+        else
+            _stage_names="$_stage_names, \"$_sn\""
+        fi
+    done
+    cat > "$run_dir/telemetry/run.json" <<ICM_RUN_EOF
+{
+  "workspace": "$ws",
+  "run_id": "$ts",
+  "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "stages": [$_stage_names],
+  "cwd": "$PWD"
+}
+ICM_RUN_EOF
 
     echo "$run_dir"
 
@@ -444,10 +514,334 @@ cmd_stages() {
     done
 }
 
+# ---- telemetry ----
+# Write a completed-run summary to the global telemetry file.
+# Called by workspace skills after all stages complete.
+cmd_telemetry() {
+    ws=""; model=""; tokens_in=""; tokens_out=""; cost=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --model) model="$2"; shift 2 ;;
+            --tokens-in) tokens_in="$2"; shift 2 ;;
+            --tokens-out) tokens_out="$2"; shift 2 ;;
+            --cost) cost="$2"; shift 2 ;;
+            --cwd) cd "$2"; shift 2 ;;
+            *) ws="$1"; shift ;;
+        esac
+    done
+    if [ -z "$ws" ]; then
+        echo "telemetry requires workspace name" >&2
+        exit 1
+    fi
+    latest=$(latest_run "$ws")
+    if [ -z "$latest" ]; then
+        echo "no runs for $ws" >&2
+        exit 1
+    fi
+    local global_dir="${HOME}/.icm/telemetry"
+    mkdir -p "$global_dir"
+    local global_file="$global_dir/skill-runs.jsonl"
+    local run_cwd
+    run_cwd=$(grep '"cwd"' ".icm/$ws/$latest/telemetry/run.json" 2>/dev/null | sed 's/.*"cwd": "\(.*\)".*/\1/' || echo "$PWD")
+    printf '{"ts":"%s","skill":"%s","run_id":"%s","model":"%s","tokens_in":%s,"tokens_out":%s,"cost_est":%s,"cwd":"%s","log_dir":".icm/%s/%s/telemetry"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ws" "$latest" "$model" "$tokens_in" "$tokens_out" "$cost" "$run_cwd" "$ws" "$latest" \
+        >> "$global_file"
+    echo "$global_file"
+}
+
+# ---- stage-done ----
+# Record a stage boundary marker. Token counts are OPTIONAL (the model
+# cannot access them programmatically; Tier 2 reify-telemetry fills them
+# in post-hoc from the conversation transcript).
+# MANDATORY after every completed stage.
+cmd_stage_done() {
+    ws=""; stage=""; model=""; tokens_in="null"; tokens_out="null"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --stage) stage="$2"; shift 2 ;;
+            --model) model="$2"; shift 2 ;;
+            --tokens-in) tokens_in="$2"; shift 2 ;;
+            --tokens-out) tokens_out="$2"; shift 2 ;;
+            --cwd) cd "$2"; shift 2 ;;
+            *) ws="$1"; shift ;;
+        esac
+    done
+    if [ -z "$ws" ]; then
+        echo "stage-done requires workspace name" >&2
+        exit 1
+    fi
+    if [ -z "$stage" ]; then
+        echo "stage-done requires --stage <name>" >&2
+        exit 1
+    fi
+
+    latest=$(latest_run "$ws")
+    if [ -z "$latest" ]; then
+        echo "no active run for $ws" >&2
+        exit 1
+    fi
+
+    run_dir=".icm/$ws/$latest"
+    telemetry_dir="$run_dir/telemetry"
+    mkdir -p "$telemetry_dir"
+
+    # Write stage boundary. tokens_in/tokens_out default to null.
+    _ti_val="$tokens_in"
+    _to_val="$tokens_out"
+    case "$_ti_val" in ''|null) _ti_val="null" ;; esac
+    case "$_to_val" in ''|null) _to_val="null" ;; esac
+    printf '{"ts":"%s","stage":"%s","model":"%s","tokens_in":%s,"tokens_out":%s,"counts":"estimated"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$stage" "$model" "$_ti_val" "$_to_val" \
+        >> "$telemetry_dir/stages.jsonl"
+
+    # Drop a marker so audit can verify this stage boundary was recorded
+    mkdir -p "$run_dir/$stage"
+    printf '{"stage":"%s","reported_at":"%s"}\n' \
+        "$stage" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > "$run_dir/$stage/.stage-telemetry"
+
+    echo "OK: $stage boundary recorded for $ws/$latest"
+}
+
+# ---- reify-telemetry ----
+# Post-hoc: read the conversation transcript and fill in exact token
+# counts for each stage in the latest run's stages.jsonl.
+# Harness auto-detection: checks CLAUDECODE env var, then ~/.pi existence.
+# --transcript overrides the auto-detected path.
+cmd_reify_telemetry() {
+    ws=""; transcript=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --cwd) cd "$2"; shift 2 ;;
+            --transcript) transcript="$2"; shift 2 ;;
+            *) ws="$1"; shift ;;
+        esac
+    done
+    if [ -z "$ws" ]; then
+        echo "reify-telemetry requires workspace name" >&2
+        exit 1
+    fi
+
+    latest=$(latest_run "$ws")
+    if [ -z "$latest" ]; then
+        echo "no runs for $ws" >&2
+        exit 1
+    fi
+    run_dir=".icm/$ws/$latest"
+    stages_jsonl="$run_dir/telemetry/stages.jsonl"
+    if [ ! -f "$stages_jsonl" ]; then
+        echo "no stages.jsonl -- run stage-done first" >&2
+        exit 1
+    fi
+
+    # Auto-detect transcript path
+    if [ -z "$transcript" ]; then
+        if [ -n "${CLAUDECODE:-}" ]; then
+            transcript=$(find "${HOME}/.claude/projects" -name '*.jsonl' -newer "$run_dir/.manifest" 2>/dev/null | head -1)
+        elif [ -d "${HOME}/.pi" ]; then
+            transcript=$(find "${HOME}/.pi/agent/sessions" -name '*.jsonl' -newer "$run_dir/.manifest" 2>/dev/null | head -1)
+        fi
+    fi
+
+    if [ -z "$transcript" ] || [ ! -f "$transcript" ]; then
+        echo "reify-telemetry: cannot find conversation transcript" >&2
+        echo "Pass --transcript <path> to specify it manually." >&2
+        echo "Skipping -- stage markers are still valid, token counts remain as-is." >&2
+        exit 0
+    fi
+
+    echo "reify-telemetry: reading transcript: $transcript"
+
+    if command -v jq >/dev/null 2>&1; then
+        _tmp=$(mktemp)
+        _prev_ts="1970-01-01T00:00:00Z"
+        jq -r '[.ts, .stage] | @tsv' "$stages_jsonl" 2>/dev/null | while IFS='	' read -r _ts _stage; do
+            [ -n "$_ts" ] || continue
+            _tokens_in=$(jq --arg start "$_prev_ts" --arg end "$_ts" '
+                select(.ts >= $start and .ts < $end and .usage.input_tokens)
+                | .usage.input_tokens
+            ' "$transcript" 2>/dev/null | paste -sd+ - | bc 2>/dev/null || echo "null")
+            _tokens_out=$(jq --arg start "$_prev_ts" --arg end "$_ts" '
+                select(.ts >= $start and .ts < $end and .usage.output_tokens)
+                | .usage.output_tokens
+            ' "$transcript" 2>/dev/null | paste -sd+ - | bc 2>/dev/null || echo "null")
+            printf '{"ts":"%s","stage":"%s","model":"(from transcript)","tokens_in":%s,"tokens_out":%s,"counts":"transcript"}\n' \
+                "$_ts" "$_stage" "$_tokens_in" "$_tokens_out"
+            _prev_ts="$_ts"
+        done > "$_tmp"
+        if [ -s "$_tmp" ]; then
+            mv "$_tmp" "$stages_jsonl"
+            echo "reify-telemetry: updated $stages_jsonl with transcript token counts"
+            return 0
+        fi
+        rm -f "$_tmp"
+    fi
+
+    # --- Strategy 2: ccusage fallback (run-level totals) ---
+    if command -v bun >/dev/null 2>&1; then
+        echo "reify-telemetry: trying ccusage fallback for run-level totals..."
+        _harness="claude"
+        [ -n "${CLAUDECODE:-}" ] || _harness="pi"
+        _cc_json=$(bunx ccusage "$_harness" session --json --no-cost 2>/dev/null | jq -c '.[]' 2>/dev/null) || true
+        if [ -n "$_cc_json" ]; then
+            _ti=$(printf '%s\n' "$_cc_json" | jq -r '.input_tokens // 0' 2>/dev/null | tail -1)
+            _to=$(printf '%s\n' "$_cc_json" | jq -r '.output_tokens // 0' 2>/dev/null | tail -1)
+            _m=$(printf '%s\n' "$_cc_json" | jq -r '.model // "unknown"' 2>/dev/null | tail -1)
+            printf '{"ts":"%s","stage":"*","model":"%s","tokens_in":%s,"tokens_out":%s,"counts":"ccusage-run-total"}\n' \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_m" "$_ti" "$_to" \
+                >> "$stages_jsonl"
+            echo "reify-telemetry: ccusage run-level totals appended to $stages_jsonl"
+            echo "reify-telemetry: per-stage splits unavailable -- totals are for the full session."
+            return 0
+        fi
+    fi
+
+    echo "reify-telemetry: cannot reify token counts -- no transcript, no ccusage." >&2
+    echo "Install jq for transcript parsing or bun for ccusage." >&2
+    echo "Stage markers are still valid; token counts remain as estimated." >&2
+    exit 0
+}
+
+# ---- audit ----
+# Compare expected tool calls (from frozen stage contracts) against
+# actual tool invocations (from .icm/telemetry/tool-calls.jsonl).
+# Also verifies that every completed stage has per-stage token telemetry
+# (stage-done was called). Produces a deviation report on stdout.
+cmd_audit() {
+    ws=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --cwd) cd "$2"; shift 2 ;;
+            *) ws="$1"; shift ;;
+        esac
+    done
+    if [ -z "$ws" ]; then
+        echo "audit requires workspace name" >&2
+        exit 1
+    fi
+
+    latest=$(latest_run "$ws")
+    if [ -z "$latest" ]; then
+        echo "No runs for workspace '$ws'." >&2
+        exit 1
+    fi
+    run_dir=".icm/$ws/$latest"
+
+    # Check if run is complete (all stages have output)
+    complete=true
+    completed_stages=""
+    for stage_dir in "$run_dir"/[0-9]*/; do
+        [ -d "$stage_dir" ] || continue
+        output_dir="${stage_dir}output"
+        stage_name=$(basename "$stage_dir")
+        if [ ! -d "$output_dir" ] || [ -z "$(ls -A "$output_dir" 2>/dev/null)" ]; then
+            complete=false
+        else
+            completed_stages="$completed_stages $stage_name"
+        fi
+    done
+
+    audit_header="AUDIT: $ws / $latest"
+    if [ "$complete" = false ]; then
+        echo "$audit_header (INCOMPLETE -- audit may be incomplete)"
+    else
+        echo "$audit_header"
+    fi
+    echo "=========================================="
+    echo ""
+
+    deviations=0
+
+    # --- Check 1: per-stage telemetry completeness ---
+    if [ "$complete" = true ]; then
+        echo "STAGE TELEMETRY CHECK"
+        echo "──────────────────────────────────────"
+        stages_jsonl="$run_dir/telemetry/stages.jsonl"
+        for sn in $completed_stages; do
+            if [ -f "$run_dir/$sn/.stage-telemetry" ]; then
+                echo "  ✓ $sn -- telemetry reported"
+            else
+                echo "  ✗ $sn -- MISSING stage-done telemetry"
+                deviations=$((deviations + 1))
+            fi
+        done
+        if [ -f "$stages_jsonl" ]; then
+            echo ""
+            echo "Per-stage token usage:"
+            while IFS= read -r line; do
+                _s=$(printf '%s' "$line" | grep -o '"stage":"[^"]*"' | sed 's/"stage":"//;s/"$//' 2>/dev/null || echo "?")
+                _ti=$(printf '%s' "$line" | grep -o '"tokens_in":[0-9null]*' | sed 's/"tokens_in"://' 2>/dev/null || echo "?")
+                _to=$(printf '%s' "$line" | grep -o '"tokens_out":[0-9null]*' | sed 's/"tokens_out"://' 2>/dev/null || echo "?")
+                _m=$(printf '%s' "$line" | grep -o '"model":"[^"]*"' | sed 's/"model":"//;s/"$//' 2>/dev/null || echo "?")
+                _src=$(printf '%s' "$line" | grep -o '"counts":"[^"]*"' | sed 's/"counts":"//;s/"$//' 2>/dev/null || echo "?")
+                echo "  $_s: in=$_ti out=$_to model=$_m [$_src]"
+            done < "$stages_jsonl"
+        else
+            echo "  No stages.jsonl -- stage-done was never called for any stage"
+            deviations=$((deviations + 1))
+        fi
+        echo ""
+    fi
+
+    # --- Check 2: expected tools vs actual tool calls ---
+    for stage_dir in "$run_dir"/[0-9]*/; do
+        [ -d "$stage_dir" ] || continue
+        stage_name=$(basename "$stage_dir")
+        ctx="$stage_dir/CONTEXT.md"
+        [ -f "$ctx" ] || continue
+
+        expected=$(grep -Eo '\x60?(bash )?tools/[^\x60" ]+(\.sh)?\x60?' "$ctx" 2>/dev/null | tr -d '\x60' | sort -u || true)
+        gates=$(grep -Eo 'run="(tools/)?[^"]+"' "$ctx" 2>/dev/null | sed 's/run="//;s/"$//' | sort -u || true)
+
+        if [ -n "$expected" ] || [ -n "$gates" ]; then
+            echo "STAGE $stage_name -- TOOL CALL CHECK"
+            echo "──────────────────────────────────────"
+
+            if [ -n "$expected" ]; then
+                echo "Expected tools:"
+                printf '%s\n' "$expected" | while IFS= read -r tool; do
+                    echo "  $tool"
+                done
+            fi
+
+            if [ -n "$gates" ]; then
+                echo "Gate checkers:"
+                printf '%s\n' "$gates" | while IFS= read -r gate; do
+                    echo "  $gate"
+                done
+            fi
+
+            telemetry_log="$run_dir/../../../telemetry/tool-calls.jsonl"
+            if [ -f "$telemetry_log" ]; then
+                echo "Actual tool calls during run window:"
+                run_start=$(printf '%s' "$latest" | sed 's/_/T/' | sed 's/-\([0-9][0-9]\)$/:\1/')
+                awk -v start="$run_start" -F '"' '
+                    /"ts":"/ {
+                        ts=$4
+                        if (ts >= start) {
+                            if (index(ts, substr(start,1,13)) == 1) print
+                        }
+                    }
+                ' "$telemetry_log" 2>/dev/null | while IFS= read -r line; do
+                    cmd=$(printf '%s' "$line" | grep -o '"cmd":"[^"]*"' | sed 's/"cmd":"//;s/"$//' 2>/dev/null || echo "?")
+                    echo "  $cmd"
+                done
+            else
+                echo "No telemetry available (tool-calls.jsonl not found)"
+                deviations=$((deviations + 1))
+            fi
+            echo ""
+        fi
+    done
+
+    echo "──────────────────────────────────────"
+    echo "Deviations: $deviations (review manually for false positives)"
+    if [ "$complete" = false ]; then
+        echo "Run is incomplete -- audit may be partial."
+    fi
+}
+
 # ---- gate-check ----
-# Called by the PreToolUse hook (gate-hook.sh) on every mcp__* tool call.
-# Exit 0 silent: no gate matched or all matching gates pass.
-# Exit 1 + DENY lines on stdout: a matching gate failed or integrity failed.
 cmd_gate_check() {
     gc_tool=""
     while [ $# -gt 0 ]; do
@@ -565,8 +959,15 @@ if [ $# -lt 1 ]; then
     usage
 fi
 
+_log_start "$0" "$@"
+
 cmd=$1
 shift
+
+_trap_exit() {
+    _log_end $?
+}
+trap _trap_exit EXIT
 
 case "$cmd" in
     gate-check)  cmd_gate_check "$@" ;;
@@ -577,6 +978,10 @@ case "$cmd" in
     diff)   [ $# -ge 1 ] || usage; cmd_diff "$1" ;;
     stages) [ $# -ge 1 ] || usage; cmd_stages "$1" ;;
     clean)  [ $# -ge 1 ] || usage; ws=$1; shift; cmd_clean "$ws" "$@" ;;
+    telemetry) cmd_telemetry "$@" ;;
+    stage-done) cmd_stage_done "$@" ;;
+    reify-telemetry) cmd_reify_telemetry "$@" ;;
+    audit) cmd_audit "$@" ;;
     *)
         echo "Unknown command: $cmd" >&2
         usage

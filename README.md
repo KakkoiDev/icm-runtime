@@ -74,6 +74,37 @@ Uninstall: `./installer.sh --remove`
 5. Output of one stage becomes input to the next
 6. Human can edit any intermediate output — the next stage picks up changes
 
+## Observability
+
+### Tool logging
+Every `icm.sh` invocation in a project with `.icm/` writes to
+`.icm/telemetry/tool-calls.jsonl`. Each line records: timestamp, command, args,
+working directory, exit code.
+
+### Run telemetry
+Each run gets `telemetry/run.json` (workspace, run_id, created timestamp, stage
+count, cwd). Workspace skills write a summary to `~/.icm/telemetry/skill-runs.jsonl`
+after completion. The global file is the single place to find every skill run across
+all projects.
+
+**Per-stage token tracking is MANDATORY.** After every stage, workspace skills call
+`icm.sh stage-done` which writes to `telemetry/stages.jsonl` and drops a
+`.stage-telemetry` marker. The audit command flags any completed stage that lacks
+this telemetry. A post-hoc `icm.sh reify-telemetry` command fills in exact token
+counts from the conversation transcript.
+
+### Audit
+`icm.sh audit <workspace>` does two checks: (1) verifies every completed stage has
+per-stage telemetry (`stage-done` was called), and (2) compares expected tool calls
+(from frozen stage contracts using the `Call \`tools/...\`` convention) against
+actual tool invocations in the telemetry log. Produces a deviation report including
+per-stage token usage summary.
+
+### Deterministic tools
+Skills can include a `tools/` directory with shell scripts. Stage contracts reference
+them to make expected tool calls auditable. Tools are frozen into each run and added
+to the tamper-evidence `.manifest`.
+
 ## Stage gates (harness-enforced)
 
 Stage contracts are prose, and prose does not bind: an agent can skip a verification step

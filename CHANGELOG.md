@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 - 2026-06-12
+
+- Tool call logging: every `icm.sh` invocation in a project with `.icm/` writes a
+  structured line to `.icm/telemetry/tool-calls.jsonl` (timestamp, command, args,
+  cwd, exit code)
+- Run telemetry: `cmd_init` writes `telemetry/run.json` per run with stage names;
+  new `telemetry` command writes completed-run summaries to
+  `~/.icm/telemetry/skill-runs.jsonl`
+- **Per-stage token tracking (MANDATORY, two-tier):** new `stage-done` command records
+  stage boundaries to `telemetry/stages.jsonl` + `.stage-telemetry` marker. Token counts
+  are OPTIONAL (the model has no programmatic access mid-session). New `reify-telemetry`
+  command fills in exact counts post-hoc from the conversation transcript. Audit flags
+  any completed stage without a `stage-done` marker.
+- Deterministic tools convention: skills get an optional `tools/` directory; `init`
+  freezes it into the run and adds to `.manifest` for tamper evidence
+- Audit command: `icm.sh audit <workspace>` now does two checks — (1) stage
+  telemetry completeness, (2) expected vs actual tool calls. Reports per-stage
+  token usage summary from `stages.jsonl`.
+- Manifest expansion: `tools/` files are now hashed in `.manifest` alongside
+  `CONTEXT.md` and `checks/` files
+- Reference implementation: `ai-folder-research` skill gets `tools/` with example
+  search and synthesize scripts; stage contracts updated to reference tools
+  and include mandatory per-stage telemetry
+
 ## 0.2.1 - 2026-06-10
 
 - Fix: workspace resolution was broken for every externally-installed skill.

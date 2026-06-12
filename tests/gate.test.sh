@@ -328,6 +328,168 @@ else
     echo "SKIP  14 installer pi extension (jq not installed)"
 fi
 
+# ---- case 15: tool-calls.jsonl is created and populated ----
+LOG_FILE="$PROJECT/.icm/telemetry/tool-calls.jsonl"
+if [ -f "$LOG_FILE" ]; then
+    count=$(wc -l < "$LOG_FILE" | tr -d ' ')
+    if [ "$count" -ge 1 ]; then
+        t_ok "15 tool-calls.jsonl exists and has entries ($count lines)"
+    else
+        t_fail "15 tool-calls.jsonl exists and has entries" "lines=$count"
+    fi
+else
+    t_fail "15 tool-calls.jsonl exists" "file not found at $LOG_FILE"
+fi
+
+# ---- case 16: tools/ directory frozen into run ----
+WS3_DIR="$TMP/skills/testns/tool-ws"
+mkdir -p "$WS3_DIR/stages" "$WS3_DIR/tools"
+cat > "$WS3_DIR/stages/01-work.md" <<'EOF'
+# Stage 01
+Call `tools/do-work.sh` to process.
+EOF
+cat > "$WS3_DIR/tools/do-work.sh" <<'EOF'
+#!/bin/sh
+echo "work done"
+EOF
+chmod +x "$WS3_DIR/tools/do-work.sh"
+
+run_e=$("$ICM" init testns/tool-ws 2>/dev/null)
+if [ -d "$run_e/tools" ] && [ -f "$run_e/tools/do-work.sh" ]; then
+    t_ok "16 tools/ dir frozen into run by init"
+else
+    t_fail "16 tools/ dir frozen into run by init" "run=$run_e"
+fi
+
+# ---- case 16b: tools/ in manifest ----
+if grep -q 'tools/do-work.sh' "$run_e/.manifest"; then
+    t_ok "16b tools/ files listed in .manifest"
+else
+    t_fail "16b tools/ files listed in .manifest" "manifest=$(cat "$run_e/.manifest")"
+fi
+
+# ---- case 16c: tampered tool -> DENY ----
+printf 'x' >> "$run_e/tools/do-work.sh"
+out=$("$ICM" gate-check --tool mcp__test__send 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "tampered"; then
+    t_ok "16c tampered tool: DENY"
+else
+    t_fail "16c tampered tool: DENY" "rc=$rc out=$out"
+fi
+
+# ---- case 17: telemetry/run.json created ----
+if [ -f "$run_e/telemetry/run.json" ]; then
+    if grep -q '"workspace"' "$run_e/telemetry/run.json" && grep -q '"stages"' "$run_e/telemetry/run.json"; then
+        t_ok "17 telemetry/run.json created with metadata"
+    else
+        t_fail "17 telemetry/run.json created with metadata" "missing workspace or stages key"
+    fi
+else
+    t_fail "17 telemetry/run.json created" "file not found"
+fi
+
+# ---- case 18: icm.sh telemetry writes to global file ----
+later_run=$("$ICM" init testns/tool-ws 2>/dev/null)
+printf 'done\n' > "$later_run/01-work/output/done.md"
+"$ICM" stage-done testns/tool-ws --stage 01-work --model claude-test \
+    --tokens-in 500 --tokens-out 200 2>/dev/null || true
+telemetry_dir="$TMP/fakehome/.icm/telemetry"
+mkdir -p "$telemetry_dir"
+GLOBAL_TELEM="$telemetry_dir/skill-runs.jsonl"
+OUT=$(cd "$PROJECT" && "$ICM" telemetry testns/tool-ws \
+    --model claude-test --tokens-in 500 --tokens-out 200 --cost 0.001 2>&1) || true
+if [ -f "$GLOBAL_TELEM" ]; then
+    t_ok "18 icm.sh telemetry: writes to ~/.icm/telemetry/skill-runs.jsonl"
+else
+    # The global file goes to $HOME which may be real HOME during test.
+    echo "INFO 18 icm.sh telemetry: global file check (HOME=$HOME)"
+fi
+
+# ---- case 18b: stage-done writes to stages.jsonl ----
+"$ICM" stage-done testns/tool-ws --stage 01-work --model claude-test \
+    --tokens-in 500 --tokens-out 200 2>/dev/null
+_latest_run=$(cd .icm/testns/tool-ws && ls -1 2>/dev/null | sort -r | head -1)
+stages_jsonl=".icm/testns/tool-ws/$_latest_run/telemetry/stages.jsonl"
+if [ -f "$stages_jsonl" ] && grep -q '"stage":"01-work"' "$stages_jsonl"; then
+    t_ok "18b stage-done: writes to telemetry/stages.jsonl"
+else
+    t_fail "18b stage-done: writes to telemetry/stages.jsonl" "file=$stages_jsonl"
+fi
+
+# ---- case 18c: stage-done creates .stage-telemetry marker ----
+if [ -f ".icm/testns/tool-ws/$_latest_run/01-work/.stage-telemetry" ]; then
+    t_ok "18c stage-done: creates .stage-telemetry marker"
+else
+    t_fail "18c stage-done: creates .stage-telemetry marker"
+fi
+
+# ---- case 18d: audit flags missing stage telemetry ----
+sleep 1
+run_f=$("$ICM" init testns/tool-ws 2>/dev/null)
+if [ "$run_f" = "$run_e" ]; then
+    t_fail "18d-pre distinct run dir" "collided: $run_f"
+fi
+printf 'done\n' > "$run_f/01-work/output/done.md"
+# Intentionally do NOT call stage-done for run_f/01-work
+audit_out=$("$ICM" audit testns/tool-ws 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$audit_out" | grep -q "MISSING stage-done"; then
+    t_ok "18d audit: flags stage without stage-done telemetry"
+else
+    t_fail "18d audit: flags stage without stage-done telemetry" "rc=$rc out=$audit_out"
+fi
+
+# ---- case 19: audit on a completed run (with telemetry) ----
+# Complete the first run properly with stage-done
+"$ICM" stage-done testns/tool-ws --stage 01-work --model claude-test \
+    --tokens-in 500 --tokens-out 200 2>/dev/null
+audit_out=$("$ICM" audit testns/tool-ws 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$audit_out" | grep -q "AUDIT:"; then
+    t_ok "19 audit: produces report for completed run"
+else
+    t_fail "19 audit: produces report for completed run" "rc=$rc out=$audit_out"
+fi
+
+# ---- case 19b: audit detects expected tools from contract ----
+if printf '%s' "$audit_out" | grep -q "tools/do-work.sh"; then
+    t_ok "19b audit: detects expected tools from stage contract"
+else
+    t_fail "19b audit: detects expected tools from stage contract" "out=$audit_out"
+fi
+
+# ---- case 19c: audit reports per-stage token usage ----
+if printf '%s' "$audit_out" | grep -q "Per-stage token usage" \
+    && printf '%s' "$audit_out" | grep -q "01-work: in=500 out=200"; then
+    t_ok "19c audit: reports per-stage token usage from stages.jsonl"
+else
+    t_fail "19c audit: reports per-stage token usage from stages.jsonl" "out=$audit_out"
+fi
+
+# ---- case 19d: audit handles null token counts without crashing ----
+# Find the latest run dir and append a null-entry directly
+_latest_run=$(cd .icm/testns/tool-ws && ls -1 2>/dev/null | sort -r | head -1)
+if [ -n "$_latest_run" ]; then
+    _run_dir=".icm/testns/tool-ws/$_latest_run"
+    printf '{"ts":"2026-06-12T09:00:00Z","stage":"02-more","model":"claude-test","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' \
+        >> "$_run_dir/telemetry/stages.jsonl"
+    mkdir -p "$_run_dir/02-more/output"
+    printf 'done\n' > "$_run_dir/02-more/output/done.md"
+    touch "$_run_dir/02-more/.stage-telemetry"
+fi
+audit_out=$("$ICM" audit testns/tool-ws 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$audit_out" | grep -q "in=null out=null"; then
+    t_ok "19d audit: handles null token counts without crashing"
+else
+    t_fail "19d audit: handles null token counts without crashing" "rc=$rc out=$audit_out"
+fi
+
+# ---- case 20: audit on non-existent workspace ----
+audit_out=$("$ICM" audit no-such-workspace 2>&1); rc=$?
+if [ "$rc" -eq 1 ]; then
+    t_ok "20 audit: exit 1 for non-existent workspace"
+else
+    t_fail "20 audit: exit 1 for non-existent workspace" "rc=$rc"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

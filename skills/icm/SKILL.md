@@ -25,6 +25,20 @@ bash <icm-runtime-path>/icm.sh <command> <workspace-name>
 
 `~/.agents/skills/icm/runtime/icm.sh`
 
+## Telemetry
+
+Every `icm.sh` invocation in a project with `.icm/` writes a structured log line
+to `.icm/telemetry/tool-calls.jsonl`. Each ICM run gets a `telemetry/run.json` with
+metadata and stage names.
+
+**Per-stage token tracking is MANDATORY.** After every stage completes, workspace
+skills call `icm.sh stage-done` with token counts. This writes to the run's
+`telemetry/stages.jsonl` and drops a `.stage-telemetry` marker. The audit command
+flags any completed stage that lacks this telemetry.
+
+Workspace skills MUST also call `icm.sh telemetry` after completion to write
+a summary to `~/.icm/telemetry/skill-runs.jsonl`.
+
 ## Commands
 
 ### init workspace-name
@@ -51,6 +65,31 @@ Prints stage names in order.
 Removes old completed runs, keeping the N most recent (default: 5).
 **Never removes incomplete runs** — work in progress is always preserved.
 
+### stage-done workspace-name --stage <name> --model <m> [--tokens-in <N> --tokens-out <N>]
+MANDATORY. Records a stage boundary marker to `telemetry/stages.jsonl` and drops
+a `.stage-telemetry` marker. Token counts are OPTIONAL (the model cannot access
+them programmatically mid-session). After the full run, call `reify-telemetry`
+to fill in exact counts from the conversation transcript. Audit flags any
+completed stage without this marker as a deviation.
+
+### reify-telemetry workspace-name [--cwd dir] [--transcript path]
+Post-hoc: reads the conversation transcript (auto-detected by harness) and fills
+in exact token counts per stage in `stages.jsonl`. Replaces `"counts": "estimated"`
+with `"counts": "transcript"`. Requires jq. No-op with warning if transcript
+cannot be found.
+
+### telemetry workspace-name --model <name> --tokens-in <N> --tokens-out <N> --cost <amount>
+Writes a summary of the completed run to `~/.icm/telemetry/skill-runs.jsonl`.
+Called by workspace skills after all stages are done. Prints the global telemetry
+file path on success.
+
+### audit workspace-name [--cwd dir]
+Two-part check: (1) verifies every completed stage has per-stage telemetry from
+`stage-done`, (2) compares expected tool calls from frozen stage contracts against
+actual tool invocations in `.icm/telemetry/tool-calls.jsonl`. Produces a deviation
+report on stdout including per-stage token usage summary. Exit 0 even with
+deviations (report is informational). Exit 1 if workspace or run is not found.
+
 ### gate-check --tool tool-name [--cwd dir]
 Evaluates frozen ICM-GATE lines in the latest run of every workspace under cwd's `.icm/`.
 Exit 0 (silent): no gate matches the tool, or all matching gates pass. Exit 1 with `DENY`
@@ -67,6 +106,16 @@ project `.pi/extensions/icm-gate.ts`). Exit 1 iff active runs declare gates and 
 scope registers enforcement, or the process runs inside Claude Code (`CLAUDECODE` set)
 without a Claude-scope registration. Publish-stage contracts should run this before
 sending anything.
+
+## Deterministic Tools
+
+Skills may include a `tools/` directory with deterministic shell scripts. Stage
+contracts reference them via `Call \`tools/script.sh\``. `icm.sh init` freezes
+`tools/` into the run (like `checks/`) and adds them to the `.manifest` for
+tamper evidence. The `audit` command uses these references to verify that expected
+tools were called.
+
+Gate checkers can also reference tools: `run="tools/verify.sh"`.
 
 ## Stage gates
 

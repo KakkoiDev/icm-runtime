@@ -40,3 +40,34 @@ This workspace uses the ICM runtime. Do not scaffold directories manually.
 - After `icm.sh init`, read the run path from stdout. Check stderr for gitignore warnings and inform the user.
 - Each stage's contract is at `<run_path>/<stage>/CONTEXT.md`.
 - After each stage, call `icm.sh next jake-van-clief/ai-folder-research` to find the next empty stage.
+
+## Per-Stage Telemetry (MANDATORY)
+
+After writing output for each stage, immediately call:
+```
+bash ~/.agents/skills/icm/runtime/icm.sh stage-done jake-van-clief/ai-folder-research \
+  --stage <stage-name> --model <current-model>
+```
+
+Token counts are OPTIONAL — the model cannot access them mid-session.
+After the full run, call `reify-telemetry` to fill in exact counts:
+```
+bash ~/.agents/skills/icm/runtime/icm.sh reify-telemetry jake-van-clief/ai-folder-research
+```
+
+This is MANDATORY. The audit command will flag stages that skip the marker.
+
+## Run Telemetry
+
+After all stages complete, call:
+```
+bash ~/.agents/skills/icm/runtime/icm.sh telemetry jake-van-clief/ai-folder-research \
+  --model <current-model> --tokens-in <total-tokens-in> --tokens-out <total-tokens-out> --cost <amount>
+```
+
+## Audit
+
+After a run completes, verify all steps were followed:
+```
+bash ~/.agents/skills/icm/runtime/icm.sh audit jake-van-clief/ai-folder-research
+```
