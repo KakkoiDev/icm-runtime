@@ -1,5 +1,7 @@
 # Stage 01: Research
 
+<!-- ICM-TOOLS expect="(search_web|web_search|WebSearch) (fetch_url|web_fetch|WebFetch)" -->
+
 ## Inputs
 | Source | Location | Scope |
 |--------|----------|-------|
@@ -7,10 +9,9 @@
 
 ## Process
 1. Identify the topic from user input
-2. Call `tools/search.sh "<query>"` to find relevant sources (aim for 5-10 results)
-3. Use `search_web` to find relevant sources (aim for 5-10 results)
-4. Use `fetch_url` to read the most important pages
-5. Call `tools/synthesize.sh <stage_dir>` to produce structured notes
+2. Use the web search tool to find relevant sources (aim for 5-10 results)
+3. Use the URL fetch tool to read the most important pages
+4. Synthesize structured notes into the output file
 
 ## After Output (MANDATORY)
 Call `stage-done` immediately after writing output:
