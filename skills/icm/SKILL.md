@@ -65,7 +65,10 @@ Prints stage names in order.
 
 ### clean workspace-name [--keep N]
 Removes old completed runs, keeping the N most recent (default: 5).
-**Never removes incomplete runs** — work in progress is always preserved.
+**Never removes incomplete runs** - work in progress is always preserved.
+Also rotates `.icm/telemetry/tool-calls.jsonl` to its last 10000 lines when it
+has grown past that (the wide hook matcher logs one line per tool call).
+Audit runs you care about before cleaning: rotation drops old actual-tool records.
 
 ### stage-done workspace-name --stage <name> --model <m> [--tokens-in <N> --tokens-out <N>] [--full] [--transcript <path>]
 MANDATORY. Records a stage boundary marker to `telemetry/stages.jsonl` and drops
@@ -121,10 +124,11 @@ stays gitignored; commit it after each sealed run. Tamper evidence, not
 prevention: until the log is committed and pushed it is an editable file like
 any other. Call at run end, after `stage-done` and `telemetry`.
 
-### verify-seal workspace-name [--cwd dir]
-Recomputes digests for the latest run against its last seal line. Prints
-`SEAL OK` (exit 0) or `SEAL MISMATCH` per altered/missing file (exit 1).
-Exit 1 too when no seal exists for the run.
+### verify-seal workspace-name|--all [--cwd dir]
+Recomputes digests against the last seal line. Per workspace: latest run only.
+`--all`: every (workspace, run) ever sealed; runs pruned by `clean` print
+`SEAL SKIP` and do not fail. Prints `SEAL OK` (exit 0) or `SEAL MISMATCH`
+per altered/missing file (exit 1). Exit 1 too when no seal exists.
 
 ### gate-check --tool tool-name [--cwd dir]
 Evaluates frozen ICM-GATE lines in the latest run of every workspace under cwd's `.icm/`.

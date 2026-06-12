@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.0 - 2026-06-12
+
+- `installer.sh --remove` now unregisters both enforcement adapters (Claude
+  hook entry in settings.json, pi extension symlink). Previously it deleted
+  the skill files and left a dangling hook that, with the wide matcher,
+  errored on every tool call.
+- Installer settings writes use cat-over-inode instead of mv: mv swaps the
+  inode and silently breaks settings.json setups that are hardlinks/symlinks
+  into a dotfiles repo.
+- pi adapter records the active session transcript into
+  `.icm/telemetry/transcript-path` (newest jsonl under ~/.pi/agent/sessions,
+  throttled to once a minute), matching gate-hook.sh on Claude Code.
+- `clean` rotates `.icm/telemetry/tool-calls.jsonl` to its last 10000 lines;
+  the wide matcher made the log unbounded.
+- `verify-seal --all`: verify every sealed run still on disk; pruned runs are
+  SEAL SKIP, not failures.
+- Tests: 13d, 14b, 28, 28b, 29. 58 total.
+
 ## 0.6.0 - 2026-06-12
 
 - **Hook matcher widened from `mcp__.*` to `.*`:** built-in tools (WebSearch,

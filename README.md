@@ -103,7 +103,8 @@ completed stage that lacks stage-done telemetry.
 `icm.sh seal <workspace>` appends a sha256 digest line for the latest run's
 evidence files to `.icm-seals.log` at the project root; commit that file (it
 lives outside the gitignored `.icm/`). `icm.sh verify-seal <workspace>` recomputes
-and exits 1 on mismatch. This is tamper evidence, not prevention: it converts a
+and exits 1 on mismatch; `verify-seal --all` checks every sealed run still on
+disk (pruned runs are skipped, not failed). This is tamper evidence, not prevention: it converts a
 silent telemetry edit into a visible digest mismatch and git diff, within the
 same negligent-not-malicious threat model as gates.
 
