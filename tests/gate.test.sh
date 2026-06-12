@@ -581,6 +581,70 @@ else
     echo "SKIP  23 reify-telemetry auto-detect (jq not installed)"
 fi
 
+# ---- case 24: stage-done snapshots usage events + computes counts ----
+if command -v jq >/dev/null 2>&1; then
+    sleep 1
+    run_j=$("$ICM" init testns/tool-ws 2>/dev/null)
+    ts_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    printf '{"ts":"%s","usage":{"input_tokens":11,"output_tokens":5}}\n{"ts":"%s","usage":{"input_tokens":9,"output_tokens":4}}\n' \
+        "$ts_now" "$ts_now" > "$TMP/sess.jsonl"
+    printf '%s\n' "$TMP/sess.jsonl" > .icm/telemetry/transcript-path
+    printf 'done\n' > "$run_j/01-work/output/done.md"
+    "$ICM" stage-done testns/tool-ws --stage 01-work --model m >/dev/null 2>&1
+    uj="$run_j/telemetry/usage.jsonl"
+    sj="$run_j/telemetry/stages.jsonl"
+    if [ -f "$uj" ] && [ "$(grep -c '"stage":"01-work"' "$uj")" -eq 2 ] \
+        && grep -q '"tokens_in":20' "$sj" && grep -q '"tokens_out":9' "$sj" \
+        && grep -q '"counts":"transcript"' "$sj"; then
+        t_ok "24 stage-done: usage snapshot + counts computed from transcript"
+    else
+        t_fail "24 stage-done: usage snapshot + counts computed from transcript" "uj=$(cat "$uj" 2>/dev/null) sj=$(cat "$sj" 2>/dev/null)"
+    fi
+
+    # ---- case 24b: --full freezes raw window into the stage dir ----
+    sleep 1
+    run_k=$("$ICM" init testns/tool-ws 2>/dev/null)
+    ts_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    printf '{"ts":"%s","usage":{"input_tokens":3,"output_tokens":2}}\n{"ts":"%s","type":"text","content":"hello"}\n' \
+        "$ts_now" "$ts_now" > "$TMP/sess.jsonl"
+    printf 'done\n' > "$run_k/01-work/output/done.md"
+    "$ICM" stage-done testns/tool-ws --stage 01-work --model m --full >/dev/null 2>&1
+    ft="$run_k/01-work/transcript.jsonl"
+    if [ -f "$ft" ] && [ "$(wc -l < "$ft" | tr -d ' ')" -eq 2 ] && grep -q '"content":"hello"' "$ft"; then
+        t_ok "24b stage-done --full: raw window frozen into stage dir"
+    else
+        t_fail "24b stage-done --full: raw window frozen into stage dir" "ft=$(cat "$ft" 2>/dev/null)"
+    fi
+    rm -f .icm/telemetry/transcript-path
+else
+    echo "SKIP  24 stage-done snapshot (jq not installed)"
+fi
+
+# ---- case 25: gate-hook records transcript_path into .icm/telemetry ----
+rm -f "$PROJECT/.icm/telemetry/transcript-path"
+hook_json mcp__other__thing "$PROJECT" | "$HOOK" >/dev/null 2>&1 || true
+if [ -f "$PROJECT/.icm/telemetry/transcript-path" ] \
+    && [ "$(cat "$PROJECT/.icm/telemetry/transcript-path")" = "/tmp/t.jsonl" ]; then
+    t_ok "25 gate-hook: records transcript_path for snapshots"
+else
+    t_fail "25 gate-hook: records transcript_path for snapshots" "got=$(cat "$PROJECT/.icm/telemetry/transcript-path" 2>/dev/null)"
+fi
+rm -f "$PROJECT/.icm/telemetry/transcript-path"
+
+# ---- case 26: seal + verify-seal + tamper detection ----
+out=$("$ICM" seal testns/tool-ws 2>&1); rc=$?
+v_ok=$("$ICM" verify-seal testns/tool-ws 2>&1); rc_ok=$?
+_latest_run=$(cd .icm/testns/tool-ws && ls -1 2>/dev/null | sort -r | head -1)
+printf 'x' >> ".icm/testns/tool-ws/$_latest_run/telemetry/stages.jsonl"
+v_bad=$("$ICM" verify-seal testns/tool-ws 2>&1); rc_bad=$?
+if [ "$rc" -eq 0 ] && [ -f .icm-seals.log ] \
+    && [ "$rc_ok" -eq 0 ] && printf '%s' "$v_ok" | grep -q "SEAL OK" \
+    && [ "$rc_bad" -eq 1 ] && printf '%s' "$v_bad" | grep -q "SEAL MISMATCH.*stages.jsonl"; then
+    t_ok "26 seal: digests recorded, verify-seal detects tampering"
+else
+    t_fail "26 seal: digests recorded, verify-seal detects tampering" "rc=$rc rc_ok=$rc_ok rc_bad=$rc_bad ok=$v_ok bad=$v_bad"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

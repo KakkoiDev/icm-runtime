@@ -2,7 +2,8 @@
 # Claude Code PreToolUse hook: denies gated MCP tool calls while an ICM run's gate
 # checker fails. Registered with matcher "mcp__.*" (installer.sh --hooks). Reads the
 # harness JSON on stdin, delegates to icm.sh gate-check, emits a permissionDecision
-# deny JSON when the gate denies. Read-only: never writes to the run dir.
+# deny JSON when the gate denies. Never writes to run dirs; records the harness
+# transcript_path into .icm/telemetry/ so stage-done snapshots the right session.
 # Fails closed: missing jq or missing stdin fields deny rather than silently allow.
 set -eu
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
@@ -29,6 +30,13 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || :)
 [ -d "$cwd" ] || exit 0
 cd "$cwd"
 [ -d .icm ] || exit 0
+
+# Record the authoritative session transcript path for stage-done snapshots.
+# Best-effort: never let it interfere with gate evaluation.
+tp=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null || :)
+if [ -n "$tp" ] && [ -d .icm/telemetry ]; then
+    printf '%s\n' "$tp" > .icm/telemetry/transcript-path 2>/dev/null || :
+fi
 
 if out=$("$SCRIPT_DIR/icm.sh" gate-check --tool "$tool_name" 2>&1); then
     exit 0

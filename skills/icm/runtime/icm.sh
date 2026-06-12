@@ -10,9 +10,11 @@
 #   icm.sh gate-check --tool <tool-name> [--cwd DIR]  Evaluate frozen ICM-GATE lines; exit 1 + DENY on failure
 #   icm.sh gate-status [--cwd DIR]           List declared gates and hook registration per scope
 #   icm.sh telemetry <workspace> --model <m> --tokens-in <n> --tokens-out <n> --cost <c> [--cwd <dir>]
-#   icm.sh stage-done <workspace> --stage <name> --model <m> [--tokens-in <n> --tokens-out <n>] [--cwd <dir>]
+#   icm.sh stage-done <workspace> --stage <name> --model <m> [--tokens-in <n> --tokens-out <n>] [--full] [--transcript <path>] [--cwd <dir>]
 #   icm.sh reify-telemetry <workspace> [--cwd <dir>] [--transcript <path>]
 #   icm.sh audit <workspace> [--cwd <dir>]
+#   icm.sh seal <workspace> [--cwd <dir>]         Append run evidence digests to .icm-seals.log
+#   icm.sh verify-seal <workspace> [--cwd <dir>]  Recompute digests against last seal; exit 1 on mismatch
 
 set -eu
 
@@ -57,9 +59,11 @@ usage() {
     echo "       icm.sh gate-check --tool <tool-name> [--cwd <dir>]" >&2
     echo "       icm.sh gate-status [--cwd <dir>]" >&2
     echo "       icm.sh telemetry <workspace> --model <m> --tokens-in <n> --tokens-out <n> --cost <c> [--cwd <dir>]" >&2
-    echo "       icm.sh stage-done <workspace> --stage <name> --model <m> [--tokens-in <n> --tokens-out <n>] [--cwd <dir>]" >&2
+    echo "       icm.sh stage-done <workspace> --stage <name> --model <m> [--tokens-in <n> --tokens-out <n>] [--full] [--transcript <path>] [--cwd <dir>]" >&2
     echo "       icm.sh reify-telemetry <workspace> [--cwd <dir>] [--transcript <path>]" >&2
     echo "       icm.sh audit <workspace> [--cwd <dir>]" >&2
+    echo "       icm.sh seal <workspace> [--cwd <dir>]" >&2
+    echo "       icm.sh verify-seal <workspace> [--cwd <dir>]" >&2
     exit 1
 }
 
@@ -124,6 +128,49 @@ sha_file() {
     else
         shasum -a 256 "$1"
     fi
+}
+
+# Locate the current session transcript for a run. $1 = run dir.
+# Preference: path recorded by gate-hook.sh (authoritative, from the harness),
+# then harness session dirs. Claude Code encodes the project cwd into the
+# transcript dir name (/ and . become -), so prefer that dir when it exists;
+# otherwise scan all sessions. Pick the newest candidate by mtime, not find
+# order: with parallel sessions the first hit is arbitrary. Prints the path,
+# or nothing when no transcript is found. Warnings go to stderr.
+find_transcript() {
+    ft_run=$1
+    if [ -f ".icm/telemetry/transcript-path" ]; then
+        ft_p=$(head -1 ".icm/telemetry/transcript-path" 2>/dev/null || :)
+        if [ -n "$ft_p" ] && [ -f "$ft_p" ]; then
+            echo "$ft_p"
+            return 0
+        fi
+    fi
+    ft_search=""
+    if [ -n "${CLAUDECODE:-}" ]; then
+        ft_munged=$(pwd | sed 's,[/.],-,g')
+        if [ -d "${HOME}/.claude/projects/$ft_munged" ]; then
+            ft_search="${HOME}/.claude/projects/$ft_munged"
+        else
+            ft_search="${HOME}/.claude/projects"
+        fi
+    elif [ -d "${HOME}/.pi" ]; then
+        ft_search="${HOME}/.pi/agent/sessions"
+    fi
+    [ -n "$ft_search" ] || return 0
+    ft_found=""
+    ft_n=0
+    for ft_c in $(find "$ft_search" -name '*.jsonl' -newer "$ft_run/.manifest" 2>/dev/null); do
+        ft_n=$((ft_n + 1))
+        if [ -z "$ft_found" ] || [ "$ft_c" -nt "$ft_found" ]; then
+            ft_found=$ft_c
+        fi
+    done
+    if [ "$ft_n" -gt 1 ]; then
+        echo "icm: $ft_n candidate transcripts; picked newest: $ft_found" >&2
+        echo "Pass --transcript <path> if this is the wrong session." >&2
+    fi
+    [ -z "$ft_found" ] || echo "$ft_found"
 }
 
 # Extract a double-quoted attribute value from an ICM-GATE line. $1=line $2=attr name.
@@ -557,13 +604,15 @@ cmd_telemetry() {
 # in post-hoc from the conversation transcript).
 # MANDATORY after every completed stage.
 cmd_stage_done() {
-    ws=""; stage=""; model=""; tokens_in="null"; tokens_out="null"
+    ws=""; stage=""; model=""; tokens_in="null"; tokens_out="null"; full=0; transcript=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --stage) stage="$2"; shift 2 ;;
             --model) model="$2"; shift 2 ;;
             --tokens-in) tokens_in="$2"; shift 2 ;;
             --tokens-out) tokens_out="$2"; shift 2 ;;
+            --full) full=1; shift ;;
+            --transcript) transcript="$2"; shift 2 ;;
             --cwd) cd "$2"; shift 2 ;;
             *) ws="$1"; shift ;;
         esac
@@ -587,13 +636,62 @@ cmd_stage_done() {
     telemetry_dir="$run_dir/telemetry"
     mkdir -p "$telemetry_dir"
 
+    _now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    # Stage window: previous boundary in stages.jsonl, else run creation.
+    _prev_ts=$(tail -1 "$telemetry_dir/stages.jsonl" 2>/dev/null | grep -o '"ts":"[^"]*"' | head -1 | sed 's/"ts":"//;s/"$//' || :)
+    if [ -z "$_prev_ts" ]; then
+        _prev_ts=$(grep '"created"' "$telemetry_dir/run.json" 2>/dev/null | sed 's/.*"created": "\(.*\)".*/\1/' || :)
+    fi
+    [ -n "$_prev_ts" ] || _prev_ts="1970-01-01T00:00:00Z"
+
+    # Snapshot the session transcript for this window while it still exists.
+    # Default keeps usage events only (counts, no conversation content) in
+    # telemetry/usage.jsonl; --full additionally freezes the raw window into
+    # the stage dir. Token counts are computed here when not passed explicitly.
+    _counts="estimated"
+    if command -v jq >/dev/null 2>&1; then
+        [ -n "$transcript" ] || transcript=$(find_transcript "$run_dir")
+        if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+            jq -c --arg start "$_prev_ts" --arg end "$_now" --arg stage "$stage" '
+                (.ts // .timestamp // empty) as $t
+                | select($t >= $start and $t <= $end)
+                | (.usage // .message.usage // empty) as $u
+                | select((($u.input_tokens // 0) + ($u.output_tokens // 0)) > 0)
+                | {ts: $t, stage: $stage, model: (.model // .message.model // null),
+                   tokens_in: ($u.input_tokens // 0), tokens_out: ($u.output_tokens // 0)}
+            ' "$transcript" 2>/dev/null >> "$telemetry_dir/usage.jsonl" || true
+            if [ "$tokens_in" = "null" ] && [ "$tokens_out" = "null" ]; then
+                _sums=$(jq -r --arg start "$_prev_ts" --arg end "$_now" '
+                    (.ts // .timestamp // empty) as $t
+                    | select($t >= $start and $t <= $end)
+                    | (.usage // .message.usage // empty) as $u
+                    | "\($u.input_tokens // 0) \($u.output_tokens // 0)"
+                ' "$transcript" 2>/dev/null | awk '{i+=$1; o+=$2} END {if (NR==0) print "null null"; else print i, o}')
+                tokens_in=${_sums% *}
+                tokens_out=${_sums#* }
+                [ "$tokens_in" = "null" ] || _counts="transcript"
+            fi
+            if [ "$full" -eq 1 ]; then
+                mkdir -p "$run_dir/$stage"
+                jq -c --arg start "$_prev_ts" --arg end "$_now" '
+                    (.ts // .timestamp // empty) as $t
+                    | select($t >= $start and $t <= $end)
+                ' "$transcript" 2>/dev/null > "$run_dir/$stage/transcript.jsonl" || true
+            fi
+        elif [ "$full" -eq 1 ]; then
+            echo "stage-done: --full requested but no transcript found; nothing snapshotted" >&2
+        fi
+    elif [ "$full" -eq 1 ]; then
+        echo "stage-done: --full requires jq; nothing snapshotted" >&2
+    fi
+
     # Write stage boundary. tokens_in/tokens_out default to null.
     _ti_val="$tokens_in"
     _to_val="$tokens_out"
     case "$_ti_val" in ''|null) _ti_val="null" ;; esac
     case "$_to_val" in ''|null) _to_val="null" ;; esac
-    printf '{"ts":"%s","stage":"%s","model":"%s","tokens_in":%s,"tokens_out":%s,"counts":"estimated"}\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$stage" "$model" "$_ti_val" "$_to_val" \
+    printf '{"ts":"%s","stage":"%s","model":"%s","tokens_in":%s,"tokens_out":%s,"counts":"%s"}\n' \
+        "$_now" "$stage" "$model" "$_ti_val" "$_to_val" "$_counts" \
         >> "$telemetry_dir/stages.jsonl"
 
     # Drop a marker so audit can verify this stage boundary was recorded
@@ -636,35 +734,8 @@ cmd_reify_telemetry() {
         exit 1
     fi
 
-    # Auto-detect transcript path. Claude Code encodes the project cwd into the
-    # transcript dir name (/ and . become -), so prefer that dir when it exists;
-    # otherwise scan all sessions. Pick the newest candidate by mtime, not find
-    # order: with parallel sessions the first hit is arbitrary.
     if [ -z "$transcript" ]; then
-        _search_dir=""
-        if [ -n "${CLAUDECODE:-}" ]; then
-            _munged=$(pwd | sed 's,[/.],-,g')
-            if [ -d "${HOME}/.claude/projects/$_munged" ]; then
-                _search_dir="${HOME}/.claude/projects/$_munged"
-            else
-                _search_dir="${HOME}/.claude/projects"
-            fi
-        elif [ -d "${HOME}/.pi" ]; then
-            _search_dir="${HOME}/.pi/agent/sessions"
-        fi
-        if [ -n "$_search_dir" ]; then
-            _n=0
-            for _c in $(find "$_search_dir" -name '*.jsonl' -newer "$run_dir/.manifest" 2>/dev/null); do
-                _n=$((_n + 1))
-                if [ -z "$transcript" ] || [ "$_c" -nt "$transcript" ]; then
-                    transcript=$_c
-                fi
-            done
-            if [ "$_n" -gt 1 ]; then
-                echo "reify-telemetry: $_n candidate transcripts; picked newest: $transcript" >&2
-                echo "Pass --transcript <path> if this is the wrong session." >&2
-            fi
-        fi
+        transcript=$(find_transcript "$run_dir")
     fi
 
     if [ -z "$transcript" ] || [ ! -f "$transcript" ]; then
@@ -876,6 +947,105 @@ cmd_audit() {
     fi
 }
 
+# ---- seal / verify-seal ----
+# Seal: append a digest line for the latest run's evidence files to
+# .icm-seals.log at the project root, which is committable while .icm/ stays
+# gitignored. Tamper EVIDENCE, not prevention: the log is a plain file until
+# committed, and local git history is rewritable. Trust comes from committing
+# the log and pushing; after that, tampering means a visible diff.
+_seal_files() {
+    for sf in .manifest telemetry/run.json telemetry/stages.jsonl telemetry/usage.jsonl; do
+        [ -f "$1/$sf" ] && echo "$sf"
+    done
+    return 0
+}
+
+cmd_seal() {
+    ws=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --cwd) cd "$2"; shift 2 ;;
+            *) ws="$1"; shift ;;
+        esac
+    done
+    if [ -z "$ws" ]; then
+        echo "seal requires workspace name" >&2
+        exit 1
+    fi
+    latest=$(latest_run "$ws")
+    if [ -z "$latest" ]; then
+        echo "no runs for $ws" >&2
+        exit 1
+    fi
+    run_dir=".icm/$ws/$latest"
+    entries=""
+    for sf in $(_seal_files "$run_dir"); do
+        h=$( (cd "$run_dir" && sha_file "$sf") | awk '{print $1}')
+        if [ -z "$entries" ]; then
+            entries="\"$sf\":\"$h\""
+        else
+            entries="$entries,\"$sf\":\"$h\""
+        fi
+    done
+    if [ -z "$entries" ]; then
+        echo "seal: no evidence files in $run_dir" >&2
+        exit 1
+    fi
+    printf '{"ts":"%s","workspace":"%s","run_id":"%s","sealed":{%s}}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ws" "$latest" "$entries" >> .icm-seals.log
+    echo "sealed $ws/$latest -> .icm-seals.log (commit this file)"
+}
+
+cmd_verify_seal() {
+    ws=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --cwd) cd "$2"; shift 2 ;;
+            *) ws="$1"; shift ;;
+        esac
+    done
+    if [ -z "$ws" ]; then
+        echo "verify-seal requires workspace name" >&2
+        exit 1
+    fi
+    latest=$(latest_run "$ws")
+    if [ -z "$latest" ]; then
+        echo "no runs for $ws" >&2
+        exit 1
+    fi
+    run_dir=".icm/$ws/$latest"
+    if [ ! -f .icm-seals.log ]; then
+        echo "verify-seal: no .icm-seals.log in $PWD" >&2
+        exit 1
+    fi
+    line=$(grep "\"workspace\":\"$ws\",\"run_id\":\"$latest\"" .icm-seals.log 2>/dev/null | tail -1 || :)
+    if [ -z "$line" ]; then
+        echo "verify-seal: no seal recorded for $ws/$latest" >&2
+        exit 1
+    fi
+    sealed=$(printf '%s' "$line" | sed 's/.*"sealed":{//;s/}}$//')
+    bad=0
+    for pair in $(printf '%s' "$sealed" | tr ',' '\n'); do
+        f=$(printf '%s' "$pair" | sed 's/^"//;s/":".*//')
+        want=$(printf '%s' "$pair" | sed 's/.*":"//;s/"$//')
+        if [ ! -f "$run_dir/$f" ]; then
+            echo "SEAL MISMATCH $ws/$latest $f: file missing"
+            bad=1
+            continue
+        fi
+        got=$( (cd "$run_dir" && sha_file "$f") | awk '{print $1}')
+        if [ "$got" != "$want" ]; then
+            echo "SEAL MISMATCH $ws/$latest $f: sha256 differs from sealed digest"
+            bad=1
+        fi
+    done
+    if [ "$bad" -eq 0 ]; then
+        echo "SEAL OK $ws/$latest"
+        exit 0
+    fi
+    exit 1
+}
+
 # ---- gate-check ----
 cmd_gate_check() {
     gc_tool=""
@@ -1017,6 +1187,8 @@ case "$cmd" in
     stage-done) cmd_stage_done "$@" ;;
     reify-telemetry) cmd_reify_telemetry "$@" ;;
     audit) cmd_audit "$@" ;;
+    seal) cmd_seal "$@" ;;
+    verify-seal) cmd_verify_seal "$@" ;;
     *)
         echo "Unknown command: $cmd" >&2
         usage
