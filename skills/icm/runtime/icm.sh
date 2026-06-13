@@ -920,7 +920,7 @@ cmd_audit() {
         icm_tools=$(grep -o '<!-- ICM-TOOLS expect="[^"]*"' "$ctx" 2>/dev/null | head -1 | sed 's/.*expect="//;s/"$//' || true)
         legacy=""
         if [ -z "$icm_tools" ]; then
-            legacy=$(grep -Eo '\x60?(bash )?tools/[^\x60" ]+(\.sh)?\x60?' "$ctx" 2>/dev/null | tr -d '\x60' | sort -u || true)
+            legacy=$(grep -Eo '`?(bash )?tools/[^`" ]+(\.sh)?`?' "$ctx" 2>/dev/null | tr -d '`' | sort -u || true)
         fi
         gates=$(grep -Eo 'run="(tools/)?[^"]+"' "$ctx" 2>/dev/null | sed 's/run="//;s/"$//' | sort -u || true)
 
