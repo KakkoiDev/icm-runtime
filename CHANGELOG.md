@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.0 - 2026-06-13
+
+- Skill-to-skill linkage: `init` accepts `--caller <parentWs>/<parentRunId>/<stage>`,
+  recording the invoking parent run as a `caller` field in the child's
+  `telemetry/run.json` (in the sealed set, so the child's seal makes the link
+  tamper-evident) and propagating it to `skill-runs.jsonl`. For skills that invoke
+  other ICM skills as a sub-step. The link is supplied by the frozen stage
+  contract, not auto-detected (no reliable in-progress run/stage signal exists)
+  and never written as a guess into sealed data. Standalone runs are unchanged
+  (no caller field).
+- `children <workspace> [<run_id>]`: read-only, lists runs that recorded this run
+  as their caller, with the invoking stage. Child runs keep their own
+  `.icm/<ws>/<run_id>/` dir (not nested under the parent), so run addressing is
+  unaffected.
+- Fix: the audit prose-scrape for `tools/...` mentions used a hex escape for the
+  backtick that GNU grep rejects in ERE mode, so under the real `/bin/sh` + GNU
+  grep runtime it matched nothing (it only worked where `grep` was aliased to
+  ugrep). Uses a literal backtick now.
+- Tests: 30, 30b-30g (7 cases) for caller linkage, propagation, children query,
+  and seal tamper-evidence of the link.
+
 ## 0.7.0 - 2026-06-12
 
 - `installer.sh --remove` now unregisters both enforcement adapters (Claude

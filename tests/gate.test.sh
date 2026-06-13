@@ -756,6 +756,80 @@ else
     t_fail "29 clean: rotates tool-calls.jsonl to last 10000 lines" "rc=$rc lines=$lines out=$out"
 fi
 
+# ---- case 30: --caller linkage recorded on child, propagated, queryable, sealed ----
+mkdir -p "$TMP/skills/testns/caller-parent/stages" "$TMP/skills/testns/caller-child/stages"
+printf '# p\nwork\n' > "$TMP/skills/testns/caller-parent/stages/01-work.md"
+printf '# c\nwork\n' > "$TMP/skills/testns/caller-child/stages/01-work.md"
+
+cp_parent=$("$ICM" init testns/caller-parent 2>/dev/null); cp_pts=$(basename "$cp_parent")
+cp_child=$("$ICM" init testns/caller-child --caller "testns/caller-parent/$cp_pts/01-work" 2>/dev/null)
+cp_cts=$(basename "$cp_child")
+
+if grep -q '"caller": "testns/caller-parent/'"$cp_pts"'/01-work"' "$cp_child/telemetry/run.json"; then
+    t_ok "30 init --caller: records caller line in child run.json"
+else
+    t_fail "30 init --caller: records caller line in child run.json" "$(cat "$cp_child/telemetry/run.json")"
+fi
+
+# 30b: standalone init writes no caller line (run.json shape unchanged)
+if ! grep -q '"caller"' "$cp_parent/telemetry/run.json"; then
+    t_ok "30b init without --caller: no caller line (standalone unchanged)"
+else
+    t_fail "30b init without --caller: no caller line" "$(cat "$cp_parent/telemetry/run.json")"
+fi
+
+# 30c: run.json stays valid JSON with the caller field (jq optional)
+if command -v jq >/dev/null 2>&1; then
+    if jq -e '.caller == "testns/caller-parent/'"$cp_pts"'/01-work"' "$cp_child/telemetry/run.json" >/dev/null 2>&1; then
+        t_ok "30c init --caller: run.json parses as JSON with caller field"
+    else
+        t_fail "30c init --caller: run.json parses as JSON with caller field" "$(cat "$cp_child/telemetry/run.json")"
+    fi
+else
+    t_ok "30c init --caller: jq absent, JSON parse check skipped"
+fi
+
+# 30d: telemetry propagates caller to skill-runs.jsonl; null when standalone
+printf 'done\n' > "$cp_child/01-work/output/d.md"
+"$ICM" telemetry testns/caller-child --model m --tokens-in 1 --tokens-out 1 --cost 0 >/dev/null 2>&1 || true
+printf 'done\n' > "$cp_parent/01-work/output/d.md"
+"$ICM" telemetry testns/caller-parent --model m --tokens-in 1 --tokens-out 1 --cost 0 >/dev/null 2>&1 || true
+if grep -q '"skill":"testns/caller-child".*"caller":"testns/caller-parent/'"$cp_pts"'/01-work"' "$GLOBAL_TELEM" \
+    && grep -q '"skill":"testns/caller-parent".*"caller":null' "$GLOBAL_TELEM"; then
+    t_ok "30d telemetry: caller propagated to skill-runs.jsonl (null when standalone)"
+else
+    t_fail "30d telemetry: caller propagated to skill-runs.jsonl" "$(grep -h 'caller-parent\|caller-child' "$GLOBAL_TELEM")"
+fi
+
+# 30e: children lists the child under the parent run, with the invoking stage
+ch_out=$("$ICM" children testns/caller-parent "$cp_pts" 2>&1); ch_rc=$?
+if [ "$ch_rc" -eq 0 ] \
+    && printf '%s' "$ch_out" | grep -q "testns/caller-child/$cp_cts" \
+    && printf '%s' "$ch_out" | grep -q "from stage: 01-work"; then
+    t_ok "30e children: lists child run with invoking stage"
+else
+    t_fail "30e children: lists child run with invoking stage" "rc=$ch_rc out=$ch_out"
+fi
+
+# 30f: a leaf run reports no children
+ch_out=$("$ICM" children testns/caller-child "$cp_cts" 2>&1)
+if printf '%s' "$ch_out" | grep -q "no children for testns/caller-child/$cp_cts"; then
+    t_ok "30f children: leaf run reports none"
+else
+    t_fail "30f children: leaf run reports none" "out=$ch_out"
+fi
+
+# 30g: caller is in the sealed set -> tampering it trips verify-seal
+"$ICM" seal testns/caller-child >/dev/null 2>&1
+sed 's#caller-parent#caller-EVIL#' "$cp_child/telemetry/run.json" > "$cp_child/telemetry/run.json.t" \
+    && mv "$cp_child/telemetry/run.json.t" "$cp_child/telemetry/run.json"
+vout=$("$ICM" verify-seal testns/caller-child 2>&1); vrc=$?
+if [ "$vrc" -eq 1 ] && printf '%s' "$vout" | grep -q "SEAL MISMATCH"; then
+    t_ok "30g seal: tampered caller trips verify-seal (linkage is tamper-evident)"
+else
+    t_fail "30g seal: tampered caller trips verify-seal" "rc=$vrc out=$vout"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

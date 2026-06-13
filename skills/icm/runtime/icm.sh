@@ -1,7 +1,8 @@
 #!/bin/sh
 # ICM Runtime — POSIX-compatible (macOS, Linux, WSL)
 # Usage:
-#   icm.sh init   <workspace-name>          Create new timestamped run, freeze contracts
+#   icm.sh init   <workspace-name> [--caller <ws>/<run_id>/<stage>]  Create new run; --caller records the invoking parent run
+#   icm.sh children <workspace-name> [<run_id>]  List runs that recorded this run as their --caller (parent->child links)
 #   icm.sh next   <workspace-name>          Print path to next empty stage, or "done"
 #   icm.sh list   <workspace-name>          List all runs with stage completion status
 #   icm.sh diff   <workspace-name>          Diff output files of last two completed runs
@@ -52,6 +53,8 @@ SKILLS_DIR=$(cd "$SCRIPT_DIR/../.." && pwd)
 
 usage() {
     echo "Usage: icm.sh <init|next|list|diff|stages|clean> <workspace-name> [--keep N]" >&2
+    echo "       icm.sh init <workspace> [--caller <parentWs>/<parentRunId>/<stage>]" >&2
+    echo "       icm.sh children <workspace> [<run_id>]" >&2
     echo "       icm.sh gate-check --tool <tool-name> [--cwd <dir>]" >&2
     echo "       icm.sh gate-status [--cwd <dir>]" >&2
     echo "       icm.sh telemetry <workspace> --model <m> --tokens-in <n> --tokens-out <n> --cost <c> [--cwd <dir>]" >&2
@@ -331,7 +334,14 @@ check_run() {
 
 # ---- init ----
 cmd_init() {
-    ws=$1
+    ws=""; caller=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --caller) caller="$2"; shift 2 ;;
+            *) ws="$1"; shift ;;
+        esac
+    done
+    [ -n "$ws" ] || usage
     ws_dir=$(find_workspace "$ws")
     stages_dir="$ws_dir/stages"
 
@@ -390,13 +400,22 @@ cmd_init() {
             _stage_names="$_stage_names, \"$_sn\""
         fi
     done
+    # Optional caller link, recorded on the CHILD so the child's own seal
+    # (run.json is in _seal_files) makes "who invoked me" tamper-evident.
+    # Omitted entirely for standalone runs so their run.json is unchanged.
+    if [ -n "$caller" ]; then
+        _caller_field=",
+  \"caller\": \"$caller\""
+    else
+        _caller_field=""
+    fi
     cat > "$run_dir/telemetry/run.json" <<ICM_RUN_EOF
 {
   "workspace": "$ws",
   "run_id": "$ts",
   "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "stages": [$_stage_names],
-  "cwd": "$PWD"
+  "cwd": "$PWD"$_caller_field
 }
 ICM_RUN_EOF
 
@@ -639,8 +658,11 @@ cmd_telemetry() {
     local global_file="$global_dir/skill-runs.jsonl"
     local run_cwd
     run_cwd=$(grep '"cwd"' ".icm/$ws/$latest/telemetry/run.json" 2>/dev/null | sed 's/.*"cwd": "\(.*\)".*/\1/' || echo "$PWD")
-    printf '{"ts":"%s","skill":"%s","run_id":"%s","model":"%s","tokens_in":%s,"tokens_out":%s,"cost_est":%s,"cwd":"%s","log_dir":".icm/%s/%s/telemetry"}\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ws" "$latest" "$model" "$tokens_in" "$tokens_out" "$cost" "$run_cwd" "$ws" "$latest" \
+    local run_caller caller_json
+    run_caller=$(grep '"caller"' ".icm/$ws/$latest/telemetry/run.json" 2>/dev/null | sed 's/.*"caller": *"\([^"]*\)".*/\1/' || echo "")
+    if [ -n "$run_caller" ]; then caller_json="\"$run_caller\""; else caller_json="null"; fi
+    printf '{"ts":"%s","skill":"%s","run_id":"%s","model":"%s","tokens_in":%s,"tokens_out":%s,"cost_est":%s,"cwd":"%s","caller":%s,"log_dir":".icm/%s/%s/telemetry"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ws" "$latest" "$model" "$tokens_in" "$tokens_out" "$cost" "$run_cwd" "$caller_json" "$ws" "$latest" \
         >> "$global_file"
     echo "$global_file"
 }
@@ -1234,6 +1256,48 @@ cmd_gate_status() {
     exit 0
 }
 
+# ---- children ----
+# List runs whose run.json records <ws>/<run_id> as their --caller. Read-only,
+# top-down view of the explicit links recorded on each child. Direct children
+# only (a grandchild's caller is its parent, not this run).
+cmd_children() {
+    cc_ws=""; cc_run=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --cwd) cd "$2"; shift 2 ;;
+            *) if [ -z "$cc_ws" ]; then cc_ws="$1"; else cc_run="$1"; fi; shift ;;
+        esac
+    done
+    if [ -z "$cc_ws" ]; then
+        echo "children requires workspace name" >&2
+        exit 1
+    fi
+    [ -n "$cc_run" ] || cc_run=$(latest_run "$cc_ws")
+    if [ -z "$cc_run" ]; then
+        echo "no runs for $cc_ws" >&2
+        exit 1
+    fi
+    cc_parent="$cc_ws/$cc_run"
+    cc_out=""
+    if [ -d .icm ]; then
+        cc_out=$(find .icm -path '*/telemetry/run.json' 2>/dev/null | while IFS= read -r cc_rj; do
+            cc_caller=$(grep '"caller"' "$cc_rj" 2>/dev/null | sed 's/.*"caller": *"\([^"]*\)".*/\1/')
+            case "$cc_caller" in
+                "$cc_parent"/*)
+                    cc_child=${cc_rj%/telemetry/run.json}
+                    cc_child=${cc_child#.icm/}
+                    printf '  %s (from stage: %s)\n' "$cc_child" "${cc_caller##*/}" ;;
+            esac
+        done)
+    fi
+    if [ -z "$cc_out" ]; then
+        echo "no children for $cc_parent"
+    else
+        echo "Children of $cc_parent:"
+        printf '%s\n' "$cc_out"
+    fi
+}
+
 # ---- main ----
 if [ $# -lt 1 ]; then
     usage
@@ -1252,7 +1316,7 @@ trap _trap_exit EXIT
 case "$cmd" in
     gate-check)  cmd_gate_check "$@" ;;
     gate-status) cmd_gate_status "$@" ;;
-    init)   [ $# -ge 1 ] || usage; cmd_init "$1" ;;
+    init)   [ $# -ge 1 ] || usage; cmd_init "$@" ;;
     next)   [ $# -ge 1 ] || usage; cmd_next "$1" ;;
     list)   [ $# -ge 1 ] || usage; cmd_list "$1" ;;
     diff)   [ $# -ge 1 ] || usage; cmd_diff "$1" ;;
@@ -1264,6 +1328,7 @@ case "$cmd" in
     audit) cmd_audit "$@" ;;
     seal) cmd_seal "$@" ;;
     verify-seal) cmd_verify_seal "$@" ;;
+    children) cmd_children "$@" ;;
     *)
         echo "Unknown command: $cmd" >&2
         usage

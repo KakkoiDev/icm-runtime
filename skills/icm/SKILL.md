@@ -43,12 +43,24 @@ a summary to `~/.icm/telemetry/skill-runs.jsonl`.
 
 ## Commands
 
-### init workspace-name
+### init workspace-name [--caller <parentWs>/<parentRunId>/<stage>]
 Creates a new timestamped run directory, copies all stage contracts from the skill
 into the run as frozen `CONTEXT.md` files, and creates empty `output/` dirs per stage.
 Prints the run directory path to stdout.
 
-**Side effect:** Checks if `.icm/` is in `.gitignore`. Warnings on stderr — tell the user.
+`--caller` records the parent run that invoked this one, for skills that invoke
+other ICM skills as a sub-step. The value is written as a `caller` field in the
+child's `telemetry/run.json` and propagated to `skill-runs.jsonl`. Because
+`run.json` is in the sealed set, the child's own seal makes the link
+tamper-evident. Omit it for standalone runs (run.json is then unchanged). The
+runtime neither enforces nor auto-detects it: there is no reliable
+"currently-executing run/stage" signal, so a nesting skill's frozen stage
+contract supplies the value (the agent already holds the parent stage path it is
+executing). The link is ground truth, not a guess written into sealed data. Child
+runs are NOT physically nested under the parent; they keep their own
+`.icm/<ws>/<run_id>/` dir so every command can still address them.
+
+**Side effect:** Checks if `.icm/` is in `.gitignore`. Warnings on stderr; tell the user.
 
 ### next workspace-name
 Finds the latest run and returns the path of the first stage whose `output/` is empty.
@@ -129,6 +141,12 @@ Recomputes digests against the last seal line. Per workspace: latest run only.
 `--all`: every (workspace, run) ever sealed; runs pruned by `clean` print
 `SEAL SKIP` and do not fail. Prints `SEAL OK` (exit 0) or `SEAL MISMATCH`
 per altered/missing file (exit 1). Exit 1 too when no seal exists.
+
+### children workspace-name [run_id]
+Lists runs that recorded `<workspace>/<run_id>` as their `--caller` (default
+`run_id`: latest). Read-only top-down view of the explicit parent->child links:
+prints each child run dir and the parent stage that invoked it. Direct children
+only (a grandchild's caller is its own parent). Says so when there are none.
 
 ### gate-check --tool tool-name [--cwd dir]
 Evaluates frozen ICM-GATE lines in the latest run of every workspace under cwd's `.icm/`.

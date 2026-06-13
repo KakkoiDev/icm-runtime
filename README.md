@@ -87,6 +87,13 @@ count, cwd). Workspace skills write a summary to `~/.icm/telemetry/skill-runs.js
 after completion. The global file is the single place to find every skill run across
 all projects.
 
+Skills that invoke other ICM skills as a sub-step pass `icm.sh init <child>
+--caller <parentWs>/<parentRunId>/<stage>`; the child records that `caller` in its
+sealed `run.json` and in `skill-runs.jsonl`, so parent->child links are explicit
+and tamper-evident rather than inferred from timing. `icm.sh children <ws>
+[<run_id>]` lists a run's children. Child runs keep their own run dir (not nested
+under the parent), so every command still addresses them.
+
 **Per-stage token tracking is MANDATORY.** After every stage, workspace skills call
 `icm.sh stage-done` which writes to `telemetry/stages.jsonl`, drops a
 `.stage-telemetry` marker, and snapshots the stage's usage events from the live
