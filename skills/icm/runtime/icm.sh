@@ -1283,7 +1283,7 @@ cmd_children() {
         cc_out=$(find .icm -path '*/telemetry/run.json' 2>/dev/null | while IFS= read -r cc_rj; do
             cc_caller=$(grep '"caller"' "$cc_rj" 2>/dev/null | sed 's/.*"caller": *"\([^"]*\)".*/\1/')
             case "$cc_caller" in
-                "$cc_parent"/*)
+                ("$cc_parent"/*)
                     cc_child=${cc_rj%/telemetry/run.json}
                     cc_child=${cc_child#.icm/}
                     printf '  %s (from stage: %s)\n' "$cc_child" "${cc_caller##*/}" ;;
