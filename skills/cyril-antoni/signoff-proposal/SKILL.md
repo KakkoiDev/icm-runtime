@@ -58,6 +58,9 @@ the proof in one click. Two layers, separated by a `---` divider:
   rolling windows. State this to the user; for always-current, link a saved view instead.
 - Read the full stage contract before executing. Load only what the Inputs table specifies.
 - If `output/` exists from a previous run of this stage, ask: overwrite or skip?
+- Execute and close each stage in real time, in order: do the work, then call `stage-done`,
+  then move on. Do NOT batch `stage-done` calls or back-fill copied outputs - closing stages
+  in the same instant yields zero-width telemetry windows and null per-stage token counts.
 
 ## Runtime
 This workspace uses the ICM runtime. Do not scaffold directories manually.
