@@ -125,8 +125,12 @@ declaration fall back to scraping `tools/...` mentions from prose. Actual tool
 names come from `gate-check --tool` entries in `.icm/telemetry/tool-calls.jsonl`,
 so they exist only where an enforcement adapter is registered; with no records
 in the run window, audit says so and does not count deviations. Produces a
-deviation report on stdout including per-stage token usage summary. Exit 0 even
-with deviations (report is informational). Exit 1 if workspace or run is not found.
+deviation report on stdout including per-stage token usage summary, and a
+fail-open events check (gate-check errors in the run window, from
+`.icm/telemetry/hook-errors.jsonl`, where gates were NOT enforced). Bare `audit`
+exits 0 even with deviations (informational). `audit --strict` exits 1 when
+deviations > 0, so CI and publish-stage preconditions can gate on it. Exit 1 if
+workspace or run is not found.
 
 ### seal workspace-name [--cwd dir]
 Appends a digest line for the latest run's evidence files (`.manifest`,

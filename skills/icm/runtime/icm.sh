@@ -13,7 +13,7 @@
 #   icm.sh telemetry <workspace> --model <m> --tokens-in <n> --tokens-out <n> --cost <c> [--cwd <dir>]
 #   icm.sh stage-done <workspace> --stage <name> --model <m> [--tokens-in <n> --tokens-out <n>] [--full] [--transcript <path>] [--cwd <dir>]
 #   icm.sh reify-telemetry <workspace> [--cwd <dir>] [--transcript <path>]
-#   icm.sh audit <workspace> [--cwd <dir>]
+#   icm.sh audit <workspace> [--strict] [--cwd <dir>]  --strict exits 1 if deviations>0
 #   icm.sh seal <workspace> [--cwd <dir>]         Append run evidence digests to .icm-seals.log
 #   icm.sh verify-seal <workspace>|--all [--cwd <dir>]  Recompute digests against last seal(s); exit 1 on mismatch
 
@@ -60,7 +60,7 @@ usage() {
     echo "       icm.sh telemetry <workspace> --model <m> --tokens-in <n> --tokens-out <n> --cost <c> [--cwd <dir>]" >&2
     echo "       icm.sh stage-done <workspace> --stage <name> --model <m> [--tokens-in <n> --tokens-out <n>] [--full] [--transcript <path>] [--cwd <dir>]" >&2
     echo "       icm.sh reify-telemetry <workspace> [--cwd <dir>] [--transcript <path>]" >&2
-    echo "       icm.sh audit <workspace> [--cwd <dir>]" >&2
+    echo "       icm.sh audit <workspace> [--strict] [--cwd <dir>]" >&2
     echo "       icm.sh seal <workspace> [--cwd <dir>]" >&2
     echo "       icm.sh verify-seal <workspace>|--all [--cwd <dir>]" >&2
     exit 1
@@ -843,8 +843,10 @@ cmd_reify_telemetry() {
 # (stage-done was called). Produces a deviation report on stdout.
 cmd_audit() {
     ws=""
+    strict=0
     while [ $# -gt 0 ]; do
         case "$1" in
+            --strict) strict=1; shift ;;
             --cwd) cd "$2"; shift 2 ;;
             *) ws="$1"; shift ;;
         esac
@@ -925,7 +927,10 @@ cmd_audit() {
     # from prose. Actual side: harness tool names recorded by gate-check --tool
     # invocations in tool-calls.jsonl; scripts run directly via bash are not logged.
     telemetry_log="$run_dir/../../../telemetry/tool-calls.jsonl"
-    run_start=$(printf '%s' "$latest" | sed 's/_/T/' | sed 's/-\([0-9][0-9]\)$/:\1/')
+    # Run id 2026-06-15_08-18-37 -> ISO 2026-06-15T08:18:37 so string compares
+    # against event ts (HH:MM:SS) are correct. The old form left HH-MM dashed,
+    # which sorts before any real ":"-delimited ts and over-counted the window.
+    run_start=$(printf '%s' "$latest" | sed 's/_/T/; s/\([0-9][0-9]\)-\([0-9][0-9]\)-\([0-9][0-9]\)$/\1:\2:\3/')
     actual_tools=""
     if [ -f "$telemetry_log" ]; then
         _window=$(awk -v start="$run_start" -F '"' '/"ts":"/ { if ($4 >= start) print }' "$telemetry_log" 2>/dev/null || true)
@@ -998,10 +1003,31 @@ cmd_audit() {
         fi
     done
 
+    # --- Check 3: fail-open gate events (gate-hook could not run icm.sh) ---
+    # Calls where gates were NOT enforced because gate-check crashed. A silent
+    # fail-open is enforcement theater, so surface it always; under --strict it
+    # counts as a deviation. run_start was computed in Check 2.
+    hook_errors_log="$run_dir/../../../telemetry/hook-errors.jsonl"
+    if [ -f "$hook_errors_log" ] && [ -n "${run_start:-}" ]; then
+        fo_count=$(awk -v start="$run_start" -F '"' '/"event":"gate-check-error"/ { if ($4 >= start) c++ } END { print c+0 }' "$hook_errors_log" 2>/dev/null || echo 0)
+        if [ "$fo_count" -gt 0 ]; then
+            echo "FAIL-OPEN EVENTS"
+            echo "──────────────────────────────────────"
+            echo "  ! $fo_count gate-check error(s) in run window -- gates were NOT enforced on those calls"
+            echo "  (see .icm/telemetry/hook-errors.jsonl)"
+            echo ""
+            deviations=$((deviations + fo_count))
+        fi
+    fi
+
     echo "──────────────────────────────────────"
     echo "Deviations: $deviations (review manually for false positives)"
     if [ "$complete" = false ]; then
         echo "Run is incomplete -- audit may be partial."
+    fi
+    if [ "$strict" -eq 1 ] && [ "$deviations" -gt 0 ]; then
+        echo "STRICT: $deviations deviation(s) -- failing." >&2
+        exit 1
     fi
 }
 

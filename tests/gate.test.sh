@@ -615,6 +615,9 @@ cat > "$WS4_DIR/stages/01-pub.md" <<'EOF'
 Do it.
 EOF
 run_g=$("$ICM" init testns/icmtools-ws 2>/dev/null)
+# Clear fail-open breadcrumbs left by earlier hook tests (shared project file)
+# so this workspace's audit deviation count is deterministic.
+rm -f "$run_g/../../../telemetry/hook-errors.jsonl"
 printf 'done\n' > "$run_g/01-pub/output/done.md"
 "$ICM" stage-done testns/icmtools-ws --stage 01-pub --model m >/dev/null 2>&1
 "$ICM" gate-check --tool mcp__test__send >/dev/null 2>&1 || true
@@ -631,6 +634,35 @@ if printf '%s' "$audit_out" | grep -q "Deviations: 1"; then
 else
     t_fail "21b audit: missing expected tool counted as deviation" "out=$audit_out"
 fi
+
+# ---- case 21c: audit --strict exits 1 when deviations>0 ----
+audit_strict=$("$ICM" audit testns/icmtools-ws --strict 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$audit_strict" | grep -q "STRICT:"; then
+    t_ok "21c audit --strict: exits 1 when deviations>0"
+else
+    t_fail "21c audit --strict: exits 1 when deviations>0" "rc=$rc out=$audit_strict"
+fi
+
+# ---- case 21d: bare audit stays exit 0 with deviations (informational) ----
+"$ICM" audit testns/icmtools-ws >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 0 ]; then
+    t_ok "21d audit: bare audit stays exit 0 with deviations"
+else
+    t_fail "21d audit: bare audit stays exit 0 with deviations" "rc=$rc"
+fi
+
+# ---- case 21e: fail-open events surfaced and counted as deviations ----
+icm_tdir="$run_g/../../../telemetry"
+mkdir -p "$icm_tdir"
+printf '{"ts":"2099-01-01T00:00:00Z","event":"gate-check-error","tool":"Bash","rc":2,"msg":"boom"}\n' >> "$icm_tdir/hook-errors.jsonl"
+audit_fo=$("$ICM" audit testns/icmtools-ws 2>&1)
+if printf '%s' "$audit_fo" | grep -q "FAIL-OPEN EVENTS" \
+    && printf '%s' "$audit_fo" | grep -q "Deviations: 2"; then
+    t_ok "21e audit: fail-open event surfaced and counted"
+else
+    t_fail "21e audit: fail-open event surfaced and counted" "out=$audit_fo"
+fi
+rm -f "$icm_tdir/hook-errors.jsonl"
 
 # ---- case 22: reify-telemetry fills per-stage counts from --transcript ----
 if command -v jq >/dev/null 2>&1; then
