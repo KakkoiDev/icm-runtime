@@ -619,8 +619,10 @@ run_g=$("$ICM" init testns/icmtools-ws 2>/dev/null)
 # so this workspace's audit deviation count is deterministic.
 rm -f "$run_g/../../../telemetry/hook-errors.jsonl"
 printf 'done\n' > "$run_g/01-pub/output/done.md"
-"$ICM" stage-done testns/icmtools-ws --stage 01-pub --model m >/dev/null 2>&1
+# Realistic order: the gate-hook logs the tool DURING stage work, before the
+# stage-done boundary -- so the tool falls inside stage 01-pub's window.
 "$ICM" gate-check --tool mcp__test__send >/dev/null 2>&1 || true
+"$ICM" stage-done testns/icmtools-ws --stage 01-pub --model m >/dev/null 2>&1
 audit_out=$("$ICM" audit testns/icmtools-ws 2>&1); rc=$?
 if [ "$rc" -eq 0 ] \
     && printf '%s' "$audit_out" | grep -q "✓ mcp__test__send" \
@@ -663,6 +665,111 @@ else
     t_fail "21e audit: fail-open event surfaced and counted" "out=$audit_fo"
 fi
 rm -f "$icm_tdir/hook-errors.jsonl"
+
+# ---- case 21f/21g: PER-STAGE tool attribution (controlled timestamps) ----
+# Hand-build a 2-stage run with fixed boundaries so windowing is deterministic:
+#   stage 01-a done @ :10, stage 02-b done @ :20 ; run_start = :00 (dir name)
+#   toolA called @ :05 (-> stage 01-a window [:00,:10]), toolB @ :15 (-> 02-b (:10,:20])
+# Future ts (2030) so these lines are isolated from real entries; cleaned after.
+RUN5=".icm/testns/perstage-ws/2030-01-01_00-00-00"
+mkdir -p "$RUN5/01-a/output" "$RUN5/02-b/output" "$RUN5/telemetry"
+printf '# 01-a\n<!-- ICM-TOOLS expect="toolA" -->\n' > "$RUN5/01-a/CONTEXT.md"
+printf '# 02-b\n<!-- ICM-TOOLS expect="toolB" -->\n' > "$RUN5/02-b/CONTEXT.md"
+printf 'x\n' > "$RUN5/01-a/output/o.md"; printf 'x\n' > "$RUN5/02-b/output/o.md"
+: > "$RUN5/01-a/.stage-telemetry"; : > "$RUN5/02-b/.stage-telemetry"
+printf '{"ts":"2030-01-01T00:00:10Z","stage":"01-a","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' > "$RUN5/telemetry/stages.jsonl"
+printf '{"ts":"2030-01-01T00:00:20Z","stage":"02-b","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' >> "$RUN5/telemetry/stages.jsonl"
+TC5="$RUN5/../../../telemetry/tool-calls.jsonl"
+mkdir -p "$RUN5/../../../telemetry"
+printf '{"ts":"2030-01-01T00:00:05Z","tool":"icm.sh","cmd":"gate-check","args":["gate-check","--tool","toolA"],"cwd":"x","ec":0}\n' >> "$TC5"
+printf '{"ts":"2030-01-01T00:00:15Z","tool":"icm.sh","cmd":"gate-check","args":["gate-check","--tool","toolB"],"cwd":"x","ec":0}\n' >> "$TC5"
+audit5=$("$ICM" audit testns/perstage-ws 2>&1)
+if printf '%s' "$audit5" | grep -q "✓ toolA" \
+    && printf '%s' "$audit5" | grep -q "✓ toolB" \
+    && ! printf '%s' "$audit5" | grep -q "✗ tool" \
+    && printf '%s' "$audit5" | grep -q "Deviations: 0"; then
+    t_ok "21f audit: per-stage attribution maps toolA->01-a, toolB->02-b"
+else
+    t_fail "21f audit: per-stage attribution" "out=$audit5"
+fi
+# 21g (the proof): stage 01-a now expects toolB, which was only used in stage 02-b.
+# Run-wide it would pass; per-stage it must FAIL.
+printf '# 01-a\n<!-- ICM-TOOLS expect="toolB" -->\n' > "$RUN5/01-a/CONTEXT.md"
+audit5b=$("$ICM" audit testns/perstage-ws --strict 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$audit5b" | grep -q "✗ toolB"; then
+    t_ok "21g audit: cross-stage tool no longer satisfies (per-stage proof)"
+else
+    t_fail "21g audit: cross-stage tool no longer satisfies" "rc=$rc out=$audit5b"
+fi
+# Robust cleanup: grep -v exits 1 if it keeps zero lines, which would skip a
+# chained mv and leak the ghost lines. Guard with || true and always mv.
+{ grep -v '2030-01-01T00:00:05Z\|2030-01-01T00:00:15Z' "$TC5" || true; } > "$TC5.tmp"; mv "$TC5.tmp" "$TC5"
+
+# ---- case 21h: missing mid-pipeline stage-done -> unreliable, no false ✓ ----
+# 3 stages, 02-b has NO stage-done; toolB called in the gap (:15). Pre-fix, 03-c's
+# window (:10,:30] would absorb toolB and wrongly print "✓ toolB".
+RUN6=".icm/testns/perstage-gap/2030-02-01_00-00-00"
+mkdir -p "$RUN6/01-a/output" "$RUN6/02-b/output" "$RUN6/03-c/output" "$RUN6/telemetry"
+printf '# 01-a\n<!-- ICM-TOOLS expect="toolA" -->\n' > "$RUN6/01-a/CONTEXT.md"
+printf '# 02-b\n<!-- ICM-TOOLS expect="toolB" -->\n' > "$RUN6/02-b/CONTEXT.md"
+printf '# 03-c\n<!-- ICM-TOOLS expect="toolB" -->\n' > "$RUN6/03-c/CONTEXT.md"
+for s in 01-a 02-b 03-c; do printf 'x\n' > "$RUN6/$s/output/o.md"; done
+: > "$RUN6/01-a/.stage-telemetry"; : > "$RUN6/03-c/.stage-telemetry"
+printf '{"ts":"2030-02-01T00:00:10Z","stage":"01-a","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' > "$RUN6/telemetry/stages.jsonl"
+printf '{"ts":"2030-02-01T00:00:30Z","stage":"03-c","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' >> "$RUN6/telemetry/stages.jsonl"
+TC6="$RUN6/../../../telemetry/tool-calls.jsonl"
+printf '{"ts":"2030-02-01T00:00:15Z","tool":"icm.sh","cmd":"gate-check","args":["gate-check","--tool","toolB"],"cwd":"x","ec":0}\n' >> "$TC6"
+audit6=$("$ICM" audit testns/perstage-gap 2>&1)
+if printf '%s' "$audit6" | grep -q "attribution unreliable" \
+    && ! printf '%s' "$audit6" | grep -q "✓ toolB"; then
+    t_ok "21h audit: missing stage-done -> unreliable, no false-positive"
+else
+    t_fail "21h audit: missing stage-done -> unreliable" "out=$audit6"
+fi
+{ grep -v '2030-02-01T00:00:15Z' "$TC6" || true; } > "$TC6.tmp"; mv "$TC6.tmp" "$TC6"
+
+# ---- case 21i: re-run (non-monotonic boundary) -> unreliable, no false ✗ ----
+# 01-a re-run @:50 (after 02-b @:20). Pre-fix, 02-b window (:50,:20] inverts and
+# silently drops toolB@:15 -> "✗ toolB" false negative.
+RUN7=".icm/testns/perstage-rerun/2030-03-01_00-00-00"
+mkdir -p "$RUN7/01-a/output" "$RUN7/02-b/output" "$RUN7/telemetry"
+printf '# 01-a\n<!-- ICM-TOOLS expect="toolA" -->\n' > "$RUN7/01-a/CONTEXT.md"
+printf '# 02-b\n<!-- ICM-TOOLS expect="toolB" -->\n' > "$RUN7/02-b/CONTEXT.md"
+printf 'x\n' > "$RUN7/01-a/output/o.md"; printf 'x\n' > "$RUN7/02-b/output/o.md"
+: > "$RUN7/01-a/.stage-telemetry"; : > "$RUN7/02-b/.stage-telemetry"
+{ printf '{"ts":"2030-03-01T00:00:10Z","stage":"01-a","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n'
+  printf '{"ts":"2030-03-01T00:00:20Z","stage":"02-b","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n'
+  printf '{"ts":"2030-03-01T00:00:50Z","stage":"01-a","model":"m","tokens_in":1,"tokens_out":1,"counts":"transcript"}\n'; } > "$RUN7/telemetry/stages.jsonl"
+TC7="$RUN7/../../../telemetry/tool-calls.jsonl"
+printf '{"ts":"2030-03-01T00:00:15Z","tool":"icm.sh","cmd":"gate-check","args":["gate-check","--tool","toolB"],"cwd":"x","ec":0}\n' >> "$TC7"
+audit7=$("$ICM" audit testns/perstage-rerun 2>&1)
+if printf '%s' "$audit7" | grep -q "non-monotonic" \
+    && ! printf '%s' "$audit7" | grep -q "✗ toolB"; then
+    t_ok "21i audit: re-run non-monotonic -> unreliable, no false-negative"
+else
+    t_fail "21i audit: re-run non-monotonic -> unreliable" "out=$audit7"
+fi
+{ grep -v '2030-03-01T00:00:15Z' "$TC7" || true; } > "$TC7.tmp"; mv "$TC7.tmp" "$TC7"
+
+# ---- case 21j: same-second boundary tool lands in the earlier stage ----
+# tool @ exactly ts1 (:10) -> stage1 (inclusive upper), NOT stage2 (exclusive lower).
+RUN8=".icm/testns/perstage-edge/2030-04-01_00-00-00"
+mkdir -p "$RUN8/01-a/output" "$RUN8/02-b/output" "$RUN8/telemetry"
+printf '# 01-a\n<!-- ICM-TOOLS expect="toolX" -->\n' > "$RUN8/01-a/CONTEXT.md"
+printf '# 02-b\n<!-- ICM-TOOLS expect="toolX" -->\n' > "$RUN8/02-b/CONTEXT.md"
+printf 'x\n' > "$RUN8/01-a/output/o.md"; printf 'x\n' > "$RUN8/02-b/output/o.md"
+: > "$RUN8/01-a/.stage-telemetry"; : > "$RUN8/02-b/.stage-telemetry"
+printf '{"ts":"2030-04-01T00:00:10Z","stage":"01-a","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' > "$RUN8/telemetry/stages.jsonl"
+printf '{"ts":"2030-04-01T00:00:20Z","stage":"02-b","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' >> "$RUN8/telemetry/stages.jsonl"
+TC8="$RUN8/../../../telemetry/tool-calls.jsonl"
+printf '{"ts":"2030-04-01T00:00:10Z","tool":"icm.sh","cmd":"gate-check","args":["gate-check","--tool","toolX"],"cwd":"x","ec":0}\n' >> "$TC8"
+audit8=$("$ICM" audit testns/perstage-edge 2>&1)
+if printf '%s' "$audit8" | grep -q "✓ toolX" && printf '%s' "$audit8" | grep -q "✗ toolX"; then
+    t_ok "21j audit: boundary tool lands in earlier stage (inclusive upper, exclusive lower)"
+else
+    t_fail "21j audit: boundary tool attribution" "out=$audit8"
+fi
+{ grep -v '2030-04-01T00:00:10Z' "$TC8" || true; } > "$TC8.tmp"; mv "$TC8.tmp" "$TC8"
 
 # ---- case 22: reify-telemetry fills per-stage counts from --transcript ----
 if command -v jq >/dev/null 2>&1; then

@@ -841,6 +841,32 @@ cmd_reify_telemetry() {
 # actual tool invocations (from .icm/telemetry/tool-calls.jsonl).
 # Also verifies that every completed stage has per-stage token telemetry
 # (stage-done was called). Produces a deviation report on stdout.
+# Read the stage-done ts for a stage from stages.jsonl ($1) by stage name ($2).
+# Empty if the stage was never closed. Last match wins (re-runs append).
+_audit_stage_ts() {
+    [ -f "$1" ] || return 0
+    grep "\"stage\":\"$2\"" "$1" 2>/dev/null | tail -1 \
+        | grep -o '"ts":"[^"]*"' | sed 's/"ts":"//;s/"$//' || true
+}
+
+# gate-check --tool names from tool-calls.jsonl ($1) whose ts is in the window
+# ($2=lo, $3=hi, $4=1 to include the lower bound). Drives per-stage attribution.
+_audit_tools_in_window() {
+    [ -f "$1" ] || return 0
+    _aw=$(awk -v lo="$2" -v hi="$3" -v li="$4" -F '"' '
+        /"ts":"/ { t=$4; if ((li==1 ? t>=lo : t>lo) && t<=hi) print }' "$1" 2>/dev/null || true)
+    { printf '%s\n' "$_aw" | grep -o '"--tool","[^"]*"' | sed 's/"--tool","//;s/"$//' || true; \
+      printf '%s\n' "$_aw" | grep -o -- '--tool [^" ]*' | sed 's/--tool //' || true; } | sort -u
+}
+
+# True (0) if ISO-Z ts $1 is strictly chronologically less than $2. POSIX sh has
+# no string "<" in test, so compare via sort. Same-format ISO-Z strings sort
+# lexicographically == chronologically.
+_ts_lt() {
+    [ "$1" != "$2" ] || return 1
+    [ "$(printf '%s\n%s\n' "$1" "$2" | LC_ALL=C sort | head -1)" = "$1" ]
+}
+
 cmd_audit() {
     ws=""
     strict=0
@@ -927,22 +953,50 @@ cmd_audit() {
     # from prose. Actual side: harness tool names recorded by gate-check --tool
     # invocations in tool-calls.jsonl; scripts run directly via bash are not logged.
     telemetry_log="$run_dir/../../../telemetry/tool-calls.jsonl"
-    # Run id 2026-06-15_08-18-37 -> ISO 2026-06-15T08:18:37 so string compares
-    # against event ts (HH:MM:SS) are correct. The old form left HH-MM dashed,
-    # which sorts before any real ":"-delimited ts and over-counted the window.
-    run_start=$(printf '%s' "$latest" | sed 's/_/T/; s/\([0-9][0-9]\)-\([0-9][0-9]\)-\([0-9][0-9]\)$/\1:\2:\3/')
+    stages_jsonl="$run_dir/telemetry/stages.jsonl"
+    # Run id 2026-06-15_08-18-37 -> ISO-Z 2026-06-15T08:18:37Z so string compares
+    # against event ts (all written with a trailing Z) are value-based, not reliant
+    # on length sorting. The old form left HH-MM dashed and dropped the Z.
+    run_start=$(printf '%s' "$latest" | sed 's/_/T/; s/\([0-9][0-9]\)-\([0-9][0-9]\)-\([0-9][0-9]\)$/\1:\2:\3Z/')
+    # Run-wide tools only tell "adapter recorded nothing" (cannot verify) apart
+    # from "tool genuinely absent from this stage". Per-stage matching uses the
+    # windowed sets below.
     actual_tools=""
     if [ -f "$telemetry_log" ]; then
-        _window=$(awk -v start="$run_start" -F '"' '/"ts":"/ { if ($4 >= start) print }' "$telemetry_log" 2>/dev/null || true)
-        actual_tools=$( { printf '%s\n' "$_window" | grep -o '"--tool","[^"]*"' | sed 's/"--tool","//;s/"$//' || true; \
-                          printf '%s\n' "$_window" | grep -o -- '--tool [^" ]*' | sed 's/--tool //' || true; } | sort -u)
+        _allwin=$(awk -v start="$run_start" -F '"' '/"ts":"/ { if ($4 >= start) print }' "$telemetry_log" 2>/dev/null || true)
+        actual_tools=$( { printf '%s\n' "$_allwin" | grep -o '"--tool","[^"]*"' | sed 's/"--tool","//;s/"$//' || true; \
+                          printf '%s\n' "$_allwin" | grep -o -- '--tool [^" ]*' | sed 's/--tool //' || true; } | sort -u)
     fi
 
+    # Per-stage attribution is trustworthy only when every stage has a stage-done
+    # boundary AND the boundaries strictly increase in stage order. A skipped
+    # stage-done (gap) or a re-run (duplicate, non-monotonic) makes the windows
+    # ambiguous and could silently mis-credit a tool to the wrong stage, so we
+    # detect that here and downgrade ICM-TOOLS to "unreliable, not counted" rather
+    # than risk a false pass/fail. Clean monotonic runs keep the strict check.
+    attr_reliable=1
+    attr_reason=""
+    _pp_prev=""
+    for stage_dir in "$run_dir"/[0-9]*/; do
+        [ -d "$stage_dir" ] || continue
+        [ -f "$stage_dir/CONTEXT.md" ] || continue
+        _pp_ts=$(_audit_stage_ts "$stages_jsonl" "$(basename "$stage_dir")")
+        if [ -z "$_pp_ts" ]; then
+            attr_reliable=0; attr_reason="a stage has no stage-done boundary"
+        elif [ -n "$_pp_prev" ] && ! _ts_lt "$_pp_prev" "$_pp_ts"; then
+            attr_reliable=0; attr_reason="stage-done boundaries are non-monotonic (stage re-run?)"
+        fi
+        [ -n "$_pp_ts" ] && _pp_prev="$_pp_ts"
+    done
+
+    _prev_ts="$run_start"
+    _stage_idx=0
     for stage_dir in "$run_dir"/[0-9]*/; do
         [ -d "$stage_dir" ] || continue
         stage_name=$(basename "$stage_dir")
         ctx="$stage_dir/CONTEXT.md"
         [ -f "$ctx" ] || continue
+        _stage_idx=$((_stage_idx + 1))
 
         icm_tools=$(grep -o '<!-- ICM-TOOLS expect="[^"]*"' "$ctx" 2>/dev/null | head -1 | sed 's/.*expect="//;s/"$//' || true)
         legacy=""
@@ -950,6 +1004,20 @@ cmd_audit() {
             legacy=$(grep -Eo '`?(bash )?tools/[^`" ]+(\.sh)?`?' "$ctx" 2>/dev/null | tr -d '`' | sort -u || true)
         fi
         gates=$(grep -Eo 'run="(tools/)?[^"]+"' "$ctx" 2>/dev/null | sed 's/run="//;s/"$//' | sort -u || true)
+
+        # Per-stage window (prev boundary, this stage-done ts]; lower bound is
+        # inclusive only for the first stage (absorbs same-second init).
+        _this_ts=$(_audit_stage_ts "$stages_jsonl" "$stage_name")
+        stage_tools=""
+        win_note=""
+        if [ -z "$_this_ts" ]; then
+            win_note="no stage-done -- cannot attribute tools to this stage"
+        else
+            _li=0; [ "$_stage_idx" -eq 1 ] && _li=1
+            [ "$_prev_ts" = "$_this_ts" ] && win_note="zero-width window (stage-done same second as previous) -- attribution unreliable"
+            stage_tools=$(_audit_tools_in_window "$telemetry_log" "$_prev_ts" "$_this_ts" "$_li")
+            _prev_ts="$_this_ts"
+        fi
 
         if [ -n "$icm_tools" ] || [ -n "$legacy" ] || [ -n "$gates" ]; then
             echo "STAGE $stage_name -- TOOL CALL CHECK"
@@ -959,17 +1027,16 @@ cmd_audit() {
                 echo "Expected tools (ICM-TOOLS):"
                 for tool in $icm_tools; do
                     if [ -z "$actual_tools" ]; then
-                        echo "  ? $tool -- no harness tool-call records in run window"
-                    elif printf '%s\n' "$actual_tools" | grep -Eq -- "$tool"; then
+                        echo "  ? $tool -- no gate-check records in run (enforcement adapter not registered?)"
+                    elif [ "$attr_reliable" -eq 0 ]; then
+                        echo "  ? $tool -- per-stage attribution unreliable ($attr_reason); not counted"
+                    elif printf '%s\n' "$stage_tools" | grep -Eq -- "$tool"; then
                         echo "  ✓ $tool"
                     else
-                        echo "  ✗ $tool -- not seen in telemetry"
+                        echo "  ✗ $tool -- not seen in this stage's window"
                         deviations=$((deviations + 1))
                     fi
                 done
-                if [ -z "$actual_tools" ]; then
-                    echo "  (no gate-check records; enforcement adapter likely not registered -- cannot verify)"
-                fi
             fi
 
             if [ -n "$legacy" ]; then
@@ -986,14 +1053,16 @@ cmd_audit() {
                 done
             fi
 
+            [ -n "$win_note" ] && echo "  ! $win_note"
+
             if [ -f "$telemetry_log" ]; then
-                echo "Actual harness tools during run window:"
-                if [ -n "$actual_tools" ]; then
-                    printf '%s\n' "$actual_tools" | while IFS= read -r t; do
+                echo "Actual tools in stage window:"
+                if [ -n "$stage_tools" ]; then
+                    printf '%s\n' "$stage_tools" | while IFS= read -r t; do
                         echo "  $t"
                     done
                 else
-                    echo "  (none recorded)"
+                    echo "  (none in this stage's window)"
                 fi
             else
                 echo "No telemetry available (tool-calls.jsonl not found)"
@@ -1002,6 +1071,19 @@ cmd_audit() {
             echo ""
         fi
     done
+
+    # Trailing gate-check calls after the last stage-done boundary (informational;
+    # e.g. post-run tool use). Not attributed to any stage, not a deviation.
+    if [ -f "$telemetry_log" ] && [ -n "$actual_tools" ]; then
+        trailing=$(_audit_tools_in_window "$telemetry_log" "$_prev_ts" "9999-12-31T23:59:59Z" 0)
+        if [ -n "$trailing" ]; then
+            echo "Trailing tools (after last stage-done; not attributed to any stage):"
+            printf '%s\n' "$trailing" | while IFS= read -r t; do
+                echo "  $t"
+            done
+            echo ""
+        fi
+    fi
 
     # --- Check 3: fail-open gate events (gate-hook could not run icm.sh) ---
     # Calls where gates were NOT enforced because gate-check crashed. A silent

@@ -124,7 +124,13 @@ actual tool names (same semantics as ICM-GATE `tools=`). Contracts without the
 declaration fall back to scraping `tools/...` mentions from prose. Actual tool
 names come from `gate-check --tool` entries in `.icm/telemetry/tool-calls.jsonl`,
 so they exist only where an enforcement adapter is registered; with no records
-in the run window, audit says so and does not count deviations. Produces a
+in the run window, audit says so and does not count deviations. Attribution is
+PER-STAGE: each stage is matched only against tool calls whose timestamp falls in
+its window (previous stage-done boundary, this stage-done], so a tool used in one
+stage does not satisfy another's expectation. This requires clean boundaries; if
+a stage has no stage-done or the boundaries are non-monotonic (a stage re-run),
+attribution is reported "unreliable" and not counted rather than risk a silent
+mis-attribution. Tool calls after the last boundary are listed as "trailing". Produces a
 deviation report on stdout including per-stage token usage summary, and a
 fail-open events check (gate-check errors in the run window, from
 `.icm/telemetry/hook-errors.jsonl`, where gates were NOT enforced). Bare `audit`
