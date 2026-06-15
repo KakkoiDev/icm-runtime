@@ -7,6 +7,9 @@
 # records the harness transcript_path into .icm/telemetry/ so stage-done
 # snapshots the right session.
 # Fails closed within ICM projects: missing jq or missing stdin fields deny.
+# A genuine gate DENY fails closed; a broken checker (icm.sh crash / parse error)
+# fails OPEN with a warning + telemetry breadcrumb, so one bug behind the ".*"
+# matcher cannot brick every tool call and trap the session.
 # Outside .icm dirs it always allows -- the wide matcher must not tax other work.
 set -eu
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
@@ -52,7 +55,32 @@ if [ -n "$tp" ] && [ -d .icm/telemetry ]; then
     printf '%s\n' "$tp" > .icm/telemetry/transcript-path 2>/dev/null || :
 fi
 
-if out=$("$SCRIPT_DIR/icm.sh" gate-check --tool "$tool_name" 2>&1); then
+# Distinguish a genuine gate DENY from a checker that failed to RUN.
+# gate-check signals a real denial with rc=1 AND DENY-prefixed stdout. Any other
+# failure (parse error in icm.sh, missing dependency, crash) must NOT brick the
+# session: behind the ".*" matcher it would deny every tool call, and the agent
+# cannot even Edit/Read to self-repair (a single bad line traps the whole run).
+# So: genuine denials fail closed; a broken checker fails OPEN, but loudly --
+# stderr warning + a telemetry breadcrumb so the breakage is visible, not silent.
+gc_rc=0
+out=$("$SCRIPT_DIR/icm.sh" gate-check --tool "$tool_name" 2>&1) || gc_rc=$?
+if [ "$gc_rc" -eq 0 ]; then
     exit 0
 fi
-deny "$(printf '%s\n' "$out" | head -10)"
+if printf '%s\n' "$out" | grep -q '^DENY '; then
+    deny "$(printf '%s\n' "$out" | head -10)"
+fi
+# Checker is broken, not denying. Allow the tool but surface the failure.
+printf 'icm gate-hook: gate-check could not run (rc=%s); gates NOT enforced this call. Fix icm.sh.\n%s\n' \
+    "$gc_rc" "$(printf '%s' "$out" | head -3)" >&2
+if [ -d .icm/telemetry ]; then
+    # jq is known-present here (the jq-missing branch exited earlier). Build the
+    # line with jq so control chars / quotes in checker output cannot produce an
+    # invalid JSONL line.
+    gc_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+    gc_msg=$(printf '%s' "$out" | head -1)
+    jq -cn --arg ts "$gc_ts" --arg tool "$tool_name" --argjson rc "$gc_rc" --arg msg "$gc_msg" \
+        '{ts:$ts,event:"gate-check-error",tool:$tool,rc:$rc,msg:$msg}' \
+        >> .icm/telemetry/hook-errors.jsonl 2>/dev/null || :
+fi
+exit 0

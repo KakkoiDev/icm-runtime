@@ -22,6 +22,28 @@ FAIL=0
 t_ok()   { PASS=$((PASS + 1)); echo "PASS  $1"; }
 t_fail() { FAIL=$((FAIL + 1)); echo "FAIL  $1${2:+ [$2]}"; }
 
+# ---- case 0: every shell script parses under the system bash ----
+# A parse error in icm.sh behind the ".*" gate-hook denies every tool call, so a
+# bad commit must fail CI here, not in a user's session. On macOS /bin/bash is
+# 3.2, which rejects constructs newer bash accepts (e.g. a ")" case pattern
+# inside "$( )"). Lint with /bin/bash when present so the macOS runner catches
+# the 3.2-specific class that ubuntu's bash 5 would silently accept.
+parse_bash=$(command -v bash || echo bash)
+[ -x /bin/bash ] && parse_bash=/bin/bash
+parse_ver=$("$parse_bash" -c 'echo "${BASH_VERSION:-?}"' 2>/dev/null)
+# Lint EVERY shell script the repo ships (installer.sh lives at the root, outside
+# skills/ and tests/ - it is the largest script and a member of the same bug
+# class). File-fed loop, not a pipe, so the PASS/FAIL counters survive.
+find "$REPO_DIR" -name '*.sh' -not -path '*/.git/*' 2>/dev/null | sort > "$TMP/sh_list"
+while IFS= read -r parse_s; do
+    [ -n "$parse_s" ] || continue
+    if parse_err=$("$parse_bash" -n "$parse_s" 2>&1); then
+        t_ok "0 parse: ${parse_s#"$REPO_DIR"/} ($parse_bash $parse_ver)"
+    else
+        t_fail "0 parse: ${parse_s#"$REPO_DIR"/} parse error under $parse_bash $parse_ver" "$parse_err"
+    fi
+done < "$TMP/sh_list"
+
 # ---- fixture: skills tree mirroring ~/.agents/skills/ ----
 mkdir -p "$TMP/skills/icm/runtime"
 # cp preserves the exec bit: a non-executable script in the repo fails here
@@ -123,6 +145,45 @@ if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '"deny"'; then
     t_ok "8d hook: missing stdin fields -> deny (fail closed)"
 else
     t_fail "8d hook: missing stdin fields -> deny (fail closed)" "rc=$rc out=$out"
+fi
+
+# ---- case 8e: broken icm.sh (parse error) -> fail OPEN, not deny ----
+# Regression: a single parse error in icm.sh behind the ".*" matcher must not
+# brick the session. The hook must allow the tool (no deny JSON) and warn.
+mkdir -p "$TMP/broken"
+cp "$HOOK" "$TMP/broken/gate-hook.sh"
+printf '#!/bin/sh\nthis is not valid shell ((\n' > "$TMP/broken/icm.sh"
+chmod +x "$TMP/broken/icm.sh"
+out=$(hook_json mcp__test__send "$PROJECT" | "$TMP/broken/gate-hook.sh" 2>/dev/null); rc=$?
+err=$(hook_json mcp__test__send "$PROJECT" | "$TMP/broken/gate-hook.sh" 2>&1 1>/dev/null)
+if [ "$rc" -eq 0 ] && ! printf '%s' "$out" | grep -q '"deny"' \
+    && printf '%s' "$err" | grep -q 'gate-check could not run'; then
+    t_ok "8e hook: broken icm.sh fails open (allow + warn), does not brick"
+else
+    t_fail "8e hook: broken icm.sh fails open" "rc=$rc out=[$out] err=[$err]"
+fi
+
+# ---- case 8f: a genuine DENY still fails closed (regression guard for 8e) ----
+out=$(hook_json mcp__test__send "$PROJECT" | (cd "$TMP" && "$HOOK")); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '"deny"'; then
+    t_ok "8f hook: genuine DENY still fails closed"
+else
+    t_fail "8f hook: genuine DENY still fails closed" "rc=$rc out=$out"
+fi
+
+# ---- case 8g: fail-open breadcrumb is valid JSONL even with control chars ----
+# A checker whose first output line contains a TAB must not produce an invalid
+# JSON line (regression for the tr-strip approach that left control chars in).
+mkdir -p "$TMP/broken2"
+cp "$HOOK" "$TMP/broken2/gate-hook.sh"
+printf '#!/bin/sh\nprintf "checker\\tboom\\n" >&2\nexit 3\n' > "$TMP/broken2/icm.sh"
+chmod +x "$TMP/broken2/icm.sh"
+hook_json mcp__test__send "$PROJECT" | "$TMP/broken2/gate-hook.sh" >/dev/null 2>&1
+bc_line=$(tail -1 "$PROJECT/.icm/telemetry/hook-errors.jsonl" 2>/dev/null)
+if [ -n "$bc_line" ] && printf '%s' "$bc_line" | jq -e . >/dev/null 2>&1; then
+    t_ok "8g hook: fail-open breadcrumb is valid JSONL (control chars escaped)"
+else
+    t_fail "8g hook: breadcrumb valid JSONL" "line=[$bc_line]"
 fi
 
 # ---- case 3: evidence present -> exit 0 ----
