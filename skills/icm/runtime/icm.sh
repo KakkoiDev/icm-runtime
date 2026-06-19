@@ -130,31 +130,54 @@ sha_file() {
 }
 
 # Locate the current session transcript for a run. $1 = run dir.
-# Preference: path recorded by gate-hook.sh (authoritative, from the harness),
-# then harness session dirs. Claude Code encodes the project cwd into the
-# transcript dir name (/ and . become -), so prefer that dir when it exists;
-# otherwise scan all sessions. Pick the newest candidate by mtime, not find
-# order: with parallel sessions the first hit is arbitrary. Prints the path,
-# or nothing when no transcript is found. Warnings go to stderr.
+# Prints "<path>\t<source>" (tab-separated) on success, nothing on failure.
+# Resolution order, most authoritative first:
+#   session-env     Claude Code exports CLAUDE_CODE_SESSION_ID and names the
+#                   transcript <session_id>.jsonl under the munged-cwd project
+#                   dir, so the exact path is computable with no shared state.
+#                   Concurrency-safe: each session resolves only its own file.
+#   hook            path recorded by gate-hook.sh into .icm/telemetry. A single
+#                   shared file, correct only without concurrent sessions.
+#   fallback-cwd    newest *.jsonl under the run's munged-cwd project dir.
+#   fallback-newest newest *.jsonl across all sessions; cwd could not be matched
+#                   so attribution is a guess (audit flags this source).
+# cwd is read from run.json (the recorded run cwd), not pwd, so resolution holds
+# even if stage-done is invoked from a subdir. Warnings go to stderr.
 find_transcript() {
     ft_run=$1
-    if [ -f ".icm/telemetry/transcript-path" ]; then
-        ft_p=$(head -1 ".icm/telemetry/transcript-path" 2>/dev/null || :)
-        if [ -n "$ft_p" ] && [ -f "$ft_p" ]; then
-            echo "$ft_p"
+    ft_cwd=$(grep '"cwd"' "$ft_run/telemetry/run.json" 2>/dev/null | sed 's/.*"cwd": "\(.*\)".*/\1/' || :)
+    [ -n "$ft_cwd" ] || ft_cwd=$(pwd)
+    ft_munged=$(printf '%s' "$ft_cwd" | sed 's,[/.],-,g')
+
+    if [ -n "${CLAUDECODE:-}" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+        ft_det="${HOME}/.claude/projects/$ft_munged/${CLAUDE_CODE_SESSION_ID}.jsonl"
+        if [ -f "$ft_det" ]; then
+            printf '%s\t%s\n' "$ft_det" "session-env"
             return 0
         fi
     fi
+
+    if [ -f ".icm/telemetry/transcript-path" ]; then
+        ft_p=$(head -1 ".icm/telemetry/transcript-path" 2>/dev/null || :)
+        if [ -n "$ft_p" ] && [ -f "$ft_p" ]; then
+            printf '%s\t%s\n' "$ft_p" "hook"
+            return 0
+        fi
+    fi
+
     ft_search=""
+    ft_src="fallback-newest"
     if [ -n "${CLAUDECODE:-}" ]; then
-        ft_munged=$(pwd | sed 's,[/.],-,g')
         if [ -d "${HOME}/.claude/projects/$ft_munged" ]; then
             ft_search="${HOME}/.claude/projects/$ft_munged"
+            ft_src="fallback-cwd"
         else
             ft_search="${HOME}/.claude/projects"
+            ft_src="fallback-newest"
         fi
     elif [ -d "${HOME}/.pi" ]; then
         ft_search="${HOME}/.pi/agent/sessions"
+        ft_src="fallback-newest"
     fi
     [ -n "$ft_search" ] || return 0
     ft_found=""
@@ -169,7 +192,7 @@ find_transcript() {
         echo "icm: $ft_n candidate transcripts; picked newest: $ft_found" >&2
         echo "Pass --transcript <path> if this is the wrong session." >&2
     fi
-    [ -z "$ft_found" ] || echo "$ft_found"
+    [ -z "$ft_found" ] || printf '%s\t%s\n' "$ft_found" "$ft_src"
 }
 
 # Print deduped usage events from transcript $1 within window [$2, $3] as
@@ -718,8 +741,14 @@ cmd_stage_done() {
     # telemetry/usage.jsonl; --full additionally freezes the raw window into
     # the stage dir. Token counts are computed here when not passed explicitly.
     _counts="estimated"
+    if [ -n "$transcript" ]; then _transcript_src="manual"; else _transcript_src="none"; fi
     if command -v jq >/dev/null 2>&1; then
-        [ -n "$transcript" ] || transcript=$(find_transcript "$run_dir")
+        if [ -z "$transcript" ]; then
+            _ft=$(find_transcript "$run_dir")
+            transcript=$(printf '%s' "$_ft" | cut -f1)
+            _transcript_src=$(printf '%s' "$_ft" | cut -s -f2)
+            [ -n "$_transcript_src" ] || _transcript_src="none"
+        fi
         if [ -n "$transcript" ] && [ -f "$transcript" ]; then
             _snap=$(mktemp)
             transcript_usage "$transcript" "$_prev_ts" "$_now" \
@@ -753,8 +782,8 @@ cmd_stage_done() {
     _to_val="$tokens_out"
     case "$_ti_val" in ''|null) _ti_val="null" ;; esac
     case "$_to_val" in ''|null) _to_val="null" ;; esac
-    printf '{"ts":"%s","stage":"%s","model":"%s","tokens_in":%s,"tokens_out":%s,"counts":"%s"}\n' \
-        "$_now" "$stage" "$model" "$_ti_val" "$_to_val" "$_counts" \
+    printf '{"ts":"%s","stage":"%s","model":"%s","tokens_in":%s,"tokens_out":%s,"counts":"%s","transcript_source":"%s"}\n' \
+        "$_now" "$stage" "$model" "$_ti_val" "$_to_val" "$_counts" "$_transcript_src" \
         >> "$telemetry_dir/stages.jsonl"
 
     # Drop a marker so audit can verify this stage boundary was recorded
@@ -797,8 +826,12 @@ cmd_reify_telemetry() {
         exit 1
     fi
 
+    _reify_src="manual"
     if [ -z "$transcript" ]; then
-        transcript=$(find_transcript "$run_dir")
+        _ft=$(find_transcript "$run_dir")
+        transcript=$(printf '%s' "$_ft" | cut -f1)
+        _reify_src=$(printf '%s' "$_ft" | cut -s -f2)
+        [ -n "$_reify_src" ] || _reify_src="none"
     fi
 
     if [ -z "$transcript" ] || [ ! -f "$transcript" ]; then
@@ -818,8 +851,8 @@ cmd_reify_telemetry() {
             _sums=$(transcript_usage "$transcript" "$_prev_ts" "$_ts" | usage_sums)
             _tokens_in=${_sums% *}
             _tokens_out=${_sums#* }
-            printf '{"ts":"%s","stage":"%s","model":"(from transcript)","tokens_in":%s,"tokens_out":%s,"counts":"transcript"}\n' \
-                "$_ts" "$_stage" "$_tokens_in" "$_tokens_out"
+            printf '{"ts":"%s","stage":"%s","model":"(from transcript)","tokens_in":%s,"tokens_out":%s,"counts":"transcript","transcript_source":"%s"}\n' \
+                "$_ts" "$_stage" "$_tokens_in" "$_tokens_out" "$_reify_src"
             _prev_ts="$_ts"
         done > "$_tmp"
         if [ -s "$_tmp" ]; then

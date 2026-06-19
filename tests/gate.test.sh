@@ -871,6 +871,47 @@ EOF
     else
         t_fail "24c stage-done: Claude format deduped by message.id, cache included" "uj=$(cat "$uj" 2>/dev/null) sj=$(cat "$sj" 2>/dev/null)"
     fi
+    # ---- case 24d: session-env transcript wins over a clobbered hook path ----
+    # Concurrency: another session overwrote .icm/telemetry/transcript-path with
+    # its own transcript. With CLAUDE_CODE_SESSION_ID set this run must resolve
+    # its OWN transcript deterministically, not the clobbered shared file.
+    sleep 1
+    run_m=$("$ICM" init testns/tool-ws 2>/dev/null)
+    ts_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    munged=$(printf '%s' "$PROJECT" | sed 's,[/.],-,g')
+    sdir="$HOME/.claude/projects/$munged"
+    mkdir -p "$sdir"
+    printf '{"ts":"%s","usage":{"input_tokens":42,"output_tokens":7}}\n' "$ts_now" > "$sdir/mysession.jsonl"
+    printf '{"ts":"%s","usage":{"input_tokens":999,"output_tokens":999}}\n' "$ts_now" > "$TMP/wrong.jsonl"
+    printf '%s\n' "$TMP/wrong.jsonl" > .icm/telemetry/transcript-path
+    printf 'done\n' > "$run_m/01-work/output/done.md"
+    CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=mysession "$ICM" stage-done testns/tool-ws --stage 01-work --model m >/dev/null 2>&1
+    sj="$run_m/telemetry/stages.jsonl"
+    if grep -q '"tokens_in":42' "$sj" && grep -q '"transcript_source":"session-env"' "$sj" \
+        && ! grep -q '999' "$sj"; then
+        t_ok "24d stage-done: session-env transcript beats clobbered hook path"
+    else
+        t_fail "24d stage-done: session-env transcript beats clobbered hook path" "sj=$(cat "$sj" 2>/dev/null)"
+    fi
+    rm -rf "$HOME/.claude/projects"
+    rm -f .icm/telemetry/transcript-path
+    # ---- case 24e: scan fallback is cwd-filtered + provenance recorded ----
+    sleep 1
+    run_n=$("$ICM" init testns/tool-ws 2>/dev/null)
+    ts_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    munged=$(printf '%s' "$PROJECT" | sed 's,[/.],-,g')
+    sdir="$HOME/.claude/projects/$munged"
+    mkdir -p "$sdir"
+    printf '{"ts":"%s","usage":{"input_tokens":13,"output_tokens":4}}\n' "$ts_now" > "$sdir/scan.jsonl"
+    printf 'done\n' > "$run_n/01-work/output/done.md"
+    env -u CLAUDE_CODE_SESSION_ID CLAUDECODE=1 "$ICM" stage-done testns/tool-ws --stage 01-work --model m >/dev/null 2>&1
+    sj="$run_n/telemetry/stages.jsonl"
+    if grep -q '"transcript_source":"fallback-cwd"' "$sj" && grep -q '"tokens_in":13' "$sj"; then
+        t_ok "24e stage-done: scan fallback is cwd-filtered + provenance recorded"
+    else
+        t_fail "24e stage-done: scan fallback is cwd-filtered + provenance recorded" "sj=$(cat "$sj" 2>/dev/null)"
+    fi
+    rm -rf "$HOME/.claude/projects"
     rm -f .icm/telemetry/transcript-path
 else
     echo "SKIP  24 stage-done snapshot (jq not installed)"
