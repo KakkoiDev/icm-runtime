@@ -245,12 +245,13 @@ gates but no scope registers enforcement, and (harness-aware) when running insid
 Code without a Claude-scope registration, since a pi-only registration is not enforcement
 there. Publish-stage contracts should run it before sending.
 
-Tool naming caveat for cross-harness gates: a `tools` regex written against Claude Code's
-MCP naming (`mcp__claude_ai_Slack__slack_send_message`) will not match a differently named
-pi tool. Matching is unanchored, so write the tool's core name
-(`slack_send_message(_draft)?`) when a gate must bind in both harnesses. The same applies
-to built-in tools: Claude Code says `WebSearch`/`WebFetch`, pi says `search_web`/`fetch_url`;
-use alternation (`(search_web|WebSearch)`) in gates and ICM-TOOLS lines.
+Cross-harness tool naming: the same tool is named differently per harness (Claude Code
+`mcp__claude_ai_Notion__notion-fetch`, `WebSearch`; pi/Codex `notion-fetch`, `search_web`).
+The runtime normalizes tool names before matching - it strips the `mcp__<server>__` wrapper
+and folds known built-in aliases (`web_search`, `web_fetch`) - so write the canonical core
+name once (`notion-fetch`, `web_search`) and the gate or `ICM-TOOLS` line binds in every
+harness. Matching tries both the raw and normalized name, so older patterns (raw `mcp__` names
+or hand-written alternations like `(search_web|WebSearch)`) keep working.
 
 CI runs `sh tests/gate.test.sh` on ubuntu and macos (`.github/workflows/test.yml`);
 run it locally before release too. The suite is hermetic: it sandboxes `$HOME`
