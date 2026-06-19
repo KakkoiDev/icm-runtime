@@ -251,6 +251,26 @@ gate_attr() {
     printf '%s\n' "$1" | sed -n "s/.*$2=\"\([^\"]*\)\".*/\1/p"
 }
 
+# Cross-harness tool-name normalization. The same tool is named differently per
+# harness (Claude Code: mcp__claude_ai_Notion__notion-fetch, WebSearch; pi/Codex:
+# notion-fetch, search_web). Print a canonical form so a gate or ICM-TOOLS pattern
+# written once binds in every harness:
+#   - strip an MCP wrapper prefix: mcp__<server>__<tool> -> <tool>
+#   - fold known built-in aliases to a canonical token.
+# Gate/audit matching tries the raw name AND this normalized name, so existing
+# patterns (raw mcp__ names or hand-written alternations) keep matching too.
+_normalize_tool() {
+    nt=$1
+    case "$nt" in
+        mcp__*__*) nt=${nt##*__} ;;
+    esac
+    case "$nt" in
+        WebSearch|search_web|web_search) nt="web_search" ;;
+        WebFetch|fetch_url|web_fetch) nt="web_fetch" ;;
+    esac
+    printf '%s\n' "$nt"
+}
+
 # Print the latest run dir per workspace under ./.icm. Handles both layouts
 # (.icm/<ws>/<ts> and namespaced .icm/<ns>/<ws>/<ts>) by matching the timestamp
 # format cmd_init writes, then keeping the lexically newest child per parent.
@@ -361,7 +381,7 @@ check_run() {
             fi
             if [ -n "$cr_tool" ]; then
                 cr_rc=0
-                printf '%s\n' "$cr_tool" | grep -Eq -- "$cr_tools" || cr_rc=$?
+                { printf '%s\n' "$cr_tool"; _normalize_tool "$cr_tool"; } | grep -Eq -- "$cr_tools" || cr_rc=$?
                 if [ "$cr_rc" -ge 2 ]; then
                     echo "DENY $cr_ws $cr_ts $cr_stage: invalid tools regex: $cr_tools"
                     continue
@@ -1161,7 +1181,7 @@ cmd_audit() {
                         echo "  ? $tool -- no gate-check records in run (enforcement adapter not registered?)"
                     elif [ "$attr_reliable" -eq 0 ]; then
                         echo "  ? $tool -- per-stage attribution unreliable ($attr_reason); not counted"
-                    elif printf '%s\n' "$stage_tools" | grep -Eq -- "$tool"; then
+                    elif { printf '%s\n' "$stage_tools"; printf '%s\n' "$stage_tools" | while IFS= read -r _nt; do [ -n "$_nt" ] || continue; _normalize_tool "$_nt"; done; } | grep -Eq -- "$tool"; then
                         echo "  ✓ $tool"
                     else
                         echo "  ✗ $tool -- not seen in this stage's window"

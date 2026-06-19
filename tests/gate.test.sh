@@ -1172,6 +1172,39 @@ else
     t_fail "41d gate scope: completed run has no active stage, denies nothing" "rc=$rc out=$out"
 fi
 
+# ---- case 42: cross-harness tool-name normalization ----
+# Anchored gate patterns so the match REQUIRES normalization (an unanchored core
+# name would substring-match the wrapped name even without it).
+WS_NORM="$TMP/skills/testns/norm-ws"
+mkdir -p "$WS_NORM/stages"
+printf '# 01-pub\n<!-- ICM-GATE tools="^notion-fetch$" run="false" -->\n' > "$WS_NORM/stages/01-pub.md"
+sleep 1
+run_nm=$("$ICM" init testns/norm-ws 2>/dev/null)
+# Claude Code MCP wrapper name normalizes to notion-fetch -> matches -> "false" denies.
+out=$("$ICM" gate-check --tool mcp__claude_ai_Notion__notion-fetch 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "DENY testns/norm-ws"; then
+    t_ok "42 tool-name norm: canonical gate matches mcp__ wrapped name"
+else
+    t_fail "42 tool-name norm: canonical gate matches mcp__ wrapped name" "rc=$rc out=$out"
+fi
+# Built-in alias: gate names canonical web_search; harness reports WebSearch.
+printf '# 01-pub\n<!-- ICM-GATE tools="^web_search$" run="false" -->\n' > "$WS_NORM/stages/01-pub.md"
+sleep 1
+run_nm2=$("$ICM" init testns/norm-ws 2>/dev/null)
+out=$("$ICM" gate-check --tool WebSearch 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "DENY testns/norm-ws"; then
+    t_ok "42b tool-name norm: canonical gate matches built-in alias (WebSearch)"
+else
+    t_fail "42b tool-name norm: canonical gate matches built-in alias (WebSearch)" "rc=$rc out=$out"
+fi
+# An unrelated tool still passes: normalization must not over-match.
+out=$("$ICM" gate-check --tool mcp__claude_ai_Slack__slack_send 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+    t_ok "42c tool-name norm: unrelated tool still allowed (no over-match)"
+else
+    t_fail "42c tool-name norm: unrelated tool still allowed" "rc=$rc out=$out"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
