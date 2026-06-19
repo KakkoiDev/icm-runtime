@@ -102,6 +102,7 @@ non-deterministic glue between deterministic checkpoints; the runtime owns all s
 | `telemetry/events.jsonl` | per run | **source of truth**: one ordered append-only stream of `run_init`, `usage`, `stage_done`, `reify` events |
 | `.manifest` | per run | sha256 of every frozen `CONTEXT.md`, `checks/` and `tools/` file |
 | `.icm/telemetry/tool-calls.jsonl` | per project | every `icm.sh` invocation, and (with `--hooks`) the tool name of every harness tool call |
+| `.icm/telemetry/tool-args.jsonl` | per project | (with `--hooks`) the arguments of every harness tool call, for execution-spec verification |
 | `.icm/telemetry/transcript-path[.<session_id>]` | per project | the session transcript path used to snapshot token usage |
 | `~/.icm/telemetry/skill-runs.jsonl` | global | one **derived** line per run (`provisional` at first stage-done, `final` on close) |
 | `.icm-seals.log` | project root (committable) | sha256 seal over `run.json` + `events.jsonl` + `.manifest` |
@@ -253,14 +254,36 @@ name once (`notion-fetch`, `web_search`) and the gate or `ICM-TOOLS` line binds 
 harness. Matching tries both the raw and normalized name, so older patterns (raw `mcp__` names
 or hand-written alternations like `(search_web|WebSearch)`) keep working.
 
+### Execution specs (`ICM-CALL`)
+
+`ICM-GATE` checks an output condition; `ICM-CALL` checks the *call itself*. A stage can
+declare the exact tool and the argument fields a small executor must fill:
+
+```
+<!-- ICM-CALL tool="notion-create-pages" args="parent,content" -->
+```
+
+With `--hooks` installed, the adapter records each tool call's arguments to
+`tool-args.jsonl`. `icm.sh audit` then verifies that within the stage's window the named
+tool (its `mcp__<server>__` wrapper stripped for matching) was called with every required
+arg field present; a missing call or a missing field is a deviation and fails `--strict`.
+This is the verifiable half of "smart model builds the spec, small model fills it": the
+executor's freedom shrinks to supplying the named arguments, and the runtime checks it did.
+
+v1 verifies arg-field presence. Value-from-file mapping (an argument must equal a prior
+stage's output, e.g. `content@01-frame/output/page.md`) is the planned next step; the
+`args="..."` grammar already tolerates the `@path` suffix.
+
 CI runs `sh tests/gate.test.sh` on ubuntu and macos (`.github/workflows/test.yml`);
 run it locally before release too. The suite is hermetic: it sandboxes `$HOME`
 under a tmp dir.
 
 ## Building your own workspace
 
-See `skills/jake-van-clief/ai-folder-research/` as a template. Copy the structure,
-write your stage contracts, add a SKILL.md with frontmatter. Run the installer again.
+Scaffold one with `icm.sh new-skill <ns>/<name> --stages a,b,c` (it emits a SKILL.md, one
+stub per stage, a `tools/` dir, and an eval), then fill in each stage's Process. Or copy an
+existing skill such as `skills/jake-van-clief/ai-folder-research/`. Run the installer again to
+pick it up; `icm.sh catalog` (and the generated `SKILLS.md`) lists installed skills.
 
 ## License
 
