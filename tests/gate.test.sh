@@ -913,6 +913,22 @@ EOF
     fi
     rm -rf "$HOME/.claude/projects"
     rm -f .icm/telemetry/transcript-path
+    # ---- case 24f: transcript counts override hand-passed --tokens-in ----
+    sleep 1
+    run_o=$("$ICM" init testns/tool-ws 2>/dev/null)
+    ts_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    printf '{"ts":"%s","usage":{"input_tokens":11,"output_tokens":5}}\n' "$ts_now" > "$TMP/sess.jsonl"
+    printf '%s\n' "$TMP/sess.jsonl" > .icm/telemetry/transcript-path
+    printf 'done\n' > "$run_o/01-work/output/done.md"
+    env -u CLAUDE_CODE_SESSION_ID "$ICM" stage-done testns/tool-ws --stage 01-work --model m --tokens-in 999999 --tokens-out 888888 >/dev/null 2>&1
+    sj="$run_o/telemetry/stages.jsonl"
+    if grep -q '"tokens_in":11' "$sj" && grep -q '"tokens_out":5' "$sj" \
+        && grep -q '"counts":"transcript"' "$sj" && ! grep -q '999999' "$sj"; then
+        t_ok "24f stage-done: transcript counts override hand-passed --tokens-in"
+    else
+        t_fail "24f stage-done: transcript counts override hand-passed --tokens-in" "sj=$(cat "$sj" 2>/dev/null)"
+    fi
+    rm -f .icm/telemetry/transcript-path
 else
     echo "SKIP  24 stage-done snapshot (jq not installed)"
 fi

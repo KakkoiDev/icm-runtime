@@ -739,7 +739,8 @@ cmd_stage_done() {
     # Snapshot the session transcript for this window while it still exists.
     # Default keeps usage events only (counts, no conversation content) in
     # telemetry/usage.jsonl; --full additionally freezes the raw window into
-    # the stage dir. Token counts are computed here when not passed explicitly.
+    # the stage dir. Transcript-derived counts and model are authoritative;
+    # hand-passed --tokens-in/--tokens-out/--model are a no-transcript fallback.
     _counts="estimated"
     if [ -n "$transcript" ]; then _transcript_src="manual"; else _transcript_src="none"; fi
     if command -v jq >/dev/null 2>&1; then
@@ -755,12 +756,19 @@ cmd_stage_done() {
                 | jq -c --arg stage "$stage" '. + {stage: $stage}' 2>/dev/null > "$_snap" || true
             if [ -s "$_snap" ]; then
                 cat "$_snap" >> "$telemetry_dir/usage.jsonl"
-            fi
-            if [ "$tokens_in" = "null" ] && [ "$tokens_out" = "null" ]; then
+                # Transcript-derived counts are authoritative: the model cannot
+                # reliably self-estimate tokens, so hand-passed --tokens-in/-out
+                # only survive when no transcript usage was captured for the window.
                 _sums=$(usage_sums < "$_snap")
-                tokens_in=${_sums% *}
-                tokens_out=${_sums#* }
-                [ "$tokens_in" = "null" ] || _counts="transcript"
+                if [ "${_sums% *}" != "null" ]; then
+                    tokens_in=${_sums% *}
+                    tokens_out=${_sums#* }
+                    _counts="transcript"
+                fi
+                # Auto-detect the model from the window (last call naming one),
+                # overriding an error-prone hand-passed --model.
+                _tmodel=$(jq -r 'select(.model != null) | .model' "$_snap" 2>/dev/null | tail -1 || :)
+                if [ -n "$_tmodel" ]; then model="$_tmodel"; fi
             fi
             rm -f "$_snap"
             if [ "$full" -eq 1 ]; then
