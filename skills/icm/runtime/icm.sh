@@ -10,8 +10,8 @@
 #   icm.sh clean  <workspace-name> [--keep N]  Remove old completed runs, keep N most recent
 #   icm.sh gate-check --tool <tool-name> [--cwd DIR]  Evaluate frozen ICM-GATE lines; exit 1 + DENY on failure
 #   icm.sh gate-status [--cwd DIR]           List declared gates and hook registration per scope
-#   icm.sh telemetry <workspace> --model <m> --tokens-in <n> --tokens-out <n> --cost <c> [--cwd <dir>]
-#   icm.sh stage-done <workspace> --stage <name> --model <m> [--tokens-in <n> --tokens-out <n>] [--full] [--transcript <path>] [--cwd <dir>]
+#   icm.sh telemetry <workspace> [--cwd <dir>]   Totals derived from per-stage telemetry; legacy --model/--tokens-in/--tokens-out/--cost accepted but ignored
+#   icm.sh stage-done <workspace> --stage <name> [--full] [--transcript <path>] [--cwd <dir>]   Model+tokens auto-detected from transcript; legacy --model/--tokens-in/--tokens-out are a no-transcript fallback
 #   icm.sh reify-telemetry <workspace> [--cwd <dir>] [--transcript <path>]
 #   icm.sh audit <workspace> [--strict] [--cwd <dir>]  --strict exits 1 if deviations>0
 #   icm.sh seal <workspace> [--cwd <dir>]         Append run evidence digests to .icm-seals.log
