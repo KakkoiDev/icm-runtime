@@ -695,17 +695,18 @@ cmd_clean() {
         fi
     done
 
-    # Rotate the shared tool-call log: the wide hook matcher writes one line
-    # per tool call, which is unbounded in long-lived projects. Audit pruned
-    # runs before cleaning; rotation drops their actual-tool records.
-    _tc_log=".icm/telemetry/tool-calls.jsonl"
-    if [ -f "$_tc_log" ]; then
+    # Rotate the shared per-project logs: the wide hook matcher writes one line
+    # per tool call (tool-calls.jsonl) and one per call's args (tool-args.jsonl),
+    # both unbounded in long-lived projects. Audit pruned runs before cleaning;
+    # rotation drops their actual-tool / args records.
+    for _tc_log in ".icm/telemetry/tool-calls.jsonl" ".icm/telemetry/tool-args.jsonl"; do
+        [ -f "$_tc_log" ] || continue
         _tc_lines=$(wc -l < "$_tc_log" | tr -d ' ')
         if [ "$_tc_lines" -gt 10000 ]; then
             tail -n 10000 "$_tc_log" > "$_tc_log.tmp" && mv "$_tc_log.tmp" "$_tc_log"
-            echo "Rotated tool-calls.jsonl: kept last 10000 of $_tc_lines lines."
+            echo "Rotated $(basename "$_tc_log"): kept last 10000 of $_tc_lines lines."
         fi
-    fi
+    done
 
     echo "Cleaned $removed complete run(s). Kept up to $keep most recent. Incomplete runs preserved."
 }

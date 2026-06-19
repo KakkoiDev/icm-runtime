@@ -12,7 +12,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,6 +64,21 @@ function recordTranscriptPath(cwd: string) {
   }
 }
 
+// Capture the tool call's arguments for execution-spec verification, mirroring
+// gate-hook.sh. Dedicated file so arbitrary arg content cannot pollute tool-name
+// parsing elsewhere. Best-effort: never interferes with gate evaluation.
+function recordToolArgs(cwd: string, event: any) {
+  try {
+    const dir = join(cwd, ".icm", "telemetry");
+    if (!existsSync(dir)) return;
+    const input = event?.args ?? event?.input ?? event?.toolInput ?? {};
+    const line = `${JSON.stringify({ ts: new Date().toISOString(), tool: event?.toolName, input })}\n`;
+    appendFileSync(join(dir, "tool-args.jsonl"), line);
+  } catch {
+    // best-effort only
+  }
+}
+
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", (event) => {
     // pi has no per-event cwd; the session's process cwd is the project dir.
@@ -71,6 +86,7 @@ export default function (pi: ExtensionAPI) {
     if (!existsSync(join(cwd, ".icm"))) return undefined;
 
     recordTranscriptPath(cwd);
+    recordToolArgs(cwd, event);
 
     const icmSh = resolveIcmSh();
     if (!icmSh) {

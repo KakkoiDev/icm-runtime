@@ -1253,6 +1253,28 @@ else
     t_fail "44c new-skill: refuses to overwrite" "rc=$rc out=$out"
 fi
 
+# ---- case 45: hook captures tool args to a dedicated tool-args.jsonl ----
+if command -v jq >/dev/null 2>&1; then
+    rm -f "$PROJECT/.icm/telemetry/tool-args.jsonl"
+    printf '{"session_id":"t","transcript_path":"/tmp/t.jsonl","cwd":"%s","hook_event_name":"PreToolUse","tool_name":"mcp__test__send","tool_input":{"channel":"C1","text":"hi"}}' "$PROJECT" \
+        | (cd "$TMP" && "$HOOK") >/dev/null 2>&1 || true
+    ta="$PROJECT/.icm/telemetry/tool-args.jsonl"
+    if [ -f "$ta" ] && tail -1 "$ta" | jq -e '.tool == "mcp__test__send" and .input.channel == "C1" and .input.text == "hi"' >/dev/null 2>&1; then
+        t_ok "45 hook: captures tool args (tool + input) to tool-args.jsonl"
+    else
+        t_fail "45 hook: captures tool args to tool-args.jsonl" "line=$(tail -1 "$ta" 2>/dev/null)"
+    fi
+    # The args file must NOT pollute tool-calls.jsonl tool-name attribution.
+    if [ ! -s "$PROJECT/.icm/telemetry/tool-args.jsonl" ] || ! grep -q '"--tool"' "$ta" 2>/dev/null; then
+        t_ok "45b hook: args live in a separate file (no --tool tokens to mis-attribute)"
+    else
+        t_fail "45b hook: args separated from attribution" "ta=$(cat "$ta" 2>/dev/null)"
+    fi
+    rm -f "$PROJECT/.icm/telemetry/tool-args.jsonl"
+else
+    echo "SKIP  45 hook tool-args capture (jq not installed)"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

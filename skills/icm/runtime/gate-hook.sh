@@ -55,6 +55,18 @@ if [ -n "$tp" ] && [ -d .icm/telemetry ]; then
     printf '%s\n' "$tp" > .icm/telemetry/transcript-path 2>/dev/null || :
 fi
 
+# Capture the tool call's arguments for execution-spec verification (audit reads
+# them to check an ICM-CALL spec). Written to a DEDICATED file, not
+# tool-calls.jsonl, so arbitrary arg content (e.g. a Bash command containing
+# "--tool") cannot pollute that file's tool-name attribution parsing. One jq fork,
+# best-effort: a malformed/oversized payload just drops the record, never blocks.
+if [ -d .icm/telemetry ]; then
+    ta_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+    printf '%s' "$input" | jq -c --arg ts "$ta_ts" --arg tool "$tool_name" \
+        '{ts:$ts,tool:$tool,input:(.tool_input // {})}' \
+        >> .icm/telemetry/tool-args.jsonl 2>/dev/null || :
+fi
+
 # Distinguish a genuine gate DENY from a checker that failed to RUN.
 # gate-check signals a real denial with rc=1 AND DENY-prefixed stdout. Any other
 # failure (parse error in icm.sh, missing dependency, crash) must NOT brick the
