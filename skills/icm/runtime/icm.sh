@@ -56,6 +56,7 @@ usage() {
     echo "       icm.sh init <workspace> [--caller <parentWs>/<parentRunId>/<stage>]" >&2
     echo "       icm.sh catalog                  # markdown index of installed skills" >&2
     echo "       icm.sh new-skill <ns>/<name> --stages a,b,c [--desc <one-liner>]" >&2
+    echo "       icm.sh eval <workspace>         # run the skill's eval/*.test.sh checks" >&2
     echo "       icm.sh children <workspace> [<run_id>]" >&2
     echo "       icm.sh gate-check --tool <tool-name> [--cwd <dir>]" >&2
     echo "       icm.sh gate-status [--cwd <dir>]" >&2
@@ -815,14 +816,51 @@ cmd_new_skill() {
 
     {
         printf '# Eval: %s\n\n' "$ns_slug"
-        printf 'Run the skill against a fixture and assert its receipts and gate outcomes\n'
-        printf '(see the ICM runtime tests for the pattern). Replace this stub.\n'
+        printf 'Holds `*.test.sh` checks run by `icm.sh eval %s` (each runs from the skill\n' "$ns_name"
+        printf 'dir and exits 0 on pass). Test the deterministic surface -- tools/, receipts,\n'
+        printf 'gate outcomes; model-mediated stages need a fixture/replay. Replace the stub.\n'
     } > "$ns_dir/eval/README.md"
+    {
+        printf '#!/bin/sh\n# Smoke eval for %s. Runs from the skill dir; exit 0 = pass.\n' "$ns_slug"
+        printf 'set -eu\n'
+        printf 'test -f SKILL.md || { echo "FAIL: SKILL.md missing"; exit 1; }\n'
+        printf 'echo ok\n'
+    } > "$ns_dir/eval/smoke.test.sh"
+    chmod +x "$ns_dir/eval/smoke.test.sh" 2>/dev/null || :
     printf '.gitkeep\n' > "$ns_dir/tools/.gitkeep" 2>/dev/null || :
 
     echo "created skill $ns_name at $ns_dir"
     echo "  stages: $ns_stages"
     echo "  next: fill SKILL.md description, each stage's Process, and the eval"
+}
+
+# ---- eval ----
+# Run a skill's eval suite: each eval/*.test.sh executes from the skill dir and
+# exits 0 on pass. Tests the deterministic surface (tools/, contracts, receipts)
+# without a live model -- the build/execute split is unverifiable otherwise.
+# Reports pass/fail; exits 1 if any test fails.
+cmd_eval() {
+    ev_wsdir=$(find_workspace "$1")
+    ev_dir="$ev_wsdir/eval"
+    if [ ! -d "$ev_dir" ]; then
+        echo "no eval/ dir for $1" >&2
+        exit 1
+    fi
+    ev_pass=0; ev_fail=0
+    for ev_t in "$ev_dir"/*.test.sh; do
+        [ -f "$ev_t" ] || continue
+        ev_name=$(basename "$ev_t")
+        if ev_out=$( (cd "$ev_wsdir" && sh "$ev_t") 2>&1 ); then
+            echo "  PASS $ev_name"
+            ev_pass=$((ev_pass + 1))
+        else
+            echo "  FAIL $ev_name"
+            if [ -n "$ev_out" ]; then printf '%s\n' "$ev_out" | sed 's/^/      /'; fi
+            ev_fail=$((ev_fail + 1))
+        fi
+    done
+    echo "eval $1: $ev_pass passed, $ev_fail failed"
+    [ "$ev_fail" -eq 0 ]
 }
 
 # ---- telemetry ----
@@ -1762,6 +1800,7 @@ case "$cmd" in
     stages) [ $# -ge 1 ] || usage; cmd_stages "$1" ;;
     catalog) cmd_catalog ;;
     new-skill) cmd_new_skill "$@" ;;
+    eval) [ $# -ge 1 ] || usage; cmd_eval "$1" ;;
     clean)  [ $# -ge 1 ] || usage; ws=$1; shift; cmd_clean "$ws" "$@" ;;
     telemetry) cmd_telemetry "$@" ;;
     stage-done) cmd_stage_done "$@" ;;

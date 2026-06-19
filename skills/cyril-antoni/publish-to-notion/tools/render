@@ -1,0 +1,59 @@
+#!/bin/sh
+# render: convert standard Markdown to Notion-flavored Markdown, deterministically.
+#
+# Standard Markdown is a subset of Notion-flavored Markdown -- headings, bold,
+# italic, lists, links, inline code, quotes, dividers and fenced code blocks
+# (including ```mermaid) share the same syntax and pass through unchanged. The one
+# construct standard Markdown has that Notion-flavored does not is the GitHub-style
+# pipe table; this script rewrites those into <table> blocks. Content inside fenced
+# code blocks is never touched (a `|`-line in a code sample is left literal).
+#
+# Reads a file argument or stdin; writes Notion-flavored Markdown to stdout.
+# Scope (v1): pipe tables. Escaped pipes (\|) inside cells and indented/~~~ code
+# fences are not handled; the model still owns content-level concerns (mermaid
+# label quoting, escaping literal special characters).
+exec awk '
+function trim(s) { gsub(/^[ \t]+/, "", s); gsub(/[ \t]+$/, "", s); return s }
+
+# A Markdown table separator row: pipes, dashes, colons, spaces only, >=1 dash.
+function is_sep(line) {
+    return (line ~ /^[ \t]*\|[ \t:|-]+\|[ \t]*$/) && (line ~ /-/)
+}
+
+# Split a "| a | b |" row into arr[1..n] of raw cell text (caller trims).
+function split_row(line, arr,   s) {
+    s = line
+    sub(/^[ \t]*\|/, "", s)
+    sub(/\|[ \t]*$/, "", s)
+    return split(s, arr, "|")
+}
+
+# Emit the buffered pipe-lines: a real table (header + separator) becomes a
+# <table> block; anything else is printed verbatim.
+function flush_table(   i, c, ncells, cells) {
+    if (nbuf == 0) return
+    if (nbuf >= 2 && is_sep(buf[2])) {
+        print "<table fit-page-width=\"true\" header-row=\"true\">"
+        for (i = 1; i <= nbuf; i++) {
+            if (i == 2) continue
+            print "\t<tr>"
+            ncells = split_row(buf[i], cells)
+            for (c = 1; c <= ncells; c++) print "\t\t<td>" trim(cells[c]) "</td>"
+            print "\t</tr>"
+        }
+        print "</table>"
+    } else {
+        for (i = 1; i <= nbuf; i++) print buf[i]
+    }
+    nbuf = 0
+}
+
+BEGIN { in_fence = 0; nbuf = 0 }
+
+/^```/ { flush_table(); in_fence = !in_fence; print; next }
+in_fence { print; next }
+/^[ \t]*\|.*\|[ \t]*$/ { buf[++nbuf] = $0; next }
+{ flush_table(); print }
+
+END { flush_table() }
+' "$@"

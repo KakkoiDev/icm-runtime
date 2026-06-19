@@ -1305,6 +1305,28 @@ else
     echo "SKIP  46 ICM-CALL verification (jq not installed)"
 fi
 
+# ---- case 47: eval runs a skill's eval/*.test.sh and aggregates pass/fail ----
+mkdir -p "$TMP/skills/evalns/eval-skill/eval" "$TMP/skills/evalns/eval-skill/stages"
+printf '# 01\n' > "$TMP/skills/evalns/eval-skill/stages/01-x.md"
+printf '#!/bin/sh\nexit 0\n' > "$TMP/skills/evalns/eval-skill/eval/pass.test.sh"
+printf '#!/bin/sh\necho boom; exit 1\n' > "$TMP/skills/evalns/eval-skill/eval/fail.test.sh"
+ev_out=$("$ICM" eval evalns/eval-skill 2>&1); ev_rc=$?
+if [ "$ev_rc" -ne 0 ] \
+    && printf '%s' "$ev_out" | grep -q 'PASS pass.test.sh' \
+    && printf '%s' "$ev_out" | grep -q 'FAIL fail.test.sh' \
+    && printf '%s' "$ev_out" | grep -q '1 passed, 1 failed'; then
+    t_ok "47 eval: runs eval/*.test.sh, aggregates pass/fail, exits nonzero on failure"
+else
+    t_fail "47 eval: runs eval suite" "rc=$ev_rc out=$ev_out"
+fi
+rm "$TMP/skills/evalns/eval-skill/eval/fail.test.sh"
+ev_out=$("$ICM" eval evalns/eval-skill 2>&1); ev_rc=$?
+if [ "$ev_rc" -eq 0 ] && printf '%s' "$ev_out" | grep -q '1 passed, 0 failed'; then
+    t_ok "47b eval: all tests pass -> exit 0"
+else
+    t_fail "47b eval: all pass -> exit 0" "rc=$ev_rc out=$ev_out"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
