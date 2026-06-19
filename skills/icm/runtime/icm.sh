@@ -1415,8 +1415,10 @@ cmd_audit() {
     # mcp__ wrapper stripped for matching) must have been called within the stage
     # window with every named arg field present in its input. Verifies the small
     # executor actually filled the spec, not just that some tool ran. Reads the
-    # captured args from tool-args.jsonl. (Value-from-file mapping -- an arg must
-    # equal a prior stage's output -- is a planned extension; v1 checks presence.)
+    # captured args from tool-args.jsonl. An "args" entry of the form "field@path"
+    # additionally requires that arg's value to equal the run-root-relative file's
+    # content -- verifying the executor glued the right prior-stage output into the
+    # call, not just that the field is present.
     args_log="$run_dir/../../../telemetry/tool-args.jsonl"
     if command -v jq >/dev/null 2>&1; then
         _ec_prev="$run_start"
@@ -1435,9 +1437,6 @@ cmd_audit() {
             ec_args=$(gate_attr "$ec_line" args)
             echo "STAGE $ec_stage -- EXECUTION SPEC (ICM-CALL)"
             echo "──────────────────────────────────────"
-            ec_fields_json=$(printf '%s' "$ec_args" | tr ',' '\n' | sed 's/@.*//;s/^[[:space:]]*//;s/[[:space:]]*$//' \
-                | grep -v '^$' | jq -R . 2>/dev/null | jq -cs . 2>/dev/null || echo '[]')
-            [ -n "$ec_fields_json" ] || ec_fields_json='[]'
             if [ -z "$ec_tool" ]; then
                 echo "  ✗ malformed ICM-CALL (need tool=\"...\")"
                 deviations=$((deviations + 1))
@@ -1447,24 +1446,45 @@ cmd_audit() {
                 echo "  ✗ $ec_tool -- no tool-args.jsonl (enforcement adapter not registered?)"
                 deviations=$((deviations + 1))
             else
-                ec_verdict=$(jq -rs --arg tool "$ec_tool" --arg lo "$_ec_prev" --arg hi "$ec_this" --argjson fields "$ec_fields_json" '
+                # The matching call: last record for this tool (mcp__ wrapper
+                # stripped) within the stage window, or empty.
+                ec_rec=$(jq -cs --arg tool "$ec_tool" --arg lo "$_ec_prev" --arg hi "$ec_this" '
                     [ .[] | select(.ts > $lo and .ts <= $hi)
                           | select(.tool == $tool or (.tool | gsub("^mcp__.*__"; "")) == $tool) ]
-                    | last as $rec
-                    | if $rec == null then "NOCALL"
-                      elif ($fields | all(. as $f | (($rec.input // {}) | has($f)))) then "OK"
-                      else "MISSING" end
-                ' "$args_log" 2>/dev/null || echo "ERR")
-                case "$ec_verdict" in
-                    OK) echo "  ✓ $ec_tool called with args: $ec_args" ;;
-                    NOCALL)
-                        echo "  ✗ $ec_tool -- not called in this stage's window"
-                        deviations=$((deviations + 1)) ;;
-                    MISSING)
-                        echo "  ✗ $ec_tool -- called but missing required arg field(s): $ec_args"
-                        deviations=$((deviations + 1)) ;;
-                    *) echo "  ? $ec_tool -- could not evaluate (jq error / malformed args record)" ;;
-                esac
+                    | last // empty
+                ' "$args_log" 2>/dev/null || echo "")
+                if [ -z "$ec_rec" ]; then
+                    echo "  ✗ $ec_tool -- not called in this stage's window"
+                    deviations=$((deviations + 1))
+                else
+                    ec_bad=""
+                    ec_oldifs=$IFS; IFS=,
+                    for ec_a in $ec_args; do
+                        IFS=$ec_oldifs
+                        ec_field=$(printf '%s' "${ec_a%%@*}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                        if [ -z "$ec_field" ]; then IFS=,; continue; fi
+                        if ! printf '%s' "$ec_rec" | jq -e --arg f "$ec_field" '(.input // {}) | has($f)' >/dev/null 2>&1; then
+                            ec_bad="$ec_bad missing:$ec_field"
+                        elif [ "$ec_a" != "${ec_a%%@*}" ]; then
+                            ec_path=$(printf '%s' "${ec_a#*@}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                            ec_actual=$(printf '%s' "$ec_rec" | jq -r --arg f "$ec_field" '.input[$f] // ""')
+                            if [ ! -f "$run_dir/$ec_path" ]; then
+                                ec_bad="$ec_bad nofile:$ec_path"
+                            else
+                                ec_want=$(cat "$run_dir/$ec_path")
+                                if [ "$ec_actual" != "$ec_want" ]; then ec_bad="$ec_bad value:$ec_field"; fi
+                            fi
+                        fi
+                        IFS=,
+                    done
+                    IFS=$ec_oldifs
+                    if [ -z "$ec_bad" ]; then
+                        echo "  ✓ $ec_tool called with args: $ec_args"
+                    else
+                        echo "  ✗ $ec_tool --$ec_bad"
+                        deviations=$((deviations + 1))
+                    fi
+                fi
             fi
             echo ""
             if [ -n "$ec_this" ]; then _ec_prev="$ec_this"; fi

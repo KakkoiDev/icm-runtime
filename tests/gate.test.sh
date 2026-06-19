@@ -1295,7 +1295,7 @@ if command -v jq >/dev/null 2>&1; then
     { grep -v '2032-01-01T00:00:05Z' "$TA_EC" || true; } > "$TA_EC.tmp"; mv "$TA_EC.tmp" "$TA_EC"
     printf '{"ts":"2032-01-01T00:00:05Z","tool":"mcp__claude_ai_Notion__notion-create-pages","input":{"parent":"p"}}\n' >> "$TA_EC"
     audit_ec=$("$ICM" audit testns/exec-ws 2>&1)
-    if printf '%s' "$audit_ec" | grep -q "missing required arg field" && printf '%s' "$audit_ec" | grep -q "Deviations: 1"; then
+    if printf '%s' "$audit_ec" | grep -q "missing:content" && printf '%s' "$audit_ec" | grep -q "Deviations: 1"; then
         t_ok "46b ICM-CALL: called but missing a required arg field -> deviation"
     else
         t_fail "46b ICM-CALL: missing required arg field -> deviation" "out=$audit_ec"
@@ -1303,6 +1303,35 @@ if command -v jq >/dev/null 2>&1; then
     { grep -v '2032-01-01T00:00:05Z' "$TA_EC" || true; } > "$TA_EC.tmp"; mv "$TA_EC.tmp" "$TA_EC"
 else
     echo "SKIP  46 ICM-CALL verification (jq not installed)"
+fi
+
+# ---- case 48: ICM-CALL value-from-file mapping (field@path) ----
+if command -v jq >/dev/null 2>&1; then
+    RUN_EV=".icm/testns/exec2-ws/2033-01-01_00-00-00"
+    mkdir -p "$RUN_EV/01-pub/output" "$RUN_EV/telemetry" "$RUN_EV/../../../telemetry"
+    printf '# 01-pub\n<!-- ICM-CALL tool="pubtool" args="title,body@01-pub/output/page.md" -->\n' > "$RUN_EV/01-pub/CONTEXT.md"
+    printf 'rendered body line\n' > "$RUN_EV/01-pub/output/page.md"
+    printf 'x\n' > "$RUN_EV/01-pub/output/o.md"
+    printf '{"ts":"2033-01-01T00:00:10Z","type":"stage_done","stage":"01-pub","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n' > "$RUN_EV/telemetry/events.jsonl"
+    TA_EV=".icm/telemetry/tool-args.jsonl"
+    printf '{"ts":"2033-01-01T00:00:05Z","tool":"pubtool","input":{"title":"T","body":"rendered body line"}}\n' >> "$TA_EV"
+    a=$("$ICM" audit testns/exec2-ws 2>&1)
+    if printf '%s' "$a" | grep -q "✓ pubtool"; then
+        t_ok "48 ICM-CALL: field@path with arg value == file content -> verified"
+    else
+        t_fail "48 ICM-CALL: value-from-file verified" "out=$a"
+    fi
+    { grep -v '2033-01-01T00:00:05Z' "$TA_EV" || true; } > "$TA_EV.tmp"; mv "$TA_EV.tmp" "$TA_EV"
+    printf '{"ts":"2033-01-01T00:00:05Z","tool":"pubtool","input":{"title":"T","body":"WRONG"}}\n' >> "$TA_EV"
+    a=$("$ICM" audit testns/exec2-ws 2>&1)
+    if printf '%s' "$a" | grep -q "value:body" && printf '%s' "$a" | grep -q "Deviations: 1"; then
+        t_ok "48b ICM-CALL: field@path with mismatched value -> deviation"
+    else
+        t_fail "48b ICM-CALL: value mismatch -> deviation" "out=$a"
+    fi
+    { grep -v '2033-01-01T00:00:05Z' "$TA_EV" || true; } > "$TA_EV.tmp"; mv "$TA_EV.tmp" "$TA_EV"
+else
+    echo "SKIP  48 ICM-CALL value-from-file (jq not installed)"
 fi
 
 # ---- case 47: eval runs a skill's eval/*.test.sh and aggregates pass/fail ----
