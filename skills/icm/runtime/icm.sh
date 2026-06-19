@@ -1372,6 +1372,67 @@ cmd_audit() {
         deviations=$((deviations + 1))
     fi
 
+    # --- Check 5: execution-spec (ICM-CALL) verification ---
+    # A stage may declare <!-- ICM-CALL tool="T" args="a,b,c" -->: the tool T (its
+    # mcp__ wrapper stripped for matching) must have been called within the stage
+    # window with every named arg field present in its input. Verifies the small
+    # executor actually filled the spec, not just that some tool ran. Reads the
+    # captured args from tool-args.jsonl. (Value-from-file mapping -- an arg must
+    # equal a prior stage's output -- is a planned extension; v1 checks presence.)
+    args_log="$run_dir/../../../telemetry/tool-args.jsonl"
+    if command -v jq >/dev/null 2>&1; then
+        _ec_prev="$run_start"
+        for stage_dir in "$run_dir"/[0-9]*/; do
+            [ -d "$stage_dir" ] || continue
+            ec_ctx="$stage_dir/CONTEXT.md"
+            [ -f "$ec_ctx" ] || continue
+            ec_stage=$(basename "$stage_dir")
+            ec_this=$(_audit_stage_ts "$events_log" "$ec_stage")
+            ec_line=$(grep -o '<!-- ICM-CALL [^>]*-->' "$ec_ctx" 2>/dev/null | head -1 || true)
+            if [ -z "$ec_line" ]; then
+                if [ -n "$ec_this" ]; then _ec_prev="$ec_this"; fi
+                continue
+            fi
+            ec_tool=$(gate_attr "$ec_line" tool)
+            ec_args=$(gate_attr "$ec_line" args)
+            echo "STAGE $ec_stage -- EXECUTION SPEC (ICM-CALL)"
+            echo "──────────────────────────────────────"
+            ec_fields_json=$(printf '%s' "$ec_args" | tr ',' '\n' | sed 's/@.*//;s/^[[:space:]]*//;s/[[:space:]]*$//' \
+                | grep -v '^$' | jq -R . 2>/dev/null | jq -cs . 2>/dev/null || echo '[]')
+            [ -n "$ec_fields_json" ] || ec_fields_json='[]'
+            if [ -z "$ec_tool" ]; then
+                echo "  ✗ malformed ICM-CALL (need tool=\"...\")"
+                deviations=$((deviations + 1))
+            elif [ -z "$ec_this" ]; then
+                echo "  ? $ec_tool -- stage not closed, cannot verify"
+            elif [ ! -f "$args_log" ]; then
+                echo "  ✗ $ec_tool -- no tool-args.jsonl (enforcement adapter not registered?)"
+                deviations=$((deviations + 1))
+            else
+                ec_verdict=$(jq -rs --arg tool "$ec_tool" --arg lo "$_ec_prev" --arg hi "$ec_this" --argjson fields "$ec_fields_json" '
+                    [ .[] | select(.ts > $lo and .ts <= $hi)
+                          | select(.tool == $tool or (.tool | gsub("^mcp__.*__"; "")) == $tool) ]
+                    | last as $rec
+                    | if $rec == null then "NOCALL"
+                      elif ($fields | all(. as $f | (($rec.input // {}) | has($f)))) then "OK"
+                      else "MISSING" end
+                ' "$args_log" 2>/dev/null || echo "ERR")
+                case "$ec_verdict" in
+                    OK) echo "  ✓ $ec_tool called with args: $ec_args" ;;
+                    NOCALL)
+                        echo "  ✗ $ec_tool -- not called in this stage's window"
+                        deviations=$((deviations + 1)) ;;
+                    MISSING)
+                        echo "  ✗ $ec_tool -- called but missing required arg field(s): $ec_args"
+                        deviations=$((deviations + 1)) ;;
+                    *) echo "  ? $ec_tool -- could not evaluate (jq error / malformed args record)" ;;
+                esac
+            fi
+            echo ""
+            if [ -n "$ec_this" ]; then _ec_prev="$ec_this"; fi
+        done
+    fi
+
     echo "──────────────────────────────────────"
     echo "Deviations: $deviations (review manually for false positives)"
     if [ "$complete" = false ]; then

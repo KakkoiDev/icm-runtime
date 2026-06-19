@@ -1275,6 +1275,36 @@ else
     echo "SKIP  45 hook tool-args capture (jq not installed)"
 fi
 
+# ---- case 46: ICM-CALL execution-spec verification (arg-field presence) ----
+if command -v jq >/dev/null 2>&1; then
+    RUN_EC=".icm/testns/exec-ws/2032-01-01_00-00-00"
+    mkdir -p "$RUN_EC/01-pub/output" "$RUN_EC/telemetry" "$RUN_EC/../../../telemetry"
+    printf '# 01-pub\n<!-- ICM-CALL tool="notion-create-pages" args="parent,content" -->\n' > "$RUN_EC/01-pub/CONTEXT.md"
+    printf 'x\n' > "$RUN_EC/01-pub/output/o.md"
+    printf '{"ts":"2032-01-01T00:00:10Z","type":"stage_done","stage":"01-pub","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n' > "$RUN_EC/telemetry/events.jsonl"
+    TA_EC=".icm/telemetry/tool-args.jsonl"
+    # In-window call via the mcp wrapper name, both required fields present -> OK.
+    printf '{"ts":"2032-01-01T00:00:05Z","tool":"mcp__claude_ai_Notion__notion-create-pages","input":{"parent":"p","content":"hi"}}\n' >> "$TA_EC"
+    audit_ec=$("$ICM" audit testns/exec-ws 2>&1)
+    if printf '%s' "$audit_ec" | grep -q "EXECUTION SPEC" && printf '%s' "$audit_ec" | grep -q "✓ notion-create-pages"; then
+        t_ok "46 ICM-CALL: spec'd tool with required arg fields present -> verified"
+    else
+        t_fail "46 ICM-CALL: spec'd tool with required arg fields -> verified" "out=$audit_ec"
+    fi
+    # Same call missing a required field -> deviation.
+    { grep -v '2032-01-01T00:00:05Z' "$TA_EC" || true; } > "$TA_EC.tmp"; mv "$TA_EC.tmp" "$TA_EC"
+    printf '{"ts":"2032-01-01T00:00:05Z","tool":"mcp__claude_ai_Notion__notion-create-pages","input":{"parent":"p"}}\n' >> "$TA_EC"
+    audit_ec=$("$ICM" audit testns/exec-ws 2>&1)
+    if printf '%s' "$audit_ec" | grep -q "missing required arg field" && printf '%s' "$audit_ec" | grep -q "Deviations: 1"; then
+        t_ok "46b ICM-CALL: called but missing a required arg field -> deviation"
+    else
+        t_fail "46b ICM-CALL: missing required arg field -> deviation" "out=$audit_ec"
+    fi
+    { grep -v '2032-01-01T00:00:05Z' "$TA_EC" || true; } > "$TA_EC.tmp"; mv "$TA_EC.tmp" "$TA_EC"
+else
+    echo "SKIP  46 ICM-CALL verification (jq not installed)"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
