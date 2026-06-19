@@ -929,6 +929,28 @@ EOF
         t_fail "24f stage-done: transcript counts override hand-passed --tokens-in" "sj=$(cat "$sj" 2>/dev/null)"
     fi
     rm -f .icm/telemetry/transcript-path
+    # ---- case 24g: provisional global entry at stage-done, final after reify ----
+    sleep 1
+    run_p=$("$ICM" init testns/tool-ws 2>/dev/null)
+    ts_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    printf '{"ts":"%s","usage":{"input_tokens":17,"output_tokens":6}}\n' "$ts_now" > "$TMP/sess.jsonl"
+    printf '%s\n' "$TMP/sess.jsonl" > .icm/telemetry/transcript-path
+    printf 'done\n' > "$run_p/01-work/output/done.md"
+    pid_run=$(basename "$run_p")
+    env -u CLAUDE_CODE_SESSION_ID "$ICM" stage-done testns/tool-ws --stage 01-work --model m >/dev/null 2>&1
+    g="$HOME/.icm/telemetry/skill-runs.jsonl"
+    prov=$(grep "\"run_id\":\"$pid_run\"" "$g" | grep -c '"status":"provisional"')
+    env -u CLAUDE_CODE_SESSION_ID "$ICM" reify-telemetry testns/tool-ws >/dev/null 2>&1
+    fin=$(grep "\"run_id\":\"$pid_run\"" "$g" | grep -c '"status":"final"')
+    last=$(grep "\"run_id\":\"$pid_run\"" "$g" | tail -1)
+    if [ "$prov" -ge 1 ] && [ "$fin" -ge 1 ] \
+        && printf '%s' "$last" | grep -q '"status":"final"' \
+        && printf '%s' "$last" | grep -q '"tokens_in":17'; then
+        t_ok "24g telemetry: provisional entry at stage-done, final after reify"
+    else
+        t_fail "24g telemetry: provisional entry at stage-done, final after reify" "prov=$prov fin=$fin last=$last"
+    fi
+    rm -f .icm/telemetry/transcript-path
 else
     echo "SKIP  24 stage-done snapshot (jq not installed)"
 fi

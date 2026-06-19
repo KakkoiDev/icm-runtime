@@ -653,16 +653,49 @@ cmd_stages() {
 }
 
 # ---- telemetry ----
+# Append a one-line global index record for a run to skill-runs.jsonl. Token
+# totals are DERIVED from the run's per-stage telemetry (the model cannot
+# self-estimate them); cost is intentionally not stored - downstream readers
+# price the tokens from a rate table they own. Records accrete append-only; a
+# reader takes the last per (skill, run_id). A "provisional" record is written
+# at each stage-done so an abandoned (never closed) run stays visible; reify and
+# telemetry upgrade it to "final".
+# $1=workspace  $2=run_id  $3=status (provisional|final)
+_global_upsert() {
+    gu_ws=$1; gu_run=$2; gu_status=$3
+    gu_rd=".icm/$gu_ws/$gu_run"
+    [ -d "$gu_rd" ] || return 0
+    gu_dir="${HOME}/.icm/telemetry"
+    mkdir -p "$gu_dir"
+    gu_sj="$gu_rd/telemetry/stages.jsonl"
+    gu_ti="null"; gu_to="null"; gu_model=""
+    if [ -f "$gu_sj" ] && command -v jq >/dev/null 2>&1; then
+        gu_ti=$(jq -s '[.[].tokens_in | numbers] | if length==0 then null else add end' "$gu_sj" 2>/dev/null || echo null)
+        gu_to=$(jq -s '[.[].tokens_out | numbers] | if length==0 then null else add end' "$gu_sj" 2>/dev/null || echo null)
+        gu_model=$(jq -rs '[.[].model | strings | select(. != "(from transcript)" and . != "")] | last // ""' "$gu_sj" 2>/dev/null || echo "")
+    fi
+    [ -n "$gu_ti" ] || gu_ti="null"
+    [ -n "$gu_to" ] || gu_to="null"
+    gu_cwd=$(grep '"cwd"' "$gu_rd/telemetry/run.json" 2>/dev/null | sed 's/.*"cwd": "\(.*\)".*/\1/' || echo "$PWD")
+    gu_caller=$(grep '"caller"' "$gu_rd/telemetry/run.json" 2>/dev/null | sed 's/.*"caller": *"\([^"]*\)".*/\1/' || echo "")
+    if [ -n "$gu_caller" ]; then gu_caller_json="\"$gu_caller\""; else gu_caller_json="null"; fi
+    printf '{"ts":"%s","status":"%s","skill":"%s","run_id":"%s","model":"%s","tokens_in":%s,"tokens_out":%s,"cwd":"%s","caller":%s,"log_dir":".icm/%s/%s/telemetry"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$gu_status" "$gu_ws" "$gu_run" "$gu_model" "$gu_ti" "$gu_to" "$gu_cwd" "$gu_caller_json" "$gu_ws" "$gu_run" \
+        >> "$gu_dir/skill-runs.jsonl"
+}
+
 # Write a completed-run summary to the global telemetry file.
-# Called by workspace skills after all stages complete.
+# Called by workspace skills after all stages complete. --model/--tokens-in/
+# --tokens-out/--cost are accepted for backward compatibility but ignored:
+# totals are derived from per-stage telemetry, cost is not stored.
 cmd_telemetry() {
-    ws=""; model=""; tokens_in=""; tokens_out=""; cost=""
+    ws=""
     while [ $# -gt 0 ]; do
         case "$1" in
-            --model) model="$2"; shift 2 ;;
-            --tokens-in) tokens_in="$2"; shift 2 ;;
-            --tokens-out) tokens_out="$2"; shift 2 ;;
-            --cost) cost="$2"; shift 2 ;;
+            --model) shift 2 ;;
+            --tokens-in) shift 2 ;;
+            --tokens-out) shift 2 ;;
+            --cost) shift 2 ;;
             --cwd) cd "$2"; shift 2 ;;
             *) ws="$1"; shift ;;
         esac
@@ -676,18 +709,8 @@ cmd_telemetry() {
         echo "no runs for $ws" >&2
         exit 1
     fi
-    local global_dir="${HOME}/.icm/telemetry"
-    mkdir -p "$global_dir"
-    local global_file="$global_dir/skill-runs.jsonl"
-    local run_cwd
-    run_cwd=$(grep '"cwd"' ".icm/$ws/$latest/telemetry/run.json" 2>/dev/null | sed 's/.*"cwd": "\(.*\)".*/\1/' || echo "$PWD")
-    local run_caller caller_json
-    run_caller=$(grep '"caller"' ".icm/$ws/$latest/telemetry/run.json" 2>/dev/null | sed 's/.*"caller": *"\([^"]*\)".*/\1/' || echo "")
-    if [ -n "$run_caller" ]; then caller_json="\"$run_caller\""; else caller_json="null"; fi
-    printf '{"ts":"%s","skill":"%s","run_id":"%s","model":"%s","tokens_in":%s,"tokens_out":%s,"cost_est":%s,"cwd":"%s","caller":%s,"log_dir":".icm/%s/%s/telemetry"}\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ws" "$latest" "$model" "$tokens_in" "$tokens_out" "$cost" "$run_cwd" "$caller_json" "$ws" "$latest" \
-        >> "$global_file"
-    echo "$global_file"
+    _global_upsert "$ws" "$latest" final
+    echo "${HOME}/.icm/telemetry/skill-runs.jsonl"
 }
 
 # ---- stage-done ----
@@ -800,6 +823,10 @@ cmd_stage_done() {
         "$stage" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         > "$run_dir/$stage/.stage-telemetry"
 
+    # Refresh the provisional global index entry so an abandoned (never closed)
+    # run stays visible with its completed-so-far totals; reify/telemetry finalize.
+    _global_upsert "$ws" "$latest" provisional
+
     echo "OK: $stage boundary recorded for $ws/$latest"
 }
 
@@ -865,6 +892,7 @@ cmd_reify_telemetry() {
         done > "$_tmp"
         if [ -s "$_tmp" ]; then
             mv "$_tmp" "$stages_jsonl"
+            _global_upsert "$ws" "$latest" final
             echo "reify-telemetry: updated $stages_jsonl with transcript token counts"
             return 0
         fi
