@@ -1224,6 +1224,35 @@ else
     t_fail "43 catalog: lists skill slug + description from SKILL.md frontmatter" "out=$cat_out"
 fi
 
+# ---- case 44: new-skill scaffolds a usable skill skeleton ----
+out=$("$ICM" new-skill testns/scaffolded --stages frame,draft,ship --desc "Scaffold test." 2>&1); rc=$?
+nsd="$TMP/skills/testns/scaffolded"
+if [ "$rc" -eq 0 ] && [ -f "$nsd/SKILL.md" ] \
+    && grep -q '^name: scaffolded' "$nsd/SKILL.md" \
+    && grep -q 'runtime README' "$nsd/SKILL.md" \
+    && [ -f "$nsd/stages/01-frame.md" ] && [ -f "$nsd/stages/03-ship.md" ] \
+    && grep -q 'stage-done testns/scaffolded --stage 01-frame' "$nsd/stages/01-frame.md" \
+    && [ -d "$nsd/tools" ] && [ -d "$nsd/eval" ]; then
+    t_ok "44 new-skill: scaffolds SKILL.md + stage stubs + tools/ + eval/"
+else
+    t_fail "44 new-skill: scaffolds skeleton" "rc=$rc out=$out tree=$(find "$nsd" -type f 2>/dev/null)"
+fi
+# The scaffolded skill is immediately runnable by the runtime.
+sc_stages=$("$ICM" stages testns/scaffolded 2>/dev/null)
+sc_run=$("$ICM" init testns/scaffolded 2>/dev/null)
+if printf '%s' "$sc_stages" | grep -q '01-frame' && [ -d "$sc_run/01-frame" ]; then
+    t_ok "44b new-skill: scaffolded skill initializes and lists its stages"
+else
+    t_fail "44b new-skill: scaffolded skill initializes" "stages=$sc_stages run=$sc_run"
+fi
+# Refuses to clobber an existing skill.
+out=$("$ICM" new-skill testns/scaffolded --stages x 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "already exists"; then
+    t_ok "44c new-skill: refuses to overwrite an existing skill dir"
+else
+    t_fail "44c new-skill: refuses to overwrite" "rc=$rc out=$out"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

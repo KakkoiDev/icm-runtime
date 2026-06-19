@@ -55,6 +55,7 @@ usage() {
     echo "Usage: icm.sh <init|next|list|diff|stages|clean> <workspace-name> [--keep N]" >&2
     echo "       icm.sh init <workspace> [--caller <parentWs>/<parentRunId>/<stage>]" >&2
     echo "       icm.sh catalog                  # markdown index of installed skills" >&2
+    echo "       icm.sh new-skill <ns>/<name> --stages a,b,c [--desc <one-liner>]" >&2
     echo "       icm.sh children <workspace> [<run_id>]" >&2
     echo "       icm.sh gate-check --tool <tool-name> [--cwd <dir>]" >&2
     echo "       icm.sh gate-status [--cwd <dir>]" >&2
@@ -745,6 +746,82 @@ cmd_catalog() {
             }' "$cat_md")
         printf '| `%s` | %s |\n' "$cat_slug" "$cat_desc"
     done
+}
+
+# ---- new-skill (scaffolder) ----
+# Emit a new skill skeleton so skills are not made by copy-pasting another one.
+# The SKILL.md carries skill-specific content plus a Runtime POINTER to the
+# canonical contract (the ICM README), not copied boilerplate, so the runtime
+# command surface lives in one place and cannot go stale across skills (DRY).
+# Usage: icm.sh new-skill <ns>/<name> --stages a,b,c [--desc "one-liner"]
+cmd_new_skill() {
+    ns_name=""; ns_stages=""; ns_desc="One-line description (replace me)."
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --stages) ns_stages="$2"; shift 2 ;;
+            --desc) ns_desc="$2"; shift 2 ;;
+            *) ns_name="$1"; shift ;;
+        esac
+    done
+    case "$ns_name" in
+        */*) : ;;
+        *) echo "new-skill requires <namespace>/<name>" >&2; exit 1 ;;
+    esac
+    [ -n "$ns_stages" ] || { echo "new-skill requires --stages a,b,c" >&2; exit 1; }
+    ns_dir="$SKILLS_DIR/$ns_name"
+    [ -e "$ns_dir" ] && { echo "new-skill: $ns_dir already exists" >&2; exit 1; }
+    ns_slug=${ns_name##*/}
+    mkdir -p "$ns_dir/stages" "$ns_dir/tools" "$ns_dir/eval"
+
+    {
+        printf -- '---\nname: %s\ndescription: >\n  %s\n---\n\n' "$ns_slug" "$ns_desc"
+        printf '# %s\n\n' "$ns_slug"
+        printf '## Runtime\n'
+        printf 'Drive everything through `icm.sh` (never create state dirs or format timestamps\n'
+        printf 'by hand). Init a run, then execute and CLOSE each stage in real time with\n'
+        printf '`stage-done`; audit and seal at the end. The full runtime contract -- telemetry,\n'
+        printf 'audit, seal, gates -- lives in the ICM runtime README, not in this file.\n\n'
+        printf '## Stages\n'
+        ns_i=0; ns_old_ifs=$IFS; IFS=,
+        for ns_st in $ns_stages; do
+            IFS=$ns_old_ifs
+            ns_i=$((ns_i + 1))
+            ns_num=$(printf '%02d' "$ns_i")
+            printf -- '- `%s-%s`\n' "$ns_num" "$ns_st"
+            IFS=,
+        done
+        IFS=$ns_old_ifs
+    } > "$ns_dir/SKILL.md"
+
+    ns_i=0; ns_old_ifs=$IFS; IFS=,
+    for ns_st in $ns_stages; do
+        IFS=$ns_old_ifs
+        ns_i=$((ns_i + 1))
+        ns_num=$(printf '%02d' "$ns_i")
+        {
+            printf '# %s-%s\n\n' "$ns_num" "$ns_st"
+            printf '## Process\n1. Describe the deterministic steps for this stage. Push bash-reachable\n'
+            printf '   work into `tools/` scripts; leave only judgement/summarization to the model.\n\n'
+            printf '## Inputs\n- (prior stage output this stage reads)\n\n'
+            printf '## Outputs\n- `output/<file>` (what this stage writes)\n\n'
+            printf '## After Output (MANDATORY)\n```bash\n'
+            printf 'bash ~/.agents/skills/icm/runtime/icm.sh stage-done %s --stage %s-%s\n' "$ns_name" "$ns_num" "$ns_st"
+            printf '```\n'
+        } > "$ns_dir/stages/${ns_num}-${ns_st}.md"
+        IFS=,
+    done
+    IFS=$ns_old_ifs
+
+    {
+        printf '# Eval: %s\n\n' "$ns_slug"
+        printf 'Run the skill against a fixture and assert its receipts and gate outcomes\n'
+        printf '(see the ICM runtime tests for the pattern). Replace this stub.\n'
+    } > "$ns_dir/eval/README.md"
+    printf '.gitkeep\n' > "$ns_dir/tools/.gitkeep" 2>/dev/null || :
+
+    echo "created skill $ns_name at $ns_dir"
+    echo "  stages: $ns_stages"
+    echo "  next: fill SKILL.md description, each stage's Process, and the eval"
 }
 
 # ---- telemetry ----
@@ -1622,6 +1699,7 @@ case "$cmd" in
     diff)   [ $# -ge 1 ] || usage; cmd_diff "$1" ;;
     stages) [ $# -ge 1 ] || usage; cmd_stages "$1" ;;
     catalog) cmd_catalog ;;
+    new-skill) cmd_new_skill "$@" ;;
     clean)  [ $# -ge 1 ] || usage; ws=$1; shift; cmd_clean "$ws" "$@" ;;
     telemetry) cmd_telemetry "$@" ;;
     stage-done) cmd_stage_done "$@" ;;
