@@ -521,22 +521,22 @@ else
     t_fail "18 icm.sh telemetry: writes to ~/.icm/telemetry/skill-runs.jsonl" "out=$OUT"
 fi
 
-# ---- case 18b: stage-done writes to stages.jsonl ----
+# ---- case 18b: stage-done writes a stage_done event to events.jsonl ----
 "$ICM" stage-done testns/tool-ws --stage 01-work --model claude-test \
     --tokens-in 500 --tokens-out 200 2>/dev/null
 _latest_run=$(cd .icm/testns/tool-ws && ls -1 2>/dev/null | sort -r | head -1)
-stages_jsonl=".icm/testns/tool-ws/$_latest_run/telemetry/stages.jsonl"
-if [ -f "$stages_jsonl" ] && grep -q '"stage":"01-work"' "$stages_jsonl"; then
-    t_ok "18b stage-done: writes to telemetry/stages.jsonl"
+events_jsonl=".icm/testns/tool-ws/$_latest_run/telemetry/events.jsonl"
+if [ -f "$events_jsonl" ] && grep -q '"type":"stage_done","stage":"01-work"' "$events_jsonl"; then
+    t_ok "18b stage-done: writes stage_done event to telemetry/events.jsonl"
 else
-    t_fail "18b stage-done: writes to telemetry/stages.jsonl" "file=$stages_jsonl"
+    t_fail "18b stage-done: writes stage_done event to telemetry/events.jsonl" "file=$events_jsonl"
 fi
 
-# ---- case 18c: stage-done creates .stage-telemetry marker ----
-if [ -f ".icm/testns/tool-ws/$_latest_run/01-work/.stage-telemetry" ]; then
-    t_ok "18c stage-done: creates .stage-telemetry marker"
+# ---- case 18c: events.jsonl carries a run_init header event ----
+if grep -q '"type":"run_init"' "$events_jsonl"; then
+    t_ok "18c events.jsonl: run_init header event written at init"
 else
-    t_fail "18c stage-done: creates .stage-telemetry marker"
+    t_fail "18c events.jsonl: run_init header event written at init" "file=$events_jsonl"
 fi
 
 # ---- case 18d: audit flags missing stage telemetry ----
@@ -575,21 +575,20 @@ fi
 # ---- case 19c: audit reports per-stage token usage ----
 if printf '%s' "$audit_out" | grep -q "Per-stage token usage" \
     && printf '%s' "$audit_out" | grep -q "01-work: in=500 out=200"; then
-    t_ok "19c audit: reports per-stage token usage from stages.jsonl"
+    t_ok "19c audit: reports per-stage token usage from events.jsonl"
 else
-    t_fail "19c audit: reports per-stage token usage from stages.jsonl" "out=$audit_out"
+    t_fail "19c audit: reports per-stage token usage from events.jsonl" "out=$audit_out"
 fi
 
 # ---- case 19d: audit handles null token counts without crashing ----
-# Find the latest run dir and append a null-entry directly
+# Append a stage_done event with null counts directly.
 _latest_run=$(cd .icm/testns/tool-ws && ls -1 2>/dev/null | sort -r | head -1)
 if [ -n "$_latest_run" ]; then
     _run_dir=".icm/testns/tool-ws/$_latest_run"
-    printf '{"ts":"2026-06-12T09:00:00Z","stage":"02-more","model":"claude-test","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' \
-        >> "$_run_dir/telemetry/stages.jsonl"
+    printf '{"ts":"2026-06-12T09:00:00Z","type":"stage_done","stage":"02-more","model":"claude-test","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n' \
+        >> "$_run_dir/telemetry/events.jsonl"
     mkdir -p "$_run_dir/02-more/output"
     printf 'done\n' > "$_run_dir/02-more/output/done.md"
-    touch "$_run_dir/02-more/.stage-telemetry"
 fi
 audit_out=$("$ICM" audit testns/tool-ws 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$audit_out" | grep -q "in=null out=null"; then
@@ -676,9 +675,8 @@ mkdir -p "$RUN5/01-a/output" "$RUN5/02-b/output" "$RUN5/telemetry"
 printf '# 01-a\n<!-- ICM-TOOLS expect="toolA" -->\n' > "$RUN5/01-a/CONTEXT.md"
 printf '# 02-b\n<!-- ICM-TOOLS expect="toolB" -->\n' > "$RUN5/02-b/CONTEXT.md"
 printf 'x\n' > "$RUN5/01-a/output/o.md"; printf 'x\n' > "$RUN5/02-b/output/o.md"
-: > "$RUN5/01-a/.stage-telemetry"; : > "$RUN5/02-b/.stage-telemetry"
-printf '{"ts":"2030-01-01T00:00:10Z","stage":"01-a","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' > "$RUN5/telemetry/stages.jsonl"
-printf '{"ts":"2030-01-01T00:00:20Z","stage":"02-b","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' >> "$RUN5/telemetry/stages.jsonl"
+printf '{"ts":"2030-01-01T00:00:10Z","type":"stage_done","stage":"01-a","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n' > "$RUN5/telemetry/events.jsonl"
+printf '{"ts":"2030-01-01T00:00:20Z","type":"stage_done","stage":"02-b","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n' >> "$RUN5/telemetry/events.jsonl"
 TC5="$RUN5/../../../telemetry/tool-calls.jsonl"
 mkdir -p "$RUN5/../../../telemetry"
 printf '{"ts":"2030-01-01T00:00:05Z","tool":"icm.sh","cmd":"gate-check","args":["gate-check","--tool","toolA"],"cwd":"x","ec":0}\n' >> "$TC5"
@@ -714,9 +712,8 @@ printf '# 01-a\n<!-- ICM-TOOLS expect="toolA" -->\n' > "$RUN6/01-a/CONTEXT.md"
 printf '# 02-b\n<!-- ICM-TOOLS expect="toolB" -->\n' > "$RUN6/02-b/CONTEXT.md"
 printf '# 03-c\n<!-- ICM-TOOLS expect="toolB" -->\n' > "$RUN6/03-c/CONTEXT.md"
 for s in 01-a 02-b 03-c; do printf 'x\n' > "$RUN6/$s/output/o.md"; done
-: > "$RUN6/01-a/.stage-telemetry"; : > "$RUN6/03-c/.stage-telemetry"
-printf '{"ts":"2030-02-01T00:00:10Z","stage":"01-a","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' > "$RUN6/telemetry/stages.jsonl"
-printf '{"ts":"2030-02-01T00:00:30Z","stage":"03-c","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' >> "$RUN6/telemetry/stages.jsonl"
+printf '{"ts":"2030-02-01T00:00:10Z","type":"stage_done","stage":"01-a","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n' > "$RUN6/telemetry/events.jsonl"
+printf '{"ts":"2030-02-01T00:00:30Z","type":"stage_done","stage":"03-c","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n' >> "$RUN6/telemetry/events.jsonl"
 TC6="$RUN6/../../../telemetry/tool-calls.jsonl"
 printf '{"ts":"2030-02-01T00:00:15Z","tool":"icm.sh","cmd":"gate-check","args":["gate-check","--tool","toolB"],"cwd":"x","ec":0}\n' >> "$TC6"
 audit6=$("$ICM" audit testns/perstage-gap 2>&1)
@@ -736,10 +733,9 @@ mkdir -p "$RUN7/01-a/output" "$RUN7/02-b/output" "$RUN7/telemetry"
 printf '# 01-a\n<!-- ICM-TOOLS expect="toolA" -->\n' > "$RUN7/01-a/CONTEXT.md"
 printf '# 02-b\n<!-- ICM-TOOLS expect="toolB" -->\n' > "$RUN7/02-b/CONTEXT.md"
 printf 'x\n' > "$RUN7/01-a/output/o.md"; printf 'x\n' > "$RUN7/02-b/output/o.md"
-: > "$RUN7/01-a/.stage-telemetry"; : > "$RUN7/02-b/.stage-telemetry"
-{ printf '{"ts":"2030-03-01T00:00:10Z","stage":"01-a","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n'
-  printf '{"ts":"2030-03-01T00:00:20Z","stage":"02-b","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n'
-  printf '{"ts":"2030-03-01T00:00:50Z","stage":"01-a","model":"m","tokens_in":1,"tokens_out":1,"counts":"transcript"}\n'; } > "$RUN7/telemetry/stages.jsonl"
+{ printf '{"ts":"2030-03-01T00:00:10Z","type":"stage_done","stage":"01-a","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n'
+  printf '{"ts":"2030-03-01T00:00:20Z","type":"stage_done","stage":"02-b","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n'
+  printf '{"ts":"2030-03-01T00:00:50Z","type":"stage_done","stage":"01-a","model":"m","tokens_in":1,"cache_creation":0,"cache_read":0,"tokens_out":1,"counts":"transcript","transcript_source":"none"}\n'; } > "$RUN7/telemetry/events.jsonl"
 TC7="$RUN7/../../../telemetry/tool-calls.jsonl"
 printf '{"ts":"2030-03-01T00:00:15Z","tool":"icm.sh","cmd":"gate-check","args":["gate-check","--tool","toolB"],"cwd":"x","ec":0}\n' >> "$TC7"
 audit7=$("$ICM" audit testns/perstage-rerun 2>&1)
@@ -758,9 +754,8 @@ mkdir -p "$RUN8/01-a/output" "$RUN8/02-b/output" "$RUN8/telemetry"
 printf '# 01-a\n<!-- ICM-TOOLS expect="toolX" -->\n' > "$RUN8/01-a/CONTEXT.md"
 printf '# 02-b\n<!-- ICM-TOOLS expect="toolX" -->\n' > "$RUN8/02-b/CONTEXT.md"
 printf 'x\n' > "$RUN8/01-a/output/o.md"; printf 'x\n' > "$RUN8/02-b/output/o.md"
-: > "$RUN8/01-a/.stage-telemetry"; : > "$RUN8/02-b/.stage-telemetry"
-printf '{"ts":"2030-04-01T00:00:10Z","stage":"01-a","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' > "$RUN8/telemetry/stages.jsonl"
-printf '{"ts":"2030-04-01T00:00:20Z","stage":"02-b","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' >> "$RUN8/telemetry/stages.jsonl"
+printf '{"ts":"2030-04-01T00:00:10Z","type":"stage_done","stage":"01-a","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n' > "$RUN8/telemetry/events.jsonl"
+printf '{"ts":"2030-04-01T00:00:20Z","type":"stage_done","stage":"02-b","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n' >> "$RUN8/telemetry/events.jsonl"
 TC8="$RUN8/../../../telemetry/tool-calls.jsonl"
 printf '{"ts":"2030-04-01T00:00:10Z","tool":"icm.sh","cmd":"gate-check","args":["gate-check","--tool","toolX"],"cwd":"x","ec":0}\n' >> "$TC8"
 audit8=$("$ICM" audit testns/perstage-edge 2>&1)
@@ -778,8 +773,7 @@ RUN9=".icm/testns/advisory-ws/2031-01-01_00-00-00"
 mkdir -p "$RUN9/01-a/output" "$RUN9/telemetry"
 printf '# 01-a\n<!-- ICM-TOOLS expect="toolZ" -->\n' > "$RUN9/01-a/CONTEXT.md"
 printf 'x\n' > "$RUN9/01-a/output/o.md"
-: > "$RUN9/01-a/.stage-telemetry"
-printf '{"ts":"2031-01-01T00:00:10Z","stage":"01-a","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' > "$RUN9/telemetry/stages.jsonl"
+printf '{"ts":"2031-01-01T00:00:10Z","type":"stage_done","stage":"01-a","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n' > "$RUN9/telemetry/events.jsonl"
 audit9=$("$ICM" audit testns/advisory-ws 2>&1); rc9=$?
 "$ICM" audit testns/advisory-ws --strict >/dev/null 2>&1; rc9s=$?
 if [ "$rc9" -eq 0 ] && printf '%s' "$audit9" | grep -q "GATES NOT ENFORCED" \
@@ -801,8 +795,8 @@ if command -v jq >/dev/null 2>&1; then
 {"ts":"2020-01-01T00:00:01Z","usage":{"input_tokens":200,"output_tokens":70}}
 EOF
     out=$("$ICM" reify-telemetry testns/tool-ws --transcript "$TMP/transcript.jsonl" 2>&1); rc=$?
-    sj="$run_h/telemetry/stages.jsonl"
-    if [ "$rc" -eq 0 ] && grep -q '"counts":"transcript"' "$sj" \
+    sj="$run_h/telemetry/events.jsonl"
+    if [ "$rc" -eq 0 ] && grep -q '"type":"reify".*"counts":"transcript"' "$sj" \
         && grep -q '"tokens_in":300' "$sj" && grep -q '"tokens_out":120' "$sj"; then
         t_ok "22 reify-telemetry: per-stage counts summed from transcript"
     else
@@ -824,10 +818,10 @@ if command -v jq >/dev/null 2>&1; then
     sleep 1
     printf '{"ts":"2020-01-01T00:00:00Z","usage":{"input_tokens":7,"output_tokens":3}}\n' > "$proj_dir/new.jsonl"
     out=$(CLAUDECODE=1 "$ICM" reify-telemetry testns/tool-ws 2>&1); rc=$?
-    sj="$run_i/telemetry/stages.jsonl"
+    sj="$run_i/telemetry/events.jsonl"
     if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "picked newest" \
         && printf '%s' "$out" | grep -q "new.jsonl" \
-        && grep -q '"tokens_in":7' "$sj"; then
+        && grep -q '"type":"reify".*"tokens_in":7' "$sj"; then
         t_ok "23 reify-telemetry: auto-detect picks newest by mtime + warns"
     else
         t_fail "23 reify-telemetry: auto-detect picks newest by mtime + warns" "rc=$rc out=$out sj=$(cat "$sj" 2>/dev/null)"
@@ -847,14 +841,14 @@ if command -v jq >/dev/null 2>&1; then
     printf '%s\n' "$TMP/sess.jsonl" > .icm/telemetry/transcript-path
     printf 'done\n' > "$run_j/01-work/output/done.md"
     "$ICM" stage-done testns/tool-ws --stage 01-work --model m >/dev/null 2>&1
-    uj="$run_j/telemetry/usage.jsonl"
-    sj="$run_j/telemetry/stages.jsonl"
-    if [ -f "$uj" ] && [ "$(grep -c '"stage":"01-work"' "$uj")" -eq 2 ] \
-        && grep -q '"tokens_in":20' "$sj" && grep -q '"tokens_out":9' "$sj" \
-        && grep -q '"counts":"transcript"' "$sj"; then
-        t_ok "24 stage-done: usage snapshot + counts computed from transcript"
+    ej="$run_j/telemetry/events.jsonl"
+    if [ "$(grep -c '"type":"usage","stage":"01-work"' "$ej")" -eq 2 ] \
+        && grep -q '"type":"stage_done","stage":"01-work"' "$ej" \
+        && grep -q '"tokens_in":20' "$ej" && grep -q '"tokens_out":9' "$ej" \
+        && grep -q '"counts":"transcript"' "$ej"; then
+        t_ok "24 stage-done: usage events + 4-field counts in events.jsonl"
     else
-        t_fail "24 stage-done: usage snapshot + counts computed from transcript" "uj=$(cat "$uj" 2>/dev/null) sj=$(cat "$sj" 2>/dev/null)"
+        t_fail "24 stage-done: usage events + 4-field counts in events.jsonl" "ej=$(cat "$ej" 2>/dev/null)"
     fi
 
     # ---- case 24b: --full freezes raw window into the stage dir ----
@@ -882,13 +876,14 @@ if command -v jq >/dev/null 2>&1; then
 EOF
     printf 'done\n' > "$run_l/01-work/output/done.md"
     "$ICM" stage-done testns/tool-ws --stage 01-work --model m >/dev/null 2>&1
-    uj="$run_l/telemetry/usage.jsonl"
-    sj="$run_l/telemetry/stages.jsonl"
-    if [ "$(grep -c '"stage":"01-work"' "$uj" 2>/dev/null)" -eq 2 ] \
-        && grep -q '"tokens_in":1017' "$sj" && grep -q '"tokens_out":48' "$sj"; then
-        t_ok "24c stage-done: Claude format deduped by message.id, cache included"
+    ej="$run_l/telemetry/events.jsonl"
+    if [ "$(grep -c '"type":"usage","stage":"01-work"' "$ej" 2>/dev/null)" -eq 2 ] \
+        && grep -q '"type":"stage_done"' "$ej" && grep -q '"tokens_in":12' "$ej" \
+        && grep -q '"cache_creation":5' "$ej" && grep -q '"cache_read":1000' "$ej" \
+        && grep -q '"tokens_out":48' "$ej"; then
+        t_ok "24c stage-done: Claude dedup; new-input/cache split (Obs 2 fix)"
     else
-        t_fail "24c stage-done: Claude format deduped by message.id, cache included" "uj=$(cat "$uj" 2>/dev/null) sj=$(cat "$sj" 2>/dev/null)"
+        t_fail "24c stage-done: Claude dedup; new-input/cache split" "ej=$(cat "$ej" 2>/dev/null)"
     fi
     # ---- case 24d: session-env transcript wins over a clobbered hook path ----
     # Concurrency: another session overwrote .icm/telemetry/transcript-path with
@@ -905,7 +900,7 @@ EOF
     printf '%s\n' "$TMP/wrong.jsonl" > .icm/telemetry/transcript-path
     printf 'done\n' > "$run_m/01-work/output/done.md"
     CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=mysession "$ICM" stage-done testns/tool-ws --stage 01-work --model m >/dev/null 2>&1
-    sj="$run_m/telemetry/stages.jsonl"
+    sj="$run_m/telemetry/events.jsonl"
     if grep -q '"tokens_in":42' "$sj" && grep -q '"transcript_source":"session-env"' "$sj" \
         && ! grep -q '999' "$sj"; then
         t_ok "24d stage-done: session-env transcript beats clobbered hook path"
@@ -924,7 +919,7 @@ EOF
     printf '{"ts":"%s","usage":{"input_tokens":13,"output_tokens":4}}\n' "$ts_now" > "$sdir/scan.jsonl"
     printf 'done\n' > "$run_n/01-work/output/done.md"
     env -u CLAUDE_CODE_SESSION_ID CLAUDECODE=1 "$ICM" stage-done testns/tool-ws --stage 01-work --model m >/dev/null 2>&1
-    sj="$run_n/telemetry/stages.jsonl"
+    sj="$run_n/telemetry/events.jsonl"
     if grep -q '"transcript_source":"fallback-cwd"' "$sj" && grep -q '"tokens_in":13' "$sj"; then
         t_ok "24e stage-done: scan fallback is cwd-filtered + provenance recorded"
     else
@@ -940,7 +935,7 @@ EOF
     printf '%s\n' "$TMP/sess.jsonl" > .icm/telemetry/transcript-path
     printf 'done\n' > "$run_o/01-work/output/done.md"
     env -u CLAUDE_CODE_SESSION_ID "$ICM" stage-done testns/tool-ws --stage 01-work --model m --tokens-in 999999 --tokens-out 888888 >/dev/null 2>&1
-    sj="$run_o/telemetry/stages.jsonl"
+    sj="$run_o/telemetry/events.jsonl"
     if grep -q '"tokens_in":11' "$sj" && grep -q '"tokens_out":5' "$sj" \
         && grep -q '"counts":"transcript"' "$sj" && ! grep -q '999999' "$sj"; then
         t_ok "24f stage-done: transcript counts override hand-passed --tokens-in"
@@ -989,11 +984,11 @@ rm -f "$PROJECT/.icm/telemetry/transcript-path"
 out=$("$ICM" seal testns/tool-ws 2>&1); rc=$?
 v_ok=$("$ICM" verify-seal testns/tool-ws 2>&1); rc_ok=$?
 _latest_run=$(cd .icm/testns/tool-ws && ls -1 2>/dev/null | sort -r | head -1)
-printf 'x' >> ".icm/testns/tool-ws/$_latest_run/telemetry/stages.jsonl"
+printf 'x' >> ".icm/testns/tool-ws/$_latest_run/telemetry/events.jsonl"
 v_bad=$("$ICM" verify-seal testns/tool-ws 2>&1); rc_bad=$?
 if [ "$rc" -eq 0 ] && [ -f .icm-seals.log ] \
     && [ "$rc_ok" -eq 0 ] && printf '%s' "$v_ok" | grep -q "SEAL OK" \
-    && [ "$rc_bad" -eq 1 ] && printf '%s' "$v_bad" | grep -q "SEAL MISMATCH.*stages.jsonl"; then
+    && [ "$rc_bad" -eq 1 ] && printf '%s' "$v_bad" | grep -q "SEAL MISMATCH.*events.jsonl"; then
     t_ok "26 seal: digests recorded, verify-seal detects tampering"
 else
     t_fail "26 seal: digests recorded, verify-seal detects tampering" "rc=$rc rc_ok=$rc_ok rc_bad=$rc_bad ok=$v_ok bad=$v_bad"

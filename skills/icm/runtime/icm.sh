@@ -221,12 +221,28 @@ transcript_usage() {
     ' "$1" 2>/dev/null || true
 }
 
-# Sum a transcript_usage stream into "tokens_in tokens_out" (or "null null").
-# tokens_in includes cache reads/writes: it is the context actually fed to the
-# model, not just the uncached slice.
-usage_sums() {
-    jq -r '"\(.tokens_in + .cache_creation + .cache_read) \(.tokens_out)"' 2>/dev/null \
-        | awk '{i+=$1; o+=$2} END {if (NR==0) print "null null"; else print i, o}'
+# Sum a transcript_usage stream into the four token fields, space-separated:
+# "tokens_in cache_creation cache_read tokens_out" (or "null null null null").
+# tokens_in is the NEW-input slice only; cache reads/writes are kept separate so
+# cost (cache reads are ~10x cheaper) is computable downstream.
+usage_sums4() {
+    jq -r '"\(.tokens_in) \(.cache_creation) \(.cache_read) \(.tokens_out)"' 2>/dev/null \
+        | awk '{ti+=$1; cc+=$2; cr+=$3; to+=$4} END {if (NR==0) print "null null null null"; else print ti, cc, cr, to}'
+}
+
+# Emit the effective per-stage telemetry record per stage from a run's
+# events.jsonl ($1): the last "reify" event for a stage if present, else the last
+# "stage_done". Stage names are zero-padded (01-, 02-) so group_by sorts them in
+# stage order. Output is compact JSONL, oldest stage first. Requires jq.
+_run_stage_records() {
+    [ -f "$1" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    jq -c -s '
+        [ .[] | select(.type == "stage_done" or .type == "reify") ]
+        | group_by(.stage)
+        | map( (map(select(.type == "reify")) | last) // (map(select(.type == "stage_done")) | last) )
+        | .[]
+    ' "$1" 2>/dev/null || true
 }
 
 # Extract a double-quoted attribute value from an ICM-GATE line. $1=line $2=attr name.
@@ -441,6 +457,15 @@ cmd_init() {
   "cwd": "$PWD"$_caller_field
 }
 ICM_RUN_EOF
+
+    # events.jsonl: the single per-run append-only telemetry stream. run.json
+    # stays the static, sealed header; this stream carries run_init, usage,
+    # stage_done and reify events. tool_call/gate stay per-project (hot path) and
+    # are projected into the run view at read time.
+    if [ -n "$caller" ]; then _ri_caller="\"$caller\""; else _ri_caller="null"; fi
+    printf '{"ts":"%s","type":"run_init","workspace":"%s","run_id":"%s","stages":[%s],"cwd":"%s","caller":%s}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ws" "$ts" "$_stage_names" "$PWD" "$_ri_caller" \
+        > "$run_dir/telemetry/events.jsonl"
 
     echo "$run_dir"
 
@@ -667,12 +692,15 @@ _global_upsert() {
     [ -d "$gu_rd" ] || return 0
     gu_dir="${HOME}/.icm/telemetry"
     mkdir -p "$gu_dir"
-    gu_sj="$gu_rd/telemetry/stages.jsonl"
+    gu_ev="$gu_rd/telemetry/events.jsonl"
     gu_ti="null"; gu_to="null"; gu_model=""
-    if [ -f "$gu_sj" ] && command -v jq >/dev/null 2>&1; then
-        gu_ti=$(jq -s '[.[].tokens_in | numbers] | if length==0 then null else add end' "$gu_sj" 2>/dev/null || echo null)
-        gu_to=$(jq -s '[.[].tokens_out | numbers] | if length==0 then null else add end' "$gu_sj" 2>/dev/null || echo null)
-        gu_model=$(jq -rs '[.[].model | strings | select(. != "(from transcript)" and . != "")] | last // ""' "$gu_sj" 2>/dev/null || echo "")
+    if [ -f "$gu_ev" ] && command -v jq >/dev/null 2>&1; then
+        gu_recs=$(_run_stage_records "$gu_ev")
+        if [ -n "$gu_recs" ]; then
+            gu_ti=$(printf '%s\n' "$gu_recs" | jq -s '[.[].tokens_in | numbers] | if length==0 then null else add end' 2>/dev/null || echo null)
+            gu_to=$(printf '%s\n' "$gu_recs" | jq -s '[.[].tokens_out | numbers] | if length==0 then null else add end' 2>/dev/null || echo null)
+            gu_model=$(printf '%s\n' "$gu_recs" | jq -rs '[.[].model | strings | select(. != "(from transcript)" and . != "")] | last // ""' 2>/dev/null || echo "")
+        fi
     fi
     [ -n "$gu_ti" ] || gu_ti="null"
     [ -n "$gu_to" ] || gu_to="null"
@@ -752,19 +780,22 @@ cmd_stage_done() {
     mkdir -p "$telemetry_dir"
 
     _now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    # Stage window: previous boundary in stages.jsonl, else run creation.
-    _prev_ts=$(tail -1 "$telemetry_dir/stages.jsonl" 2>/dev/null | grep -o '"ts":"[^"]*"' | head -1 | sed 's/"ts":"//;s/"$//' || :)
+    _events="$telemetry_dir/events.jsonl"
+    # Stage window: previous stage_done boundary in events.jsonl, else run creation.
+    _prev_ts=$(grep '"type":"stage_done"' "$_events" 2>/dev/null | tail -1 | grep -o '"ts":"[^"]*"' | head -1 | sed 's/"ts":"//;s/"$//' || :)
     if [ -z "$_prev_ts" ]; then
         _prev_ts=$(grep '"created"' "$telemetry_dir/run.json" 2>/dev/null | sed 's/.*"created": "\(.*\)".*/\1/' || :)
     fi
     [ -n "$_prev_ts" ] || _prev_ts="1970-01-01T00:00:00Z"
 
-    # Snapshot the session transcript for this window while it still exists.
-    # Default keeps usage events only (counts, no conversation content) in
-    # telemetry/usage.jsonl; --full additionally freezes the raw window into
-    # the stage dir. Transcript-derived counts and model are authoritative;
-    # hand-passed --tokens-in/--tokens-out/--model are a no-transcript fallback.
+    # Snapshot the session transcript usage for this window while it still exists,
+    # appending one "usage" event per deduped API call to events.jsonl; --full also
+    # freezes the raw window into the stage dir. Transcript-derived counts and model
+    # are authoritative; hand-passed --tokens-in/--tokens-out/--model are a
+    # no-transcript fallback. All four token fields are carried (new input, cache
+    # creation, cache read, output) so cost is computable.
     _counts="estimated"
+    _cc_val="null"; _cr_val="null"
     if [ -n "$transcript" ]; then _transcript_src="manual"; else _transcript_src="none"; fi
     if command -v jq >/dev/null 2>&1; then
         if [ -z "$transcript" ]; then
@@ -776,16 +807,16 @@ cmd_stage_done() {
         if [ -n "$transcript" ] && [ -f "$transcript" ]; then
             _snap=$(mktemp)
             transcript_usage "$transcript" "$_prev_ts" "$_now" \
-                | jq -c --arg stage "$stage" '. + {stage: $stage}' 2>/dev/null > "$_snap" || true
+                | jq -c --arg stage "$stage" '{type:"usage", stage:$stage} + .' 2>/dev/null > "$_snap" || true
             if [ -s "$_snap" ]; then
-                cat "$_snap" >> "$telemetry_dir/usage.jsonl"
-                # Transcript-derived counts are authoritative: the model cannot
-                # reliably self-estimate tokens, so hand-passed --tokens-in/-out
-                # only survive when no transcript usage was captured for the window.
-                _sums=$(usage_sums < "$_snap")
-                if [ "${_sums% *}" != "null" ]; then
-                    tokens_in=${_sums% *}
-                    tokens_out=${_sums#* }
+                cat "$_snap" >> "$_events"
+                # Transcript counts win; hand-passed values only survive when no
+                # transcript usage was captured for the window.
+                _sums=$(usage_sums4 < "$_snap")
+                if [ "${_sums%% *}" != "null" ]; then
+                    tokens_in=${_sums%% *}; _rest=${_sums#* }
+                    _cc_val=${_rest%% *}; _rest=${_rest#* }
+                    _cr_val=${_rest%% *}; tokens_out=${_rest#* }
                     _counts="transcript"
                 fi
                 # Auto-detect the model from the window (last call naming one),
@@ -808,20 +839,15 @@ cmd_stage_done() {
         echo "stage-done: --full requires jq; nothing snapshotted" >&2
     fi
 
-    # Write stage boundary. tokens_in/tokens_out default to null.
+    # Write the stage_done boundary event (replaces stages.jsonl + the per-stage
+    # .stage-telemetry marker). tokens_in/tokens_out default to null.
     _ti_val="$tokens_in"
     _to_val="$tokens_out"
     case "$_ti_val" in ''|null) _ti_val="null" ;; esac
     case "$_to_val" in ''|null) _to_val="null" ;; esac
-    printf '{"ts":"%s","stage":"%s","model":"%s","tokens_in":%s,"tokens_out":%s,"counts":"%s","transcript_source":"%s"}\n' \
-        "$_now" "$stage" "$model" "$_ti_val" "$_to_val" "$_counts" "$_transcript_src" \
-        >> "$telemetry_dir/stages.jsonl"
-
-    # Drop a marker so audit can verify this stage boundary was recorded
-    mkdir -p "$run_dir/$stage"
-    printf '{"stage":"%s","reported_at":"%s"}\n' \
-        "$stage" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        > "$run_dir/$stage/.stage-telemetry"
+    printf '{"ts":"%s","type":"stage_done","stage":"%s","model":"%s","tokens_in":%s,"cache_creation":%s,"cache_read":%s,"tokens_out":%s,"counts":"%s","transcript_source":"%s"}\n' \
+        "$_now" "$stage" "$model" "$_ti_val" "$_cc_val" "$_cr_val" "$_to_val" "$_counts" "$_transcript_src" \
+        >> "$_events"
 
     # Refresh the provisional global index entry so an abandoned (never closed)
     # run stays visible with its completed-so-far totals; reify/telemetry finalize.
@@ -831,8 +857,9 @@ cmd_stage_done() {
 }
 
 # ---- reify-telemetry ----
-# Post-hoc: read the conversation transcript and fill in exact token
-# counts for each stage in the latest run's stages.jsonl.
+# Post-hoc: read the conversation transcript and append exact per-stage token
+# counts as "reify" events to the latest run's events.jsonl (last reify wins over
+# the original stage_done; nothing is rewritten, so an earlier seal stays valid).
 # Harness auto-detection: checks CLAUDECODE env var, then ~/.pi existence.
 # --transcript overrides the auto-detected path.
 cmd_reify_telemetry() {
@@ -855,9 +882,9 @@ cmd_reify_telemetry() {
         exit 1
     fi
     run_dir=".icm/$ws/$latest"
-    stages_jsonl="$run_dir/telemetry/stages.jsonl"
-    if [ ! -f "$stages_jsonl" ]; then
-        echo "no stages.jsonl -- run stage-done first" >&2
+    _events="$run_dir/telemetry/events.jsonl"
+    if [ ! -f "$_events" ]; then
+        echo "no events.jsonl -- run stage-done first" >&2
         exit 1
     fi
 
@@ -881,19 +908,27 @@ cmd_reify_telemetry() {
     if command -v jq >/dev/null 2>&1; then
         _tmp=$(mktemp)
         _prev_ts="1970-01-01T00:00:00Z"
-        jq -r '[.ts, .stage] | @tsv' "$stages_jsonl" 2>/dev/null | while IFS='	' read -r _ts _stage; do
-            [ -n "$_ts" ] || continue
-            _sums=$(transcript_usage "$transcript" "$_prev_ts" "$_ts" | usage_sums)
-            _tokens_in=${_sums% *}
-            _tokens_out=${_sums#* }
-            printf '{"ts":"%s","stage":"%s","model":"(from transcript)","tokens_in":%s,"tokens_out":%s,"counts":"transcript","transcript_source":"%s"}\n' \
-                "$_ts" "$_stage" "$_tokens_in" "$_tokens_out" "$_reify_src"
-            _prev_ts="$_ts"
-        done > "$_tmp"
+        # Iterate the original stage_done boundaries in ts order; recompute each
+        # window's four-field counts and emit a reify event carrying them.
+        jq -rs '[.[] | select(.type == "stage_done")] | sort_by(.ts) | .[] | [.ts, .stage] | @tsv' "$_events" 2>/dev/null \
+            | while IFS='	' read -r _ts _stage; do
+                [ -n "$_ts" ] || continue
+                _wsnap=$(transcript_usage "$transcript" "$_prev_ts" "$_ts")
+                _sums=$(printf '%s\n' "$_wsnap" | usage_sums4)
+                _r_ti=${_sums%% *}; _r_rest=${_sums#* }
+                _r_cc=${_r_rest%% *}; _r_rest=${_r_rest#* }
+                _r_cr=${_r_rest%% *}; _r_to=${_r_rest#* }
+                _r_model=$(printf '%s\n' "$_wsnap" | jq -r 'select(.model != null) | .model' 2>/dev/null | tail -1 || :)
+                [ -n "$_r_model" ] || _r_model="(from transcript)"
+                printf '{"ts":"%s","type":"reify","stage":"%s","model":"%s","tokens_in":%s,"cache_creation":%s,"cache_read":%s,"tokens_out":%s,"counts":"transcript","transcript_source":"%s"}\n' \
+                    "$_ts" "$_stage" "$_r_model" "$_r_ti" "$_r_cc" "$_r_cr" "$_r_to" "$_reify_src"
+                _prev_ts="$_ts"
+            done > "$_tmp"
         if [ -s "$_tmp" ]; then
-            mv "$_tmp" "$stages_jsonl"
+            cat "$_tmp" >> "$_events"
+            rm -f "$_tmp"
             _global_upsert "$ws" "$latest" final
-            echo "reify-telemetry: updated $stages_jsonl with transcript token counts"
+            echo "reify-telemetry: appended transcript token counts to $_events"
             return 0
         fi
         rm -f "$_tmp"
@@ -910,11 +945,13 @@ cmd_reify_telemetry() {
 # actual tool invocations (from .icm/telemetry/tool-calls.jsonl).
 # Also verifies that every completed stage has per-stage token telemetry
 # (stage-done was called). Produces a deviation report on stdout.
-# Read the stage-done ts for a stage from stages.jsonl ($1) by stage name ($2).
-# Empty if the stage was never closed. Last match wins (re-runs append).
+# Read the stage-done boundary ts for a stage from events.jsonl ($1) by stage
+# name ($2). Empty if the stage was never closed. Considers only boundary events
+# (stage_done/reify), not intra-window usage events. Last match wins (re-runs and
+# reify append; a reify event carries the same ts as the stage_done it refines).
 _audit_stage_ts() {
     [ -f "$1" ] || return 0
-    grep "\"stage\":\"$2\"" "$1" 2>/dev/null | tail -1 \
+    grep -E '"type":"(stage_done|reify)"' "$1" 2>/dev/null | grep "\"stage\":\"$2\"" | tail -1 \
         | grep -o '"ts":"[^"]*"' | sed 's/"ts":"//;s/"$//' || true
 }
 
@@ -982,33 +1019,33 @@ cmd_audit() {
     echo ""
 
     deviations=0
+    events_log="$run_dir/telemetry/events.jsonl"
 
     # --- Check 1: per-stage telemetry completeness ---
     if [ "$complete" = true ]; then
         echo "STAGE TELEMETRY CHECK"
         echo "──────────────────────────────────────"
-        stages_jsonl="$run_dir/telemetry/stages.jsonl"
         for sn in $completed_stages; do
-            if [ -f "$run_dir/$sn/.stage-telemetry" ]; then
+            if [ -n "$(_audit_stage_ts "$events_log" "$sn")" ]; then
                 echo "  ✓ $sn -- telemetry reported"
             else
                 echo "  ✗ $sn -- MISSING stage-done telemetry"
                 deviations=$((deviations + 1))
             fi
         done
-        if [ -f "$stages_jsonl" ]; then
+        if [ -f "$events_log" ] && command -v jq >/dev/null 2>&1; then
             echo ""
             echo "Per-stage token usage:"
-            while IFS= read -r line; do
+            _run_stage_records "$events_log" | while IFS= read -r line; do
                 _s=$(printf '%s' "$line" | grep -o '"stage":"[^"]*"' | sed 's/"stage":"//;s/"$//' 2>/dev/null || echo "?")
                 _ti=$(printf '%s' "$line" | grep -o '"tokens_in":[0-9null]*' | sed 's/"tokens_in"://' 2>/dev/null || echo "?")
                 _to=$(printf '%s' "$line" | grep -o '"tokens_out":[0-9null]*' | sed 's/"tokens_out"://' 2>/dev/null || echo "?")
                 _m=$(printf '%s' "$line" | grep -o '"model":"[^"]*"' | sed 's/"model":"//;s/"$//' 2>/dev/null || echo "?")
                 _src=$(printf '%s' "$line" | grep -o '"counts":"[^"]*"' | sed 's/"counts":"//;s/"$//' 2>/dev/null || echo "?")
                 echo "  $_s: in=$_ti out=$_to model=$_m [$_src]"
-            done < "$stages_jsonl"
-        else
-            echo "  No stages.jsonl -- stage-done was never called for any stage"
+            done
+        elif [ ! -f "$events_log" ]; then
+            echo "  No events.jsonl -- stage-done was never called for any stage"
             deviations=$((deviations + 1))
         fi
         echo ""
@@ -1022,7 +1059,6 @@ cmd_audit() {
     # from prose. Actual side: harness tool names recorded by gate-check --tool
     # invocations in tool-calls.jsonl; scripts run directly via bash are not logged.
     telemetry_log="$run_dir/../../../telemetry/tool-calls.jsonl"
-    stages_jsonl="$run_dir/telemetry/stages.jsonl"
     # Run id 2026-06-15_08-18-37 -> ISO-Z 2026-06-15T08:18:37Z so string compares
     # against event ts (all written with a trailing Z) are value-based, not reliant
     # on length sorting. The old form left HH-MM dashed and dropped the Z.
@@ -1049,7 +1085,7 @@ cmd_audit() {
     for stage_dir in "$run_dir"/[0-9]*/; do
         [ -d "$stage_dir" ] || continue
         [ -f "$stage_dir/CONTEXT.md" ] || continue
-        _pp_ts=$(_audit_stage_ts "$stages_jsonl" "$(basename "$stage_dir")")
+        _pp_ts=$(_audit_stage_ts "$events_log" "$(basename "$stage_dir")")
         if [ -z "$_pp_ts" ]; then
             attr_reliable=0; attr_reason="a stage has no stage-done boundary"
         elif [ -n "$_pp_prev" ] && ! _ts_lt "$_pp_prev" "$_pp_ts"; then
@@ -1078,7 +1114,7 @@ cmd_audit() {
 
         # Per-stage window (prev boundary, this stage-done ts]; lower bound is
         # inclusive only for the first stage (absorbs same-second init).
-        _this_ts=$(_audit_stage_ts "$stages_jsonl" "$stage_name")
+        _this_ts=$(_audit_stage_ts "$events_log" "$stage_name")
         stage_tools=""
         win_note=""
         if [ -z "$_this_ts" ]; then
@@ -1206,7 +1242,7 @@ cmd_audit() {
 # committed, and local git history is rewritable. Trust comes from committing
 # the log and pushing; after that, tampering means a visible diff.
 _seal_files() {
-    for sf in .manifest telemetry/run.json telemetry/stages.jsonl telemetry/usage.jsonl; do
+    for sf in .manifest telemetry/run.json telemetry/events.jsonl; do
         [ -f "$1/$sf" ] && echo "$sf"
     done
     return 0
