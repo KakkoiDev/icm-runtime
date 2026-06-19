@@ -97,6 +97,9 @@ fi
 # ---- case 2: active run, no evidence -> exit 1, DENY names ws/ts/stage ----
 run_dir=$("$ICM" init testns/gated-ws 2>/dev/null)
 ts=$(basename "$run_dir")
+# Gates are scoped to the active stage: close 01-work so 02-send (the gated stage)
+# is active and its gate is in scope.
+"$ICM" stage-done testns/gated-ws --stage 01-work >/dev/null 2>&1
 out=$("$ICM" gate-check --tool mcp__test__send 2>&1); rc=$?
 if [ "$rc" -eq 1 ] \
     && printf '%s' "$out" | grep -q "DENY testns/gated-ws $ts 02-send" \
@@ -250,6 +253,8 @@ run_b=$("$ICM" init testns/gated-ws 2>/dev/null)
 if [ "$run_b" = "$run_dir" ]; then
     t_fail "9-pre distinct run dir for second init" "collided: $run_b"
 fi
+# Close 01-work so the gated 02-send stage is active.
+"$ICM" stage-done testns/gated-ws --stage 01-work >/dev/null 2>&1
 cp "$WS_DIR/stages/02-send.md" "$TMP/pristine-stage.md"
 grep -v 'ICM-GATE' "$TMP/pristine-stage.md" > "$WS_DIR/stages/02-send.md"
 out=$("$ICM" gate-check --tool mcp__test__send 2>&1); rc=$?
@@ -369,6 +374,8 @@ if command -v node >/dev/null 2>&1; then
     DRIVER="$REPO_DIR/tests/pi-driver.ts"
     sleep 1 # avoid same-second run-dir collision with earlier inits
     run_d=$("$ICM" init testns/gated-ws 2>/dev/null)
+    # Close 01-work so the gated 02-send stage is active.
+    "$ICM" stage-done testns/gated-ws --stage 01-work >/dev/null 2>&1
     out=$(cd "$PROJECT" && node "$DRIVER" "$EXT" mcp__test__send 2>/dev/null); rc=$?
     if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '"block":true' \
         && printf '%s' "$out" | grep -q '02-send'; then
@@ -1121,6 +1128,48 @@ if [ "$vrc" -eq 1 ] && printf '%s' "$vout" | grep -q "SEAL MISMATCH"; then
     t_ok "30g seal: tampered caller trips verify-seal (linkage is tamper-evident)"
 else
     t_fail "30g seal: tampered caller trips verify-seal" "rc=$vrc out=$vout"
+fi
+
+# ---- case 41: gates are scoped to the active stage (deadlock fix) ----
+# A later stage's Write gate must NOT deny Write while an earlier stage is active.
+WS_SCOPE="$TMP/skills/testns/scope-ws"
+mkdir -p "$WS_SCOPE/stages"
+printf '# 01-a\nwrite frame\n' > "$WS_SCOPE/stages/01-a.md"
+printf '# 02-b\n<!-- ICM-GATE tools="Write" run="test -s ../01-a/output/frame.md" -->\n' > "$WS_SCOPE/stages/02-b.md"
+sleep 1
+run_sc=$("$ICM" init testns/scope-ws 2>/dev/null)
+# 01-a is active (nothing closed); 02-b's Write gate must be out of scope.
+out=$("$ICM" gate-check --tool Write 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+    t_ok "41 gate scope: later-stage Write gate does not deny during earlier stage"
+else
+    t_fail "41 gate scope: later-stage Write gate does not deny during earlier stage" "rc=$rc out=$out"
+fi
+# Close 01-a -> 02-b active; precondition unmet (frame.md absent) -> gate fires.
+"$ICM" stage-done testns/scope-ws --stage 01-a >/dev/null 2>&1
+out=$("$ICM" gate-check --tool Write 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "DENY testns/scope-ws .* 02-b"; then
+    t_ok "41b gate scope: gate fires once its owning stage is active"
+else
+    t_fail "41b gate scope: gate fires once its owning stage is active" "rc=$rc out=$out"
+fi
+# Satisfy the precondition -> the active-stage gate passes.
+mkdir -p "$run_sc/01-a/output"; printf 'x\n' > "$run_sc/01-a/output/frame.md"
+out=$("$ICM" gate-check --tool Write 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then
+    t_ok "41c gate scope: active-stage gate passes when precondition met"
+else
+    t_fail "41c gate scope: active-stage gate passes when precondition met" "rc=$rc out=$out"
+fi
+# Complete the run (close 02-b) and remove the precondition: a finished run has no
+# active stage, so its gate denies nothing -- no cross-workspace/stale blocking.
+rm -f "$run_sc/01-a/output/frame.md"
+"$ICM" stage-done testns/scope-ws --stage 02-b >/dev/null 2>&1
+out=$("$ICM" gate-check --tool Write 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+    t_ok "41d gate scope: completed run has no active stage, denies nothing"
+else
+    t_fail "41d gate scope: completed run has no active stage, denies nothing" "rc=$rc out=$out"
 fi
 
 echo ""

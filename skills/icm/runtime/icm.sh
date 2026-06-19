@@ -302,11 +302,28 @@ verify_manifest() {
     return 1
 }
 
+# Print the active stage of run $1: the first stage (in order) with no stage_done
+# event in events.jsonl, i.e. entered but not yet closed. Empty when every stage
+# is closed (a finished run has no active gate). Gates are scoped to this stage so
+# a later stage's gate cannot deny a tool the active stage legitimately calls, and
+# a completed run in another workspace cannot tax the current one. Runs on the gate
+# hot path: grep + a short loop, no jq, no fork per gate.
+_active_stage() {
+    as_events="$1/telemetry/events.jsonl"
+    for as_dir in "$1"/[0-9]*/; do
+        [ -f "$as_dir/CONTEXT.md" ] || continue
+        as_name=$(basename "$as_dir")
+        grep -q "\"type\":\"stage_done\",\"stage\":\"$as_name\"" "$as_events" 2>/dev/null || { printf '%s\n' "$as_name"; return 0; }
+    done
+    return 0
+}
+
 # Evaluate one run's frozen gates. $1=run dir, $2=tool name ("" = evaluate every
 # gate regardless of its tools regex, used by gate-status). Prints DENY lines on
 # stdout (first line is the headline); silent when nothing matches or all pass.
 # Fails closed: tampered/missing manifest, malformed gate lines, and invalid
-# regexes all deny.
+# regexes all deny. Gates are evaluated ONLY for the run's active stage (see
+# _active_stage); manifest tamper-evidence is checked first, before any scoping.
 check_run() {
     cr_run=$1
     cr_tool=$2
@@ -321,6 +338,12 @@ check_run() {
         fi
     fi
 
+    # Scope gates to the active stage: a gate fires only while its owning stage is
+    # the run's active (entered-but-not-closed) stage. A later stage's gate cannot
+    # deny an earlier stage's tool, and a completed run (no active stage) denies
+    # nothing. Computed once per run, after the tamper check.
+    cr_active=$(_active_stage "$cr_run")
+
     # One grep across all frozen contracts (runs on every hooked tool call).
     # /dev/null forces the "path:" prefix even with a single match file.
     grep -F '<!-- ICM-GATE ' "$cr_run"/[0-9]*/CONTEXT.md /dev/null 2>/dev/null \
@@ -329,6 +352,7 @@ check_run() {
             cr_line=${cr_hit#*:}
             cr_stage_dir=${cr_ctx%/CONTEXT.md}
             cr_stage=${cr_stage_dir##*/}
+            [ "$cr_stage" = "$cr_active" ] || continue
             cr_tools=$(gate_attr "$cr_line" tools)
             cr_runcmd=$(gate_attr "$cr_line" run)
             if [ -z "$cr_tools" ] || [ -z "$cr_runcmd" ]; then
