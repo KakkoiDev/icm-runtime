@@ -2,6 +2,7 @@
 
 <!-- ICM-TOOLS expect="(notion-fetch)" -->
 <!-- ICM-GATE tools="notion-fetch" run="test -s ../02-publish/output/publish-receipt.md" -->
+<!-- ICM-CALL tool="notion-fetch" args="id" -->
 
 Confirm the write actually landed, then make sure the page is readable by its intended
 audience before any link is handed out. Notion returns success even when it silently drops an

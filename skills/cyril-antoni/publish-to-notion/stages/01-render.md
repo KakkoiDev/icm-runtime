@@ -7,10 +7,10 @@ correctly, plus a target spec saying where it goes and who must read it. This st
 mechanics - do not change the meaning, argument, or wording of the content. Convert syntax
 only.
 
-Read the `notion://docs/enhanced-markdown-spec` MCP resource first. Then apply the authoring
-rules from SKILL.md: tables become `<table>` blocks, mermaid goes in fences with quote-free
-or double-quoted labels, paths and code tokens get backticks, special characters outside code
-fences get escaped, and code-fence content stays literal with real newlines.
+The deterministic syntax conversion (GitHub pipe tables to Notion `<table>` blocks, code
+fences left literal) is done by the `tools/render` script, NOT by hand. Your only remaining
+job is the content judgement the script cannot make: making mermaid node labels quote-safe and
+escaping stray literal special characters outside code fences.
 
 ## Inputs
 | Source | Location | Scope |
@@ -20,13 +20,18 @@ fences get escaped, and code-fence content stays literal with real newlines.
 | Audience | Chat message | Who must be able to read it (just me / a team / anyone at org) |
 
 ## Process
-1. Read the `notion://docs/enhanced-markdown-spec` resource via `ReadMcpResourceTool`.
-2. Convert the content to Notion-flavored markdown: pipe tables to `<table>/<tr>/<td>` (rich
-   text cells, `**bold**` not HTML); fence every mermaid block and make labels quote-safe;
-   backtick paths/globs/code tokens; escape stray special characters outside code fences.
-   Do NOT alter the content's meaning or phrasing.
-3. Write `output/page.md`: the Notion-flavored markdown body, exactly as it will be sent
-   (real newlines, real indentation, no `\n` or `\t` escape text).
+1. Write the user's content verbatim (unchanged markdown) to `output/source.md`.
+2. Run the deterministic renderer - it rewrites GitHub pipe tables into Notion `<table>`
+   blocks and passes everything else (headings, bold, lists, links, code, ```mermaid fences)
+   through untouched:
+   ```bash
+   ~/.agents/skills/cyril-antoni/publish-to-notion/tools/render output/source.md > output/page.md
+   ```
+3. Review `output/page.md` for the content-level items the renderer does not judge: wrap
+   mermaid node labels containing special characters (e.g. parentheses) in double quotes and
+   use `<br>` not `\n` inside labels; escape stray literal special characters that appear
+   OUTSIDE code fences. Read `notion://docs/enhanced-markdown-spec` via `ReadMcpResourceTool`
+   if unsure of a construct. Edit `output/page.md` in place. Do NOT alter meaning or phrasing.
 4. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
    "none = private workspace page") and the title; for update, the existing `page_id`; and the
    `audience` (who must be able to read it).
@@ -40,5 +45,6 @@ bash ~/.agents/skills/icm/runtime/icm.sh stage-done cyril-antoni/publish-to-noti
 ## Outputs
 | Artifact | Location | Format |
 |----------|----------|--------|
+| Source | output/source.md | The user's content verbatim, the renderer's input |
 | Page body | output/page.md | Notion-flavored markdown body, send-ready (real newlines) |
 | Target spec | output/target.md | mode (create/update), parent or existing page_id, title, audience |

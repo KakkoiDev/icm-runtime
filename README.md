@@ -270,9 +270,10 @@ arg field present; a missing call or a missing field is a deviation and fails `-
 This is the verifiable half of "smart model builds the spec, small model fills it": the
 executor's freedom shrinks to supplying the named arguments, and the runtime checks it did.
 
-v1 verifies arg-field presence. Value-from-file mapping (an argument must equal a prior
-stage's output, e.g. `content@01-frame/output/page.md`) is the planned next step; the
-`args="..."` grammar already tolerates the `@path` suffix.
+An `args` entry can be a bare field name (the field must be present) or `field@path` (the
+field's value must equal the run-root-relative file's content, e.g.
+`body@01-render/output/page.md`) - that verifies the executor glued the right prior-stage
+output into the call, not just that the field exists.
 
 CI runs `sh tests/gate.test.sh` on ubuntu and macos (`.github/workflows/test.yml`);
 run it locally before release too. The suite is hermetic: it sandboxes `$HOME`
