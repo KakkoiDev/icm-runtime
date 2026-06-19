@@ -67,12 +67,51 @@ Uninstall: `./installer.sh --remove`
 
 ## How it works
 
-1. User says `/ai-folder-research`
-2. Agent calls `icm.sh init` → creates `.icm/` in working directory with timestamped run
-3. Stage contracts are frozen per run for auditability
-4. Agent executes each stage's Process steps, writes output to `.icm/<workspace>/<timestamp>/<stage>/output/`
-5. Output of one stage becomes input to the next
-6. Human can edit any intermediate output — the next stage picks up changes
+ICM turns a skill into a sequence of frozen stage contracts and walks the model through them
+one stage at a time, recording everything to a single auditable per-run log. The model is the
+non-deterministic glue between deterministic checkpoints; the runtime owns all state.
+
+### Running a skill, step by step
+
+1. **Trigger.** The user invokes a skill (e.g. `/ai-folder-research`). The skill's `SKILL.md`
+   instructs the agent to drive everything through `icm.sh` and never scaffold directories or
+   format timestamps by hand.
+2. **`icm.sh init <ns>/<skill>`** creates a timestamped run at `.icm/<ns>/<skill>/<run_id>/`,
+   freezes each stage's `CONTEXT.md` (the contract) plus the skill's `checks/` and `tools/`
+   directories, and writes a sha256 `.manifest` over all of them. It writes the static run
+   header to `telemetry/run.json` and the first event, `run_init`, to `telemetry/events.jsonl`.
+3. **The agent executes one stage at a time.** It reads the active stage's `CONTEXT.md`, does the
+   work (tool calls, writing files into `.../<stage>/output/`), and one stage's output is the next
+   stage's input. A human can edit any intermediate output; the next stage picks up the change.
+4. **`icm.sh stage-done --stage <name>`** closes the stage: it snapshots the stage's token usage
+   from the live session transcript and appends `usage` events plus a `stage_done` boundary event
+   to `events.jsonl`. Closing each stage in real time matters: the boundary defines the window the
+   next stage's usage is measured against, and marks the stage "closed" for gate scoping.
+5. **Gates enforce the *active* stage** (only with `--hooks` installed). Before every tool call the
+   harness asks `icm.sh gate-check`; a stage's gate fires only while that stage is active (entered
+   but not yet closed). See [Stage gates](#stage-gates-harness-enforced).
+6. **Close out the run.** `icm.sh reify-telemetry` recomputes exact per-stage counts from the full
+   transcript and appends `reify` events (last-wins, never rewriting). `icm.sh telemetry` writes the
+   run's one-line entry to the global index. `icm.sh seal` anchors the evidence for tamper detection.
+
+### What tracks the run
+
+| Artifact | Scope | What it holds |
+|---|---|---|
+| `telemetry/run.json` | per run | static, sealed header: workspace, run_id, created, stages, cwd, caller |
+| `telemetry/events.jsonl` | per run | **source of truth**: one ordered append-only stream of `run_init`, `usage`, `stage_done`, `reify` events |
+| `.manifest` | per run | sha256 of every frozen `CONTEXT.md`, `checks/` and `tools/` file |
+| `.icm/telemetry/tool-calls.jsonl` | per project | every `icm.sh` invocation, and (with `--hooks`) the tool name of every harness tool call |
+| `.icm/telemetry/transcript-path[.<session_id>]` | per project | the session transcript path used to snapshot token usage |
+| `~/.icm/telemetry/skill-runs.jsonl` | global | one **derived** line per run (`provisional` at first stage-done, `final` on close) |
+| `.icm-seals.log` | project root (committable) | sha256 seal over `run.json` + `events.jsonl` + `.manifest` |
+
+The layering: **`events.jsonl` is the per-run source of truth**; **`skill-runs.jsonl` is a derived
+cross-project index** (one line per run); **`.icm-seals.log` is the tamper anchor**. Everything
+`icm.sh stages` / `audit` / `telemetry` reports is read back from `events.jsonl`, with no implicit
+joins across separate files. Each `stage_done` / `usage` / `reify` event carries all four token
+fields (`tokens_in` = new input only, `cache_creation`, `cache_read`, `tokens_out`), so cost is
+computable without losing the cache breakdown.
 
 ## Observability
 
@@ -81,47 +120,49 @@ Every `icm.sh` invocation in a project with `.icm/` writes to
 `.icm/telemetry/tool-calls.jsonl`. Each line records: timestamp, command, args,
 working directory, exit code.
 
-### Run telemetry
-Each run gets `telemetry/run.json` (workspace, run_id, created timestamp, stage
-count, cwd). Workspace skills write a summary to `~/.icm/telemetry/skill-runs.jsonl`
-after completion. The global file is the single place to find every skill run across
-all projects.
+### Per-run telemetry (`events.jsonl`)
+Each run's `telemetry/events.jsonl` is the single append-only source of truth (see the table
+in [How it works](#how-it-works)). `run_init` is written at `init`; `stage-done` appends one
+`usage` event per deduped API call in the stage window plus a `stage_done` boundary; reify
+appends `reify` events (last reify wins over the original `stage_done`, so a seal taken earlier
+stays valid). `run.json` stays the static, sealed header.
+
+**Closing each stage in real time is MANDATORY.** `icm.sh stage-done --stage <name>` snapshots
+the stage's usage from the live session transcript before the harness cleans it up, so counts
+survive. The model does NOT pass token counts: they are read from the transcript (new input,
+cache creation, cache read, and output kept separate), and the model name is auto-detected.
+`stage-done --full` additionally freezes the raw transcript window into the stage dir for
+forensics; that IS conversation content, so leave it gitignored. The transcript is resolved
+deterministically from the session id under Claude Code, else from the gate-hook record, else
+by cwd-filtered newest-session detection (the chosen source is recorded on each event). `icm.sh
+reify-telemetry` recomputes exact counts post-hoc; `audit` flags any completed stage with no
+`stage_done` event.
 
 Skills that invoke other ICM skills as a sub-step pass `icm.sh init <child>
---caller <parentWs>/<parentRunId>/<stage>`; the child records that `caller` in its
-sealed `run.json` and in `skill-runs.jsonl`, so parent->child links are explicit
-and tamper-evident rather than inferred from timing. `icm.sh children <ws>
-[<run_id>]` lists a run's children. Child runs keep their own run dir (not nested
-under the parent), so every command still addresses them.
-
-**Per-stage token tracking is MANDATORY.** After every stage, workspace skills call
-`icm.sh stage-done` which writes to `telemetry/stages.jsonl`, drops a
-`.stage-telemetry` marker, and snapshots the stage's usage events from the live
-session transcript into `telemetry/usage.jsonl` (timestamps and token counts per
-API call, no conversation content). Counts are computed on the spot and survive
-harness transcript cleanup. `stage-done --full` additionally freezes the raw
-transcript window into the stage dir for forensics; that IS conversation content,
-so leave it gitignored unless you decide otherwise. The transcript path comes from
-the gate hook when registered, else newest-session detection. `icm.sh
-reify-telemetry` remains as a post-hoc fallback. The audit command flags any
-completed stage that lacks stage-done telemetry.
+--caller <parentWs>/<parentRunId>/<stage>`; the child records that `caller` in its sealed
+`run.json`, so parent->child links are explicit and tamper-evident rather than inferred from
+timing. `icm.sh children <ws> [<run_id>]` lists a run's children. Child runs keep their own run
+dir (not nested under the parent), so every command still addresses them.
 
 ### Seal
-`icm.sh seal <workspace>` appends a sha256 digest line for the latest run's
-evidence files to `.icm-seals.log` at the project root; commit that file (it
-lives outside the gitignored `.icm/`). `icm.sh verify-seal <workspace>` recomputes
-and exits 1 on mismatch; `verify-seal --all` checks every sealed run still on
-disk (pruned runs are skipped, not failed). This is tamper evidence, not prevention: it converts a
-silent telemetry edit into a visible digest mismatch and git diff, within the
-same negligent-not-malicious threat model as gates.
+`icm.sh seal <workspace>` appends a sha256 digest line for the latest run's evidence
+(`run.json`, `events.jsonl`, and `.manifest`) to `.icm-seals.log` at the project root; commit
+that file (it lives outside the gitignored `.icm/`). `icm.sh verify-seal <workspace>` recomputes
+and exits 1 on mismatch; `verify-seal --all` checks every sealed run still on disk (pruned runs
+are skipped, not failed). Each seal records the exact files it covered, so it verifies against
+whatever it sealed. This is tamper evidence, not prevention: it converts a silent telemetry edit
+into a visible digest mismatch and git diff, within the same negligent-not-malicious threat
+model as gates.
 
 ### Audit
-`icm.sh audit <workspace>` does two checks: (1) verifies every completed stage has
-per-stage telemetry (`stage-done` was called), and (2) compares expected tools,
-declared per stage via `<!-- ICM-TOOLS expect="..." -->`, against actual harness
-tool calls recorded in the telemetry log by the gate enforcement adapter. Produces
-a deviation report including per-stage token usage summary. Actual records exist
-only where an adapter is registered; audit says so instead of guessing.
+`icm.sh audit <workspace>` reads `events.jsonl` and does three checks: (1) every completed stage
+has a `stage_done` event; (2) expected tools, declared per stage via `<!-- ICM-TOOLS
+expect="..." -->`, are matched against the harness tool calls recorded by the enforcement
+adapter, attributed to each stage's time window; (3) if the run declares gates or expected tools
+but no gate-check records exist, it surfaces a "gates were advisory only" banner (the
+enforcement hook was never installed). Produces a deviation report with a per-stage token-usage
+summary; `--strict` exits non-zero on any deviation. Actual tool records exist only where an
+adapter is registered; audit says so instead of guessing.
 
 ### Deterministic tools
 Skills can include a `tools/` directory with shell scripts for gate checkers and
@@ -150,6 +191,13 @@ run and writes a sha256 `.manifest`. `icm.sh gate-check --tool <name>` evaluates
 run per workspace and exits 1 with `DENY` lines when a matching gate fails. Every manifest
 entry is verified first, so editing the frozen contract, deleting the gate line, or touching
 a frozen checker all deny as tampered.
+
+**Gates are scoped to the active stage.** A gate fires only while its owning stage is the run's
+active stage (entered but not yet closed, i.e. the first stage with no `stage_done` event). A
+later stage's gate cannot deny a tool an earlier stage legitimately uses (a common-tool gate
+like `tools="Write"` would otherwise deadlock a pure-authoring pipeline), and a completed run
+has no active stage, so it denies nothing - one unfinished gated run can't tax unrelated work in
+the same `.icm` root. Manifest tamper-evidence is still checked before any scoping.
 
 Enforcement runs in the harness, outside the model's control, with one adapter per agent:
 
