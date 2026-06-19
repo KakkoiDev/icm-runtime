@@ -1205,6 +1205,25 @@ else
     t_fail "42c tool-name norm: unrelated tool still allowed" "rc=$rc out=$out"
 fi
 
+# ---- case 43: catalog lists skills with descriptions from SKILL.md frontmatter ----
+mkdir -p "$TMP/skills/catns/cat-skill/stages"
+cat > "$TMP/skills/catns/cat-skill/SKILL.md" <<'EOF'
+---
+name: cat-skill
+description: >
+  A test skill for the catalog command.
+---
+# cat-skill
+EOF
+cat_out=$("$ICM" catalog 2>&1)
+if printf '%s' "$cat_out" | grep -q '| Skill | Description |' \
+    && printf '%s' "$cat_out" | grep -q 'catns/cat-skill' \
+    && printf '%s' "$cat_out" | grep -q 'A test skill for the catalog command'; then
+    t_ok "43 catalog: lists skill slug + description from SKILL.md frontmatter"
+else
+    t_fail "43 catalog: lists skill slug + description from SKILL.md frontmatter" "out=$cat_out"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

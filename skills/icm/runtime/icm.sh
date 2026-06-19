@@ -54,11 +54,12 @@ SKILLS_DIR=$(cd "$SCRIPT_DIR/../.." && pwd)
 usage() {
     echo "Usage: icm.sh <init|next|list|diff|stages|clean> <workspace-name> [--keep N]" >&2
     echo "       icm.sh init <workspace> [--caller <parentWs>/<parentRunId>/<stage>]" >&2
+    echo "       icm.sh catalog                  # markdown index of installed skills" >&2
     echo "       icm.sh children <workspace> [<run_id>]" >&2
     echo "       icm.sh gate-check --tool <tool-name> [--cwd <dir>]" >&2
     echo "       icm.sh gate-status [--cwd <dir>]" >&2
-    echo "       icm.sh telemetry <workspace> --model <m> --tokens-in <n> --tokens-out <n> --cost <c> [--cwd <dir>]" >&2
-    echo "       icm.sh stage-done <workspace> --stage <name> --model <m> [--tokens-in <n> --tokens-out <n>] [--full] [--transcript <path>] [--cwd <dir>]" >&2
+    echo "       icm.sh telemetry <workspace> [--cwd <dir>]   # counts derived from per-stage telemetry" >&2
+    echo "       icm.sh stage-done <workspace> --stage <name> [--full] [--transcript <path>] [--cwd <dir>]" >&2
     echo "       icm.sh reify-telemetry <workspace> [--cwd <dir>] [--transcript <path>]" >&2
     echo "       icm.sh audit <workspace> [--strict] [--cwd <dir>]" >&2
     echo "       icm.sh seal <workspace> [--cwd <dir>]" >&2
@@ -718,6 +719,31 @@ cmd_stages() {
         [ -f "$stage_file" ] || continue
         stage_name=$(basename "$stage_file" .md)
         echo "$stage_name"
+    done
+}
+
+# ---- catalog ----
+# Discoverability index of installed skills: scan SKILLS_DIR for <ns>/<skill>/
+# SKILL.md, read name + description from the YAML front-matter, print a markdown
+# table. The runtime's own icm/SKILL.md (one level deep) is excluded. Regenerate
+# the repo index with `icm.sh catalog > SKILLS.md`.
+cmd_catalog() {
+    echo "| Skill | Description |"
+    echo "|-------|-------------|"
+    for cat_md in "$SKILLS_DIR"/*/*/SKILL.md; do
+        [ -f "$cat_md" ] || continue
+        cat_dir=${cat_md%/SKILL.md}
+        cat_slug=${cat_dir#"$SKILLS_DIR"/}
+        cat_name=$(sed -n 's/^name:[[:space:]]*//p' "$cat_md" | head -1)
+        [ -n "$cat_name" ] || cat_name=${cat_slug##*/}
+        cat_desc=$(awk '
+            /^description:/ {
+                sub(/^description:[[:space:]]*/, "")
+                if ($0 == ">" || $0 == "|" || $0 == "") { getline; sub(/^[[:space:]]+/, "") }
+                gsub(/\|/, "\\|")
+                print; exit
+            }' "$cat_md")
+        printf '| `%s` | %s |\n' "$cat_slug" "$cat_desc"
     done
 }
 
@@ -1595,6 +1621,7 @@ case "$cmd" in
     list)   [ $# -ge 1 ] || usage; cmd_list "$1" ;;
     diff)   [ $# -ge 1 ] || usage; cmd_diff "$1" ;;
     stages) [ $# -ge 1 ] || usage; cmd_stages "$1" ;;
+    catalog) cmd_catalog ;;
     clean)  [ $# -ge 1 ] || usage; ws=$1; shift; cmd_clean "$ws" "$@" ;;
     telemetry) cmd_telemetry "$@" ;;
     stage-done) cmd_stage_done "$@" ;;
