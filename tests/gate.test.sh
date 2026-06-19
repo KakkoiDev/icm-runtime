@@ -771,6 +771,25 @@ else
 fi
 { grep -v '2030-04-01T00:00:10Z' "$TC8" || true; } > "$TC8.tmp"; mv "$TC8.tmp" "$TC8"
 
+# ---- case 21k: gates declared but no enforcement records -> advisory banner ----
+# A run that declares ICM-TOOLS but has no gate-check records (hook not installed).
+# Future ts isolates it from the shared tool-calls.jsonl; no --tool lines exist.
+RUN9=".icm/testns/advisory-ws/2031-01-01_00-00-00"
+mkdir -p "$RUN9/01-a/output" "$RUN9/telemetry"
+printf '# 01-a\n<!-- ICM-TOOLS expect="toolZ" -->\n' > "$RUN9/01-a/CONTEXT.md"
+printf 'x\n' > "$RUN9/01-a/output/o.md"
+: > "$RUN9/01-a/.stage-telemetry"
+printf '{"ts":"2031-01-01T00:00:10Z","stage":"01-a","model":"m","tokens_in":null,"tokens_out":null,"counts":"estimated"}\n' > "$RUN9/telemetry/stages.jsonl"
+audit9=$("$ICM" audit testns/advisory-ws 2>&1); rc9=$?
+"$ICM" audit testns/advisory-ws --strict >/dev/null 2>&1; rc9s=$?
+if [ "$rc9" -eq 0 ] && printf '%s' "$audit9" | grep -q "GATES NOT ENFORCED" \
+    && printf '%s' "$audit9" | grep -q "ADVISORY ONLY" \
+    && [ "$rc9s" -eq 1 ]; then
+    t_ok "21k audit: gates declared without enforcement -> advisory banner, strict fails"
+else
+    t_fail "21k audit: gates declared without enforcement -> advisory banner" "rc=$rc9 rc_strict=$rc9s out=$audit9"
+fi
+
 # ---- case 22: reify-telemetry fills per-stage counts from --transcript ----
 if command -v jq >/dev/null 2>&1; then
     sleep 1

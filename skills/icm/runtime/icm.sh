@@ -1060,6 +1060,7 @@ cmd_audit() {
 
     _prev_ts="$run_start"
     _stage_idx=0
+    _enforce_expected=""
     for stage_dir in "$run_dir"/[0-9]*/; do
         [ -d "$stage_dir" ] || continue
         stage_name=$(basename "$stage_dir")
@@ -1073,6 +1074,7 @@ cmd_audit() {
             legacy=$(grep -Eo '`?(bash )?tools/[^`" ]+(\.sh)?`?' "$ctx" 2>/dev/null | tr -d '`' | sort -u || true)
         fi
         gates=$(grep -Eo 'run="(tools/)?[^"]+"' "$ctx" 2>/dev/null | sed 's/run="//;s/"$//' | sort -u || true)
+        if [ -n "$icm_tools" ] || [ -n "$gates" ]; then _enforce_expected=1; fi
 
         # Per-stage window (prev boundary, this stage-done ts]; lower bound is
         # inclusive only for the first stage (absorbs same-second init).
@@ -1169,6 +1171,21 @@ cmd_audit() {
             echo ""
             deviations=$((deviations + fo_count))
         fi
+    fi
+
+    # --- Check 4: gates/expected tools declared but no enforcement records ---
+    # An empty actual_tools means no gate-check --tool record exists in the run
+    # window, i.e. no enforcement adapter (hook / pi extension) fired. If the run
+    # also declares ICM-GATE gates or ICM-TOOLS expectations, those were advisory
+    # only -- surface it loudly and count it so the summary cannot read as a pass.
+    if [ -n "${_enforce_expected:-}" ] && [ -z "$actual_tools" ]; then
+        echo "GATES NOT ENFORCED"
+        echo "──────────────────────────────────────"
+        echo "  ! run declares gates / expected tools but no gate-check records exist"
+        echo "  ! enforcement hook is not installed -- gates were ADVISORY ONLY, not enforced"
+        echo "  (install: installer.sh --hooks)"
+        echo ""
+        deviations=$((deviations + 1))
     fi
 
     echo "──────────────────────────────────────"
