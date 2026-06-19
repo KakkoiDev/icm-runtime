@@ -1,3 +1,7 @@
 # Local planning / working docs - kept out of the runtime repo.
 IMPLEMENTATION-PLAN-*.md
 TASK.md
+
+# Runtime state from test/proof runs in this repo (the runtime's own output).
+.icm/
+.icm-seals.log

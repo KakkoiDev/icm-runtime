@@ -1,6 +1,8 @@
 # Stage 01: Render to Notion-flavored markdown
 
-<!-- ICM-TOOLS expect="(ReadMcpResourceTool|Read)" -->
+<!-- No ICM-TOOLS / ICM-CALL: the syntax conversion is a deterministic bash script
+     (tools/render), not a harness tool call. render is covered by eval/render.test.sh
+     and the output (page.md) is the receipt; audit notes tools/render via prose scrape. -->
 
 Take the content the user brings and produce a Notion-flavored markdown body that will render
 correctly, plus a target spec saying where it goes and who must read it. This stage is pure
