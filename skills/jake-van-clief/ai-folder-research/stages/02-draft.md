@@ -15,8 +15,7 @@
 Call `stage-done` immediately after writing output:
 ```bash
 bash ~/.agents/skills/icm/runtime/icm.sh stage-done jake-van-clief/ai-folder-research \
-  --stage 02-draft --model <current-model> \
-  --tokens-in <approx> --tokens-out <approx>
+  --stage 02-draft
 ```
 
 ## Outputs

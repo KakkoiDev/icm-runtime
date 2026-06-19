@@ -30,8 +30,7 @@ decision (Datadog/pup is the worked example; could be BigQuery, Redash, a PR, a 
 ## After Output (MANDATORY)
 ```bash
 bash ~/.agents/skills/icm/runtime/icm.sh stage-done cyril-antoni/signoff-proposal \
-  --stage 01-gather --model <current-model> \
-  --tokens-in <approx> --tokens-out <approx>
+  --stage 01-gather
 ```
 
 ## Outputs

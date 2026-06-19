@@ -32,8 +32,7 @@ ready to publish. Do not publish here.
 ## After Output (MANDATORY)
 ```bash
 bash ~/.agents/skills/icm/runtime/icm.sh stage-done cyril-antoni/signoff-proposal \
-  --stage 02-compose --model <current-model> \
-  --tokens-in <approx> --tokens-out <approx>
+  --stage 02-compose
 ```
 
 ## Outputs

@@ -46,7 +46,7 @@ This workspace uses the ICM runtime. Do not scaffold directories manually.
 After writing output for each stage, immediately call:
 ```
 bash ~/.agents/skills/icm/runtime/icm.sh stage-done jake-van-clief/ai-folder-research \
-  --stage <stage-name> --model <current-model>
+  --stage <stage-name>
 ```
 
 Token counts are OPTIONAL — the model cannot access them mid-session.
@@ -61,8 +61,7 @@ This is MANDATORY. The audit command will flag stages that skip the marker.
 
 After all stages complete, call:
 ```
-bash ~/.agents/skills/icm/runtime/icm.sh telemetry jake-van-clief/ai-folder-research \
-  --model <current-model> --tokens-in <total-tokens-in> --tokens-out <total-tokens-out> --cost <amount>
+bash ~/.agents/skills/icm/runtime/icm.sh telemetry jake-van-clief/ai-folder-research
 ```
 
 ## Audit

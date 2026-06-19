@@ -34,8 +34,7 @@ not by the gate.
 ## After Output (MANDATORY)
 ```bash
 bash ~/.agents/skills/icm/runtime/icm.sh stage-done cyril-antoni/signoff-proposal \
-  --stage 03-publish --model <current-model> \
-  --tokens-in <approx> --tokens-out <approx>
+  --stage 03-publish
 ```
 
 ## Outputs

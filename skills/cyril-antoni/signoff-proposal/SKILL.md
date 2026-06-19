@@ -77,7 +77,7 @@ This workspace uses the ICM runtime. Do not scaffold directories manually.
 After writing output for each stage, immediately call:
 ```
 bash ~/.agents/skills/icm/runtime/icm.sh stage-done cyril-antoni/signoff-proposal \
-  --stage <stage-name> --model <current-model>
+  --stage <stage-name>
 ```
 After the full run, call `reify-telemetry` to fill in exact counts:
 ```
