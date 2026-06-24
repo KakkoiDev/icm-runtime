@@ -34,11 +34,13 @@ example see `publish-to-notion` stage `03-verify-share` (an ICM-CALL for
 | Tour driver | `~/.agents/skills/cyril-antoni/icm-demo/tools/sandbox-tour` | The deterministic offline demo script (frozen into the run as `tools/sandbox-tour`) |
 
 ## Process
-1. Run the tour driver and capture everything it prints; its stdout IS the evidence:
+1. From the PROJECT ROOT, run the tour driver and capture everything it prints; its
+   stdout IS the evidence. `<run>` is the run path `icm.sh init` printed (the driver
+   sandboxes itself, so cwd just needs to be the project root):
    ```bash
-   ~/.agents/skills/cyril-antoni/icm-demo/tools/sandbox-tour > output/enforcement.md 2>&1
+   ~/.agents/skills/cyril-antoni/icm-demo/tools/sandbox-tour > <run>/02-enforcement/output/enforcement.md 2>&1
    ```
-2. Read `output/enforcement.md` and confirm it shows, in order: stage scoping (ALLOW
+2. Read `<run>/02-enforcement/output/enforcement.md` and confirm it shows, in order: stage scoping (ALLOW
    while 01 is active), gate DENY (precondition unmet), cross-harness normalization
    (the `mcp__` name DENIED, proving it matched the gate), a non-gated tool (`Read`
    ALLOW), gate ALLOW (precondition met), SEAL OK, SEAL MISMATCH (a sealed file was

@@ -6,7 +6,9 @@ grep -q '^name: icm-demo$' SKILL.md || { echo "FAIL: SKILL.md name frontmatter";
 for s in 01-lifecycle 02-enforcement 03-telemetry-seal; do
     test -f "stages/$s.md" || { echo "FAIL: stages/$s.md missing"; exit 1; }
 done
-test -x tools/sandbox-tour || { echo "FAIL: tools/sandbox-tour not executable"; exit 1; }
+for t in tools/run-report tools/sandbox-tour tools/show-telemetry tools/close-run; do
+    test -x "$t" || { echo "FAIL: $t missing or not executable"; exit 1; }
+done
 test -x checks/ready.sh    || { echo "FAIL: checks/ready.sh not executable"; exit 1; }
 # The enforcement stage must declare a real gate (the showcase's centrepiece).
 grep -q 'ICM-GATE' stages/02-enforcement.md || { echo "FAIL: stage 02 missing ICM-GATE"; exit 1; }

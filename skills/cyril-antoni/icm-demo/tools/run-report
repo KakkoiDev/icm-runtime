@@ -1,0 +1,60 @@
+#!/bin/sh
+# run-report: deterministically capture stage 01's facts about the CURRENT run of
+# cyril-antoni/icm-demo - the stage order, the next empty stage, this run's real
+# header values, the enforcement posture, and the five artifacts that track a run.
+# It reports on the REAL run in the project cwd (not a sandbox); the model adds only
+# the educational framing (what each artifact IS) around this captured output.
+#
+# This is the "push bash-reachable work into tools/" half of the stage: the facts are
+# captured here so they are reproducible and eval-checkable, not retyped by the model.
+# No arguments. Honors $ICM_SH; resolves icm.sh relative to this script otherwise.
+set -u
+WS=cyril-antoni/icm-demo
+
+tool_dir=$(cd "$(dirname "$0")" && pwd)
+skills_root=$(cd "$tool_dir/../../.." && pwd)
+ICM="${ICM_SH:-$skills_root/icm/runtime/icm.sh}"
+[ -f "$ICM" ] || { echo "run-report: cannot find icm.sh at $ICM (set ICM_SH)"; exit 2; }
+
+[ -d ".icm/$WS" ] || { echo "run-report: no run for $WS in $PWD - run 'icm.sh init $WS' first"; exit 2; }
+# Newest run dir: the last match of the sorted glob (timestamp dirs sort ascending).
+# A pure-shell loop, so no `ls` (and no SC2012) and it is dash/bash-3.2 safe.
+RUN=""
+for d in ".icm/$WS"/*/; do [ -d "$d" ] && RUN=${d%/}; done
+[ -n "$RUN" ] || { echo "run-report: no run dir under .icm/$WS"; exit 2; }
+
+say() { printf '\n=== %s ===\n' "$1"; }
+
+say "STAGE ORDER (icm.sh stages)"
+printf '$ icm.sh stages %s\n' "$WS"; "$ICM" stages "$WS" 2>&1 || true
+
+say "NEXT EMPTY STAGE (icm.sh next)"
+printf '$ icm.sh next %s\n' "$WS"; "$ICM" next "$WS" 2>&1 || true
+
+say "RUN HEADER (telemetry/run.json)"
+printf 'run dir: %s\n' "$RUN"
+cat "$RUN/telemetry/run.json" 2>/dev/null || echo "(run.json missing)"
+
+say "ENFORCEMENT POSTURE (icm.sh gate-status)"
+printf '$ icm.sh gate-status\n'
+gs=$("$ICM" gate-status 2>&1); gsrc=$?
+printf '%s\n' "$gs"
+if [ "$gsrc" -ne 0 ]; then
+    printf '\n(gate-status exit %s: this run declares a gate but no enforcement hook is\n' "$gsrc"
+    printf ' registered here. Reported, not fatal - enforcement is PROVEN directly in\n'
+    printf ' stage 02. For ambient enforcement: installer.sh --hooks)\n'
+fi
+
+say "THE FIVE THINGS THAT TRACK THIS RUN"
+for art in \
+    "$RUN/telemetry/run.json|static sealed header (workspace, run_id, stages, cwd)" \
+    "$RUN/telemetry/events.jsonl|append-only source of truth (run_init/usage/stage_done/reify)" \
+    "$RUN/.manifest|sha256 of every frozen CONTEXT.md, checks/ and tools/ file" \
+    ".icm/telemetry/tool-calls.jsonl|every icm.sh invocation in this project" \
+    ".icm-seals.log|committable tamper anchor (written at seal time, stage 03)"; do
+    p=${art%%|*}; desc=${art#*|}
+    if [ -e "$p" ]; then mark="present"; else mark="not yet"; fi
+    printf '  [%s] %s\n            %s\n' "$mark" "$p" "$desc"
+done
+
+say "run-report complete"

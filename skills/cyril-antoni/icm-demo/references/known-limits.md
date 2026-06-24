@@ -44,7 +44,11 @@ a demo that hides its blind spots teaches the wrong lesson.
   surfaces a "gates were advisory only" banner when a run declares gates but no
   gate-check records exist. The offline tour calls `gate-check` directly, so it works
   regardless of whether a hook is installed.
-- **Script stages are opaque to tool auditing.** Work done inside a `tools/` script
-  (like this skill's `sandbox-tour`) runs under one `Bash` call, so `audit` sees
-  "Bash ran", not which script or what it did. That is why the deterministic surface
-  is covered by `eval/` instead.
+- **Script stages are opaque to tool auditing.** Each stage here drives a `tools/`
+  script (`run-report`, `sandbox-tour`, `close-run`) under one `Bash` call - a
+  deliberate trade so the evidence files are reproducible and eval-checkable rather
+  than model prose. The cost: `audit` sees "Bash ran" for the stage, not which script
+  or what it did. That is the right split for a demo (the deterministic surface is
+  covered by `eval/`), but for a skill whose per-call arguments must be verified, use
+  an `ICM-CALL` execution spec on a real harness tool instead of burying the work in a
+  script.

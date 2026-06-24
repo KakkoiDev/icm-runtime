@@ -15,10 +15,20 @@ description: >
 # icm-demo
 
 ## Pipeline
-Tour the run lifecycle and tracking artifacts (stage 01), run the offline
-enforcement-and-tamper showcase and capture its real output (stage 02), then close
-the run out with telemetry, audit, and seal (stage 03). Output is three evidence
-files plus a verifiable, sealed run of this skill.
+Three stages, each capturing real `icm.sh` output through a deterministic `tools/`
+script so the evidence is reproducible: stage 01 reports the run lifecycle and the
+five tracking artifacts (`tools/run-report`); stage 02 runs the offline
+enforcement-and-tamper showcase (`tools/sandbox-tour`); stage 03 shows the per-stage
+four-field token telemetry (`tools/show-telemetry`). Sealing is POST-RUN by design - a
+stage cannot audit or seal itself, since its own `stage-done` is not recorded until
+after its work - so after the last `stage-done`, `tools/close-run` audits, seals,
+verifies, and indexes the whole pipeline. Output is three evidence files, a sealed run,
+and a finalization shown in chat.
+
+If you have not run `installer.sh --hooks`, `audit` reports exactly one EXPECTED
+deviation ("gates were ADVISORY ONLY") - the runtime honestly reporting that ambient
+enforcement is not wired. It is not a failure: enforcement is proven directly in stage
+02's sandbox, and the deviation clears once hooks are installed.
 
 ## Commands
 | Command | What it does |
@@ -38,9 +48,10 @@ the installed skill:
 
 ## What this skill is (and is not)
 This demonstrates and teaches the RUNTIME, it does not produce a domain artifact.
-Stage 02's showcase operates on a THROWAWAY copy of this skill in a disposable
-directory, so running the demo never touches your project's real `.icm/` or seal
-log. It is offline by design: it shows the mechanics that are unique to ICM
+Like any ICM skill it creates and seals its own real run under `.icm/`; what is
+sandboxed is stage 02's ENFORCEMENT-and-tamper showcase, which runs against a
+THROWAWAY copy of this skill in a disposable directory so its deliberate tampering
+never touches your real run. It is offline by design: it shows the mechanics that are unique to ICM
 (enforcement and tamper-evident telemetry), all of which are checkable with no
 external service. It does NOT demo live MCP/web integrations; for that, read a real
 integration skill such as `cyril-antoni/publish-to-notion`. See
@@ -52,10 +63,10 @@ Each ICM authoring construct appears once, in the file you would copy it from:
 | Construct | Where to see it | What it does |
 |-----------|-----------------|--------------|
 | `<!-- ICM-TOOLS expect="..." -->` | every `stages/*.md` | declares expected harness tools (ERE) for `audit` |
-| `<!-- ICM-GATE tools="..." run="..." -->` | `stages/02-enforcement.md:4` | a frozen, harness-enforced precondition gate |
+| `<!-- ICM-GATE tools="..." run="..." -->` | the `ICM-GATE` line near the top of `stages/02-enforcement.md` | a frozen, harness-enforced precondition gate |
 | `<!-- ICM-CALL tool="..." args="..." -->` | `publish-to-notion/stages/03-verify-share.md` | an execution spec `audit` verifies on the call's arguments (needs a real call, so not hosted here - see below) |
 | a gate checker (`run="checks/x.sh"`) | `checks/ready.sh` | the deterministic half of a gate; exit 0 = pass |
-| a deterministic `tools/` script | `tools/sandbox-tour` | bash-reachable work frozen into the run and hashed in `.manifest` |
+| deterministic `tools/` scripts | `tools/run-report`, `tools/sandbox-tour`, `tools/show-telemetry`, `tools/close-run` | bash-reachable work frozen into the run and hashed in `.manifest`; one per stage plus the post-run finalizer |
 | an eval suite | `eval/*.test.sh` | tests the deterministic surface with no live model |
 
 Why stage 02's gate is safe in a live run: it names a FABRICATED tool
@@ -74,6 +85,11 @@ permanent audit deviation. The construct is taught here and shown working in
 
 ## Conventions
 - Read the full stage contract before executing. Load only what the Inputs table specifies.
+- Run every stage's commands from the PROJECT ROOT (where you ran `icm.sh init`); the
+  `tools/` scripts read `.icm/` there. Write each stage's output to its EXPLICIT path
+  `<run>/<stage>/output/<file>` - the `<run>` path is printed by `icm.sh init`, and
+  `init` already created each stage's `output/` dir. Do not assume the current
+  directory is the stage dir.
 - If `output/` exists from a previous run of this stage, ask: overwrite or skip?
 - Execute and close each stage in real time, in order: do the work, then call
   `stage-done`, then move on. Do NOT batch `stage-done` calls or back-fill outputs -
@@ -110,7 +126,9 @@ bash ~/.agents/skills/icm/runtime/icm.sh audit cyril-antoni/icm-demo
 ```
 
 ## Seal
-After audit, seal the run's evidence and tell the user to commit the log:
+Seal AFTER the last stage is closed (a stage cannot seal itself). Stage 03's
+`tools/close-run` runs this for you - `audit`, then `seal`, then `verify-seal` - as the
+post-run finalizer. The underlying command:
 ```
 bash ~/.agents/skills/icm/runtime/icm.sh seal cyril-antoni/icm-demo
 ```
