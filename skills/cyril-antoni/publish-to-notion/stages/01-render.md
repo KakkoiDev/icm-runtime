@@ -11,8 +11,9 @@ only.
 
 The deterministic syntax conversion (GitHub pipe tables to Notion `<table>` blocks, code
 fences left literal) is done by the `tools/render` script, NOT by hand. Your only remaining
-job is the content judgement the script cannot make: making mermaid node labels quote-safe and
-escaping stray literal special characters outside code fences.
+job is the content judgement the script cannot make: making mermaid node labels quote-safe,
+escaping stray literal special characters outside code fences, and laying out any bilingual prose
+in two columns.
 
 ## Inputs
 | Source | Location | Scope |
@@ -34,7 +35,13 @@ escaping stray literal special characters outside code fences.
    use `<br>` not `\n` inside labels; escape stray literal special characters that appear
    OUTSIDE code fences. Read `notion://docs/enhanced-markdown-spec` via `ReadMcpResourceTool`
    if unsure of a construct. Edit `output/page.md` in place. Do NOT alter meaning or phrasing.
-4. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
+4. Bilingual layout: if the content pairs the same text in two languages, wrap each PROSE pair in
+   a two-column block - `<columns><column>` lang A `</column><column>` lang B `</column></columns>`,
+   first language left, tab-indented children with REAL tabs. This is the default, not an option to
+   ask about. Leave diagrams, ```mermaid fences, code blocks, and `<table>` blocks FULL-WIDTH
+   (outside any column); leave bilingual diagram labels (`JA<br>EN`) inline. Skip this step entirely
+   for monolingual content.
+5. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
    "none = private workspace page") and the title; for update, the existing `page_id`; and the
    `audience` (who must be able to read it).
 

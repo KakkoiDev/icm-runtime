@@ -44,6 +44,13 @@ it first (or use a drafting skill), then call this.
   label has special characters, double-quote it. Use `<br>` for line breaks in labels, never
   a literal newline. For a clear entry point use `flowchart LR` with a stadium `([...])`
   START node. `style`/color lines may not render in every Notion build - do not rely on them.
+- Bilingual content (same text paired in two languages) ALWAYS uses a two-column layout for the
+  paired PROSE: `<columns><column>` language A `</column><column>` language B `</column></columns>`,
+  first language left. This is the default for bilingual docs, not an option to offer. Diagrams,
+  code fences, and tables stay FULL-WIDTH - never nest them in a column (mermaid in a half-width
+  column renders cramped and can fail to parse). Bilingual diagram labels (`JA<br>EN` inside a
+  node) stay inline as-is. Monolingual content: no columns. Column children are tab-indented; pass
+  REAL tabs, not `\t`.
 - Wrap paths, globs, and code tokens in backticks. Bare `*` and `~` are markdown delimiters
   and will eat your text. Outside code blocks, escape: backslash asterisk tilde backtick
   dollar square-brackets angle-brackets braces pipe caret.
