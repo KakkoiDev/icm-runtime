@@ -51,8 +51,12 @@ Uninstall: `./installer.sh --remove`
 
 | Skill | What it does |
 |-------|-------------|
-| `icm` | Runtime mechanics (init, run stages, list, diff, clean). Used internally by workspace skills. |
-| `ai-folder-research` | 3-stage pipeline: research a topic → draft analysis → polish into final output. |
+| `icm` | The runtime itself (init, stages, gate-check, stage-done, reify, audit, seal). Used by every workspace skill; not invoked directly. |
+| `cyril-antoni/icm-demo` | Runnable, offline, self-teaching showcase of the runtime AND the canonical authoring template. Run it to watch gates, telemetry, and seals work. Start here. |
+| `jake-van-clief/ai-folder-research` | 3-stage pipeline: research a topic, draft analysis, polish into final output. |
+| `cyril-antoni/draft-report` | 3-stage: frame, draft, tighten a stakeholder report in a fixed house style. |
+| `cyril-antoni/publish-to-notion` | 3-stage: render to Notion-flavored markdown, publish via MCP, fetch back and verify. |
+| `cyril-antoni/signoff-proposal` | 3-stage: gather evidence, compose a sign-off proposal, publish and verify in Notion. |
 
 ## Commands
 
@@ -94,6 +98,22 @@ non-deterministic glue between deterministic checkpoints; the runtime owns all s
    transcript and appends `reify` events (last-wins, never rewriting). `icm.sh telemetry` writes the
    run's one-line entry to the global index. `icm.sh seal` anchors the evidence for tamper detection.
 
+```mermaid
+flowchart TD
+    A(["/skill invoked"]) --> B["icm.sh init: freeze CONTEXT.md + checks/ + tools/, write .manifest, run.json, events.jsonl(run_init)"]
+    B --> C{"icm.sh next: an empty stage?"}
+    C -->|"next empty stage"| D["agent reads the stage CONTEXT.md, does the work, writes stage output/"]
+    D --> E["icm.sh stage-done: snapshot token usage from transcript, append stage_done to events.jsonl"]
+    E --> C
+    C -->|"all stages closed"| F["icm.sh reify-telemetry: recompute exact per-stage counts (reify events, last-wins)"]
+    F --> G["icm.sh audit: every stage closed? expected tools seen? gates enforced or advisory?"]
+    G --> H["icm.sh seal: digest run.json + events.jsonl + .manifest into .icm-seals.log"]
+    H --> I(["committable, tamper-evident evidence"])
+```
+
+Gates run on a parallel track: on every tool call the harness consults `gate-check`
+(see [Stage gates](#stage-gates-harness-enforced)) before the call is allowed.
+
 ### What tracks the run
 
 | Artifact | Scope | What it holds |
@@ -113,6 +133,17 @@ cross-project index** (one line per run); **`.icm-seals.log` is the tamper ancho
 joins across separate files. Each `stage_done` / `usage` / `reify` event carries all four token
 fields (`tokens_in` = new input only, `cache_creation`, `cache_read`, `tokens_out`), so cost is
 computable without losing the cache breakdown.
+
+```mermaid
+flowchart TD
+    E["events.jsonl (per run)<br>SOURCE OF TRUTH<br>run_init, usage, stage_done, reify"] -->|"derived at stage-done / close"| D["skill-runs.jsonl (global)<br>one line per run, provisional then final"]
+    E -->|"digested at seal"| S[".icm-seals.log (project root)<br>TAMPER ANCHOR<br>sha256 of run.json + events.jsonl + .manifest"]
+    M[".manifest (per run)<br>sha256 of every frozen CONTEXT.md, checks/, tools/"] -->|"covered by"| S
+```
+
+Read direction matters: `stages` / `audit` / `telemetry` all read back from
+`events.jsonl`; nothing joins across files at read time. `skill-runs.jsonl` and
+`.icm-seals.log` are written FROM `events.jsonl`, never the other way.
 
 ## Observability
 
@@ -200,6 +231,23 @@ like `tools="Write"` would otherwise deadlock a pure-authoring pipeline), and a 
 has no active stage, so it denies nothing - one unfinished gated run can't tax unrelated work in
 the same `.icm` root. Manifest tamper-evidence is still checked before any scoping.
 
+```mermaid
+flowchart TD
+    A(["harness is about to run a tool"]) --> B["PreToolUse hook (gate-hook.sh) fires"]
+    B --> C{".icm/ in cwd?"}
+    C -->|no| OK(["allow (exit 0, ~25ms)"])
+    C -->|yes| D["icm.sh gate-check --tool NAME"]
+    D --> E{".manifest verifies?"}
+    E -->|"hash mismatch"| X1(["DENY: contract tampered"])
+    E -->|ok| F["find active stage = first with no stage_done"]
+    F --> G{"active stage declares a gate whose tools= matches NAME (raw or normalized)?"}
+    G -->|"no match"| OK
+    G -->|match| H["run the checker (run=...) with cwd = stage dir"]
+    H --> I{"checker exit 0?"}
+    I -->|yes| OK
+    I -->|no| X2(["DENY: checker failed"])
+```
+
 Enforcement runs in the harness, outside the model's control, with one adapter per agent:
 
 - **Claude Code:** `gate-hook.sh`, a PreToolUse hook consulted on every tool call
@@ -254,6 +302,16 @@ name once (`notion-fetch`, `web_search`) and the gate or `ICM-TOOLS` line binds 
 harness. Matching tries both the raw and normalized name, so older patterns (raw `mcp__` names
 or hand-written alternations like `(search_web|WebSearch)`) keep working.
 
+```mermaid
+flowchart LR
+    A["harness reports: mcp__claude_ai_Notion__notion-fetch"] --> B["strip mcp__SERVER__ wrapper"]
+    B --> C["fold built-in aliases: WebSearch=web_search, WebFetch=web_fetch"]
+    C --> D(["canonical: notion-fetch"])
+    D --> E{"matches gate tools= ERE (tried against raw AND canonical)?"}
+    E -->|yes| G["gate applies"]
+    E -->|no| P["tool passes; this gate does not name it"]
+```
+
 ### Execution specs (`ICM-CALL`)
 
 `ICM-GATE` checks an output condition; `ICM-CALL` checks the *call itself*. A stage can
@@ -278,6 +336,72 @@ output into the call, not just that the field exists.
 CI runs `sh tests/gate.test.sh` on ubuntu and macos (`.github/workflows/test.yml`);
 run it locally before release too. The suite is hermetic: it sandboxes `$HOME`
 under a tmp dir.
+
+## Edge cases and gotchas
+
+Real behaviors that surprise people. Most are by-design; knowing them saves debugging.
+
+### Tamper-evidence: two separate layers
+There are two independent tamper detectors, and neither catches the other's edit:
+
+```mermaid
+flowchart LR
+    subgraph L1["manifest layer (caught by gate-check / audit)"]
+      M1["edit a FROZEN file:<br>CONTEXT.md, checks/, tools/"] --> M2(["DENY: contract tampered"])
+    end
+    subgraph L2["seal layer (caught by verify-seal)"]
+      S1["edit a SEALED file:<br>events.jsonl, run.json, .manifest"] --> S2(["SEAL MISMATCH"])
+    end
+```
+
+- Editing a `CONTEXT.md` leaves the seal OK (the `.manifest` FILE is unchanged), and
+  editing `events.jsonl` leaves the manifest OK. You need both checks.
+- It is tamper **evidence, not prevention**. The threat model is a negligent agent, not
+  a malicious one: an agent can still delete the run dir or feed a checker fake inputs.
+  Commit `.icm/` (or at least `.icm-seals.log`) so edits show up in git history.
+
+### Sealing and audit are POST-RUN
+- A stage cannot audit or seal itself: its own `stage-done` is not recorded until after
+  its work, so an in-stage audit reports the stage as "MISSING stage-done" and the seal
+  omits the last boundary. Seal AFTER the final `stage-done` (the SKILL.md Seal section),
+  as every workspace skill does.
+- `audit` prints the per-stage **token usage table only when the run is complete** (every
+  stage has output) and `jq` is installed. A partially-run audit shows the gate/tool
+  checks but not the token block.
+
+### Enforcement requires a registered adapter
+- Gates are inert prose without a harness adapter: Claude Code `gate-hook.sh` (PreToolUse),
+  pi `icm-gate.ts`. Codex has none, so gates there are advisory.
+- WITHOUT `installer.sh --hooks`, a run that declares gates audits with exactly one
+  **expected** deviation: "gates were ADVISORY ONLY". That is the runtime reporting your
+  setup, not a failure. `icm.sh gate-status` makes the absence loud (and fails in Claude
+  Code if only a pi adapter is registered).
+- Gates are scoped to the **active stage** only. A gate on a common tool (`tools="Write"`)
+  would deadlock the stage that owns it, so gate real ACTION tools (`notion-create-pages`)
+  on a PRE-action invariant instead. A completed run has no active stage and denies nothing.
+
+### Telemetry honesty and concurrency
+- `stage-done` reads token counts from the session transcript (resolved: session-env >
+  hook-recorded path > newest under cwd > newest anywhere; `audit` flags a guessed source).
+  The hook-recorded path is a single shared file, correct only without **concurrent
+  sessions** in the same project.
+- Closing stages in the same second (or batching `stage-done`) yields **zero-width
+  windows**: null per-stage counts and unreliable tool attribution. Close each stage in
+  real time, in order.
+- Sandbox / no-transcript runs record `counts: estimated`, `transcript_source: none` with
+  null token fields. Do not read those as real usage.
+
+### Authoring and resolution
+- `SKILLS_DIR` is fixed to the install root (derived from `icm.sh`'s own path); it is NOT
+  env-overridable. `init` resolves a workspace under it: `namespace/name` is deterministic,
+  a bare name is a recursive find.
+- Stage outputs are relative to the **stage dir** (`init` creates `<run>/<stage>/output/`).
+  Run a stage's commands positioned at the run/stage path, or write to the explicit
+  `<run>/<stage>/output/...` path; do not assume the project root is the stage dir.
+- `ICM-CALL` verifies one named tool was called with required args; a **branching** stage
+  (create vs update) cannot use one spec and falls back to the looser `ICM-TOOLS`
+  alternation. Work buried in a `tools/` script is opaque to `audit` (it sees "Bash ran"),
+  so cover that surface with `eval/`.
 
 ## Building your own workspace
 

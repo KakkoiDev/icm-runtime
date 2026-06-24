@@ -25,6 +25,17 @@ after its work - so after the last `stage-done`, `tools/close-run` audits, seals
 verifies, and indexes the whole pipeline. Output is three evidence files, a sealed run,
 and a finalization shown in chat.
 
+```mermaid
+flowchart TD
+    I(["/icm-demo"]) --> S1["Stage 01 lifecycle<br>tools/run-report -> output/lifecycle.md"]
+    S1 -->|"stage-done 01"| S2["Stage 02 enforcement<br>tools/sandbox-tour -> output/enforcement.md"]
+    S2 -->|"stage-done 02"| S3["Stage 03 telemetry<br>tools/show-telemetry -> output/telemetry.md"]
+    S3 -->|"stage-done 03 (last boundary)"| F["POST-RUN finalize<br>tools/close-run: audit + seal + verify-seal + evidence index"]
+    F --> O(["3 evidence files + a sealed, verifiable run"])
+```
+
+See `references/how-it-works.md` for the tool-to-stage map and the `sandbox-tour` flow.
+
 If you have not run `installer.sh --hooks`, `audit` reports exactly one EXPECTED
 deviation ("gates were ADVISORY ONLY") - the runtime honestly reporting that ambient
 enforcement is not wired. It is not a failure: enforcement is proven directly in stage
