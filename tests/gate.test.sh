@@ -44,6 +44,22 @@ while IFS= read -r parse_s; do
     fi
 done < "$TMP/sh_list"
 
+# ---- case 0b: the pi adapter (icm-gate.ts) transpiles cleanly ----
+# There is no pi harness here, so this cannot test runtime behavior - it verifies
+# the TypeScript parses/transpiles, catching syntax breakage that would brick the
+# pi enforcement path. Uses bun when present; SKIPs (does not fail) when no TS
+# tool exists, so a bare POSIX box still runs the rest of the suite.
+icm_gate_ts="$REPO_DIR/skills/icm/runtime/icm-gate.ts"
+if command -v bun >/dev/null 2>&1; then
+    if bun build "$icm_gate_ts" --target=node --external '*' --outfile="$TMP/icm-gate.js" >"$TMP/bun.out" 2>&1; then
+        t_ok "0b pi adapter: icm-gate.ts transpiles (bun)"
+    else
+        t_fail "0b pi adapter: icm-gate.ts failed to transpile" "$(head -5 "$TMP/bun.out")"
+    fi
+else
+    echo "SKIP  0b pi adapter transpile (bun not installed)"
+fi
+
 # ---- fixture: skills tree mirroring ~/.agents/skills/ ----
 mkdir -p "$TMP/skills/icm/runtime"
 # cp preserves the exec bit: a non-executable script in the repo fails here
