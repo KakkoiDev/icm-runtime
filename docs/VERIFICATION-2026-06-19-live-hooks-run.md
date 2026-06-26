@@ -31,7 +31,7 @@ session cwd) would fire on the agent's real tool calls. Steps:
    became a Notion `<table>` block; mermaid and inline formatting passed through unchanged.
    `stage-done 01-render`.
 3. **Stage 02 (publish).** `notion-create-pages` created a real private workspace page
-   (`id 3841ff99-6922-81f4-9086-d220c03eeb73`). `output/publish-receipt.md` recorded the URL/id.
+   (`id <redacted-test-page-id>`). `output/publish-receipt.md` recorded the URL/id.
    `stage-done 02-publish`.
 4. **Stage 03 (verify).** With stage 03 active, its gate
    (`run="test -s ../02-publish/output/publish-receipt.md"`) fired and passed, so `notion-fetch`

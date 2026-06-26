@@ -7,7 +7,7 @@
 
 A new skill, `publish-to-notion`, was authored and run end to end as a real test:
 - Skill source: `~/Code/icm-runtime/skills/cyril-antoni/publish-to-notion/` (`SKILL.md` + `stages/01-render.md`, `stages/02-publish.md`, `stages/03-verify-share.md`).
-- Test run (ephemeral, may be gone when you read this): `<scratchpad>/.icm/cyril-antoni/publish-to-notion/2026-06-19_02-41-16/`. It created a real private Notion page and reached `VERIFIED: PASS`.
+- Test run (ephemeral, may be gone when you read this): `<scratchpad>/.icm/<namespace>/<skill>/<timestamp>/`. It created a real private Notion page and reached `VERIFIED: PASS`.
 - Runtime under test (canonical, editable source): `~/Code/icm-runtime/skills/icm/runtime/icm.sh`, `gate-hook.sh`, `icm-gate.ts`. The installed copies at `~/.agents/skills/icm/runtime/` are symlinks to these. Line numbers below are from this reading and will drift; grep the symbol, do not trust the number.
 
 The install was done WITHOUT `--hooks`, which is itself a finding (see Defect 2/3).

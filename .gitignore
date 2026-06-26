@@ -2,6 +2,9 @@
 IMPLEMENTATION-PLAN-*.md
 TASK.md
 
+# Local agent harness settings (machine-specific paths, tool allow-lists).
+.claude/
+
 # Runtime state from test/proof runs in this repo (the runtime's own output).
 .icm/
 .icm-seals.log
