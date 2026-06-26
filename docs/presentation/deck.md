@@ -1,23 +1,11 @@
 <!--
-ICM Runtime - technical deck (Marp source).
-
-RENDER / PRESENT (Marp CLI is not installed on this machine):
-  npm i -g @marp-cli/marp-cli
-  marp deck.md -o deck.html        # then open deck.html, present fullscreen
-  marp deck.md --pdf               # static PDF export
-OR: open this file in VS Code with the "Marp for VS Code" extension, click "Open Preview".
-
-Mermaid is NOT rendered by core Marp. Diagrams here are ASCII on purpose so the
-deck renders with zero plugins. Present in a dark room: theme is gaia/invert.
+ICM Runtime - technical deck. Plain markdown; slides separated by `---`.
+Mermaid diagrams render in: GitHub preview, HackMD, reveal-md, and VS Code
+(with the "Markdown Preview Mermaid Support" extension). Core Marp does NOT
+render mermaid.
+To present as slides: `npx reveal-md deck.md` (renders mermaid), or paste
+into HackMD / a mermaid-aware slide tool.
 -->
----
-marp: true
-theme: gaia
-class: invert
-paginate: true
----
-
-<!-- _class: invert lead -->
 
 # ICM Runtime
 
@@ -46,13 +34,13 @@ The orchestration is invisible because it is buried in code.
 
 Put the orchestration in the **filesystem**, where you can see it.
 
-Five layers:
-
-1. **Skill** - a workflow, e.g. `cyril-antoni/icm-demo`
-2. **Stages** - numbered markdown files, frozen into contracts
-3. **Run** - a timestamped directory of state
-4. **Tracking** - events, manifest, seals, telemetry
-5. **Enforcement** - a harness hook on every tool call
+```mermaid
+flowchart TD
+  S["Skill (namespace/name)"] --> ST["Stages: numbered .md, frozen contracts"]
+  ST --> R["Run: timestamped state dir"]
+  R --> T["Tracking: events, manifest, seals, telemetry"]
+  R --> E["Enforcement: harness hook on every tool call"]
+```
 
 The runtime owns state. The model is glue between deterministic checkpoints.
 
@@ -78,21 +66,23 @@ Markdown + bash. No framework to learn.
 
 # Lifecycle
 
+```mermaid
+flowchart TD
+  I["icm.sh init<br/>creates .icm/ns/skill/timestamp/"]
+  C["read CONTEXT.md (frozen)"]
+  W["do work into stage/output/"]
+  D["icm.sh stage-done<br/>snapshots tokens"]
+  A["icm.sh audit<br/>events match expected tools?"]
+  SE["icm.sh seal<br/>sha256 digest into .icm-seals.log"]
+  I --> C
+  C --> W
+  W --> D
+  D -->|"more stages"| C
+  D -->|"last stage"| A
+  A --> SE
 ```
-  icm.sh init  ->  .icm/<ns>/<skill>/<timestamp>/
-        |
-        v
-  +----------------------------------+
-  |  for each stage:                 |
-  |    read CONTEXT.md (frozen)      |
-  |    do work -> stage/output/      |   <-- the model lives here
-  |    icm.sh stage-done  (snapshot tokens)
-  +----------------------------------+
-        |
-        v
-  icm.sh audit   ->  events match expected tools?
-  icm.sh seal    ->  sha256 digest -> .icm-seals.log
-```
+
+The model only lives inside the stage loop. Everything around it is deterministic.
 
 ---
 
@@ -157,8 +147,6 @@ both. Enforcement adapters: `gate-hook.sh` (Claude Code), `icm-gate.ts` (pi).
 
 ---
 
-<!-- _class: invert lead -->
-
 # Live demo
 
 `bash .../icm-demo/tools/sandbox-tour`
@@ -188,7 +176,7 @@ DENY -> ALLOW -> normalized DENY -> SEAL OK -> SEAL MISMATCH -> contract tampere
 
 **Beta.** Architecture is production-grade; process is not yet.
 
-- 64 hermetic test cases, CI on Linux + macOS
+- 111 passing tests, CI on Linux + macOS
 - 6 skills shipped (runtime, demo, research, draft-report, publish-to-notion, signoff-proposal)
 - Self-contained: bash + jq + sha256sum, no runtime deps
 - `icm-demo` doubles as the copyable authoring template
@@ -207,8 +195,6 @@ DENY -> ALLOW -> normalized DENY -> SEAL OK -> SEAL MISMATCH -> contract tampere
 Next step: cut a real tagged 1.0 release.
 
 ---
-
-<!-- _class: invert lead -->
 
 # Appendix
 
