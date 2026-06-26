@@ -174,39 +174,24 @@ DENY -> ALLOW -> normalized DENY -> SEAL OK -> SEAL MISMATCH -> contract tampere
 
 # Where it stands
 
-**Beta.** Architecture is production-grade; process is not yet.
+**Beta. Testers welcome.**
 
-- 111 passing tests, CI on Linux + macOS
-- 6 skills shipped (runtime, demo, research, draft-report, publish-to-notion, signoff-proposal)
+- The offline demo you just saw - clone and run it yourself
+- 114 passing tests, CI on Linux + macOS, MIT licensed
 - Self-contained: bash + jq + sha256sum, no runtime deps
-- `icm-demo` doubles as the copyable authoring template
-- MIT, honest documented edge cases
 
 ---
 
-# What could improve
+# Try it
 
-- **Release process**: no `--version`, no git tags, no release artifacts
-- **pi adapter** (`icm-gate.ts`): shipped but untested
-- **Skill eval gaps**: `draft-report`, `signoff-proposal` have no `eval/`
-- **Docs**: no `CONTRIBUTING.md` / `ARCHITECTURE.md`; `--help` lacks examples
-- **Untested edge case**: concurrent sessions in one project
-
-Next step: cut a real tagged 1.0 release.
-
----
-
-# Appendix
-
-Repo: `github.com/KakkoiDev/icm-runtime`
-Paper: ICM, arXiv:2603.16021 (Van Clief & McDermott, 2026)
-
-Install:
 ```
-git clone ... && ./installer.sh
+git clone github.com/KakkoiDev/icm-runtime && ./installer.sh
 ```
 
-Run the showcase, no model:
+Offline showcase, no model, ~2 seconds:
+
 ```
 bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour
 ```
+
+ICM method: Van Clief & McDermott, arXiv:2603.16021
