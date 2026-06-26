@@ -83,7 +83,9 @@ once per clone:
 git config core.hooksPath .githooks
 ```
 
-The generated `*.html` are gitignored; regenerate them with `build.sh`.
+The HTML decks are committed and the pre-commit hook keeps them in sync with the
+sources. Note GitHub does not render committed HTML - read `deck.md` there; the
+HTML is for offline/standalone presenting.
 
 ## Commits
 

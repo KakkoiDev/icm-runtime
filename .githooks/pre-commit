@@ -1,9 +1,9 @@
 #!/bin/sh
 # Pre-commit: keep diagram SVGs in sync with their .mmd sources.
 #
-# If any docs/presentation/diagrams/*.mmd is staged, re-render the SVGs and stage
-# them, so a .mmd never lands without its matching .svg. deck.html is gitignored,
-# so it is NOT built here; run `sh docs/presentation/build.sh` for that.
+# When a presentation source is staged (deck.md, talk-track.md, or a diagram
+# *.mmd), rebuild the SVGs and both HTML decks and stage them, so the tracked
+# artifacts never lag their sources.
 #
 # Best-effort by design: if the render tooling (mmdc / Kroki) is unavailable, it
 # warns and lets the commit proceed rather than blocking it.
@@ -11,17 +11,19 @@
 # Enable once per clone:  git config core.hooksPath .githooks
 set -eu
 
-staged_mmd=$(git diff --cached --name-only --diff-filter=ACM \
-    | grep '^docs/presentation/diagrams/.*\.mmd$' || true)
-[ -n "$staged_mmd" ] || exit 0
+staged=$(git diff --cached --name-only --diff-filter=ACM \
+    | grep -E '^docs/presentation/(deck\.md|talk-track\.md|diagrams/.*\.mmd)$' || true)
+[ -n "$staged" ] || exit 0
 
 repo=$(git rev-parse --show-toplevel)
-echo "pre-commit: .mmd staged, re-rendering diagram SVGs..."
-if sh "$repo/docs/presentation/diagrams/render.sh"; then
-    git add "$repo"/docs/presentation/diagrams/*.svg
-    echo "pre-commit: SVGs re-rendered and staged."
+echo "pre-commit: presentation source staged, rebuilding SVGs + HTML..."
+if sh "$repo/docs/presentation/build.sh"; then
+    git add "$repo"/docs/presentation/diagrams/*.svg \
+            "$repo"/docs/presentation/deck.html \
+            "$repo"/docs/presentation/talk-track.html
+    echo "pre-commit: SVGs + HTML rebuilt and staged."
 else
-    echo "pre-commit: WARNING - diagram render failed (mmdc/Kroki unavailable?)." >&2
-    echo "pre-commit: committing .mmd without fresh SVGs; run 'sh docs/presentation/build.sh' later." >&2
+    echo "pre-commit: WARNING - presentation build failed (marp/mmdc/Kroki unavailable?)." >&2
+    echo "pre-commit: committing sources without rebuilt artifacts; run 'sh docs/presentation/build.sh' later." >&2
 fi
 exit 0

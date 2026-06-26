@@ -9,6 +9,5 @@ TASK.md
 .icm/
 .icm-seals.log
 
-# Generated presentation artifacts (source of truth is the .md; GitHub renders mermaid).
-docs/presentation/*.html
+# Presentation build deps (the HTML decks ARE tracked; build.sh / the pre-commit hook keep them in sync).
 docs/presentation/node_modules/
