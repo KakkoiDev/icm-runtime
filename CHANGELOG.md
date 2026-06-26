@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.0 - 2026-06-26
+
+- BREAKING: renamed the skill namespace `cyril-antoni` -> `kakkoidev` (aligns with
+  the GitHub org). Re-run `./installer.sh` to repoint skill symlinks; runs created
+  under the old namespace are not migrated.
+- `icm.sh --version` (also `-v` / `version`) prints the runtime version;
+  `help` / `--help` / `-h` route to usage, which now lists runnable examples.
+- Structural eval suites for `draft-report` and `signoff-proposal` (model-mediated
+  skills: scaffolding guards, not content assertions).
+- pi adapter (`icm-gate.ts`) transpile check added to the suite (bun); CI installs
+  bun so it runs. Runtime behavior against a pi harness remains unverified.
+- Docs: `ARCHITECTURE.md`, `CONTRIBUTING.md`; dated working notes moved to `docs/`.
+- Release: `.github/workflows/release.yml` cuts a GitHub release on `v*` tags after
+  the suite passes on Linux + macOS.
+
 ## 0.8.0 - 2026-06-13
 
 - Skill-to-skill linkage: `init` accepts `--caller <parentWs>/<parentRunId>/<stage>`,
