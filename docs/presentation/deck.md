@@ -7,11 +7,11 @@ Renders in any markdown viewer too: GitHub shows the committed SVGs inline.
 
 # ICM Runtime
 
-## Folders as agent architecture
+## A beta experiment in auditable AI agents
 
-The framework is a folder. The folder proves what it did.
+Folders as orchestration - so the harness can check the agent, not just trust it.
 
-`github.com/KakkoiDev/icm-runtime` - MIT
+`github.com/KakkoiDev/icm-runtime` - MIT - beta
 
 ---
 
@@ -125,13 +125,15 @@ both. Enforcement adapters: `gate-hook.sh` (Claude Code), `icm-gate.ts` (pi).
 
 ---
 
-# Live demo
+# Live demo - the enforcement engine
 
 `bash .../icm-demo/tools/sandbox-tour`
 
 Offline. Deterministic. ~2 seconds.
 
 DENY -> ALLOW -> normalized DENY -> SEAL OK -> SEAL MISMATCH -> contract tampered
+
+`demo_publish` stands in for a real action (deploy, publish). This is the mechanism firing, not a full workflow.
 
 ---
 
@@ -150,17 +152,19 @@ DENY -> ALLOW -> normalized DENY -> SEAL OK -> SEAL MISMATCH -> contract tampere
 
 ---
 
-# Where it stands
+# What's real, what's open
 
-**Beta. Testers welcome.**
+**Real:** gates fire live in Claude Code; tamper-evidence holds; 114 tests, CI on Linux + macOS; offline, bash-only.
 
-- The offline demo you just saw - clone and run it yourself
-- 114 passing tests, CI on Linux + macOS, MIT licensed
-- Self-contained: bash + jq + sha256sum, no runtime deps
+**Open:** pi adapter runtime-untested; the real-publish-gate demo needs MCP; beta - a bet, not a product.
+
+Testers welcome.
 
 ---
 
-# Try it
+# Try it, then tell me
+
+A bet: mechanical, tamper-evident checks on agents are worth having. Worth pursuing?
 
 ```
 git clone github.com/KakkoiDev/icm-runtime && ./installer.sh

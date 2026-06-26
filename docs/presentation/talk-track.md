@@ -11,14 +11,12 @@ One slide per timestamp. Renders as a deck (slides split on `---`).
 
 ## [0:00-0:30] Hook
 
-Every multi-agent framework you have seen - CrewAI, LangChain, AutoGen -
-orchestrates agents in code. The control flow lives inside Python objects.
-That makes it opaque: you cannot easily see what ran, what it cost, or whether
-the agent did what the spec said.
+Agents skip verification steps, and you only find out later. The usual answer is
+"tell the model to check" - and hope it listens.
 
-ICM inverts that. The orchestration lives in the filesystem. Numbered folders
-are the pipeline. Markdown files are the contracts. A single agent reads the
-right file at the right moment.
+I wanted the check to be mechanical: the harness blocks the action until the
+check passes, and leaves a record you can't quietly edit. I built that as the ICM
+runtime. It's beta - this is an honest look, not a sales pitch.
 
 ---
 
@@ -57,7 +55,7 @@ Let me show you all of it. Offline. No network, no credentials, two seconds.
 
 Run: `bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour`
 
-Narrate the eight steps as they print (1-4):
+Enforcement engine, offline. demo_publish stands in for a real action. Steps 1-4:
 
 1. **Stage scoping** - stage-02 gate silent while 01 active. ALLOW.
 2. **Gate DENY** - 02 precondition (`ready.md`) missing. DENY.
@@ -79,15 +77,13 @@ The whole value proposition in your terminal: deny, allow, cost, tamper.
 
 ## [4:30-5:00] Close
 
-Install once, skills are just markdown plus bash, every run is sealed and
-token-tracked.
+What's real: gates fire live in Claude Code, tamper-evidence holds, 114 tests on
+Linux and macOS. What's open: the pi adapter is runtime-untested, and the
+compelling demo - a gate stopping a real publish - needs MCP, so you didn't see it
+today.
 
-Where it stands: beta. 114 tests, CI on Linux and macOS, six skills, MIT. We
-just added versioning, a release workflow, and eval coverage; the one honest gap
-is the pi adapter's runtime, still unverified without a pi environment. Next step
-is cutting the tagged release.
-
-That is ICM: the framework is a folder, and the folder proves what it did.
+The bet: mechanical, tamper-evident checks on agents are worth having. Is that
+worth pursuing? One command to try it - and tell me.
 
 ---
 
