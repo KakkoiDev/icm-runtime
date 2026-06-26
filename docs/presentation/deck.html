@@ -16,14 +16,14 @@
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="2" lang="en-US">
 <h1 id="the-problem">The problem</h1>
-<p>Every multi-agent framework orchestrates <strong>in code</strong>.</p>
+<p>Multi-agent frameworks (CrewAI, LangChain, AutoGen) put the orchestration <strong>in code</strong>.</p>
 <ul>
-<li>CrewAI, LangChain, AutoGen: control flow lives inside Python objects.</li>
-<li>Opaque. Hard to <strong>audit</strong> what ran.</li>
-<li>Hard to <strong>cost</strong> - tokens hide inside the framework.</li>
-<li>Hard to <strong>verify</strong> the agent did what the spec said.</li>
+<li>The pipeline is Python objects you read or run, not a file you can open.</li>
+<li>Auditing what ran, what it cost, and whether the spec held means reading or<br />
+instrumenting that code. Tracing exists, but it is opt-in.</li>
 </ul>
-<p>The orchestration is invisible because it is buried in code.</p>
+<p>Not a flaw - a different design point. ICM's bet: pipeline and evidence as<br />
+first-class files, by default.</p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="3" lang="en-US">
 <h1 id="two-things-it-gives-you">Two things it gives you</h1>

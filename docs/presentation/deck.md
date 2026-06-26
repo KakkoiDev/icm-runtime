@@ -17,14 +17,14 @@ Folders as orchestration - so the harness can check the agent, not just trust it
 
 # The problem
 
-Every multi-agent framework orchestrates **in code**.
+Multi-agent frameworks (CrewAI, LangChain, AutoGen) put the orchestration **in code**.
 
-- CrewAI, LangChain, AutoGen: control flow lives inside Python objects.
-- Opaque. Hard to **audit** what ran.
-- Hard to **cost** - tokens hide inside the framework.
-- Hard to **verify** the agent did what the spec said.
+- The pipeline is Python objects you read or run, not a file you can open.
+- Auditing what ran, what it cost, and whether the spec held means reading or
+  instrumenting that code. Tracing exists, but it is opt-in.
 
-The orchestration is invisible because it is buried in code.
+Not a flaw - a different design point. ICM's bet: pipeline and evidence as
+first-class files, by default.
 
 ---
 
