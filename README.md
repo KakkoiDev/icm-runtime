@@ -91,6 +91,7 @@ Gates run on a parallel track: before every tool call the harness consults `gate
 which denies if the active stage's precondition is unmet or a frozen contract was edited.
 
 **Go deeper:**
+- [docs/ONBOARDING.md](docs/ONBOARDING.md) - new here? the end-to-end walkthrough of one run.
 - [ARCHITECTURE.md](ARCHITECTURE.md) - the five layers, components, and data flow.
 - [docs/REFERENCE.md](docs/REFERENCE.md) - full mechanics: gates, telemetry, seals,
   execution specs, and edge cases.
