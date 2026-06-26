@@ -126,7 +126,7 @@ Per stage, read from the session transcript at `stage-done`:
 | `tokens_out` | output |
 
 Read from the transcript, **never hand-passed by the model**.
-Reified post-run with exact counts. The model cannot lie about cost.
+Recomputed exactly from the full transcript after the run. The model cannot lie about cost.
 
 ---
 
