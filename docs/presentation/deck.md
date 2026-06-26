@@ -42,9 +42,13 @@ Skill creator + run enforcer.
 
 Put the orchestration in the **filesystem**, where you can see it.
 
-![Five layers: a skill holds numbered stage contracts; a run holds state; tracking and enforcement wrap it](diagrams/inversion.svg)
-
 The runtime owns state. The model is glue between deterministic checkpoints.
+
+---
+
+# Five layers
+
+![h:480 Five layers: a skill holds numbered stage contracts; a run holds state; tracking and enforcement wrap it](diagrams/inversion.svg)
 
 ---
 
@@ -68,9 +72,13 @@ Markdown + bash. No framework to learn.
 
 # Lifecycle
 
-![Lifecycle: init, then the stage loop (read contract, do work, stage-done), then audit and seal](diagrams/lifecycle.svg)
-
 The model only lives inside the stage loop. Everything around it is deterministic.
+
+---
+
+# The run loop
+
+![h:480 Lifecycle: init, then the stage loop (read contract, do work, stage-done), then audit and seal](diagrams/lifecycle.svg)
 
 ---
 
@@ -85,7 +93,7 @@ Declared in the stage contract:
 - `tools=` is a regex matched against the tool name.
 - `run=` is a checker; exit 0 = pass. The hook denies on non-zero.
 - **Scoped to the active stage only** - fires while its stage is open,
-  not before, not after. (Fixed a cross-stage deadlock in v0.6.0.)
+  not before, not after.
 
 Preconditions are enforced, not suggested.
 
@@ -93,14 +101,16 @@ Preconditions are enforced, not suggested.
 
 # Tamper-evidence: two layers
 
-**Layer 1 - manifest.** sha256 of every frozen `CONTEXT.md`, `checks/`,
-`tools/`. Edit a contract mid-run -> gate-check DENIES: "contract tampered".
+Each layer is a sha256 checksum that catches edits to the files it covers.
 
-**Layer 2 - seal.** sha256 of `run.json + events.jsonl + .manifest`, appended
-to `.icm-seals.log` (committable, lives at project root).
-Edit a sealed file after the fact -> `verify-seal` shows MISMATCH.
+**Manifest** covers the frozen files - the contracts, checkers, scripts. Edit one
+mid-run and `gate-check` denies: "contract tampered".
 
-You cannot quietly rewrite history of a run.
+**Seal** covers the recorded evidence - `run.json`, `events.jsonl`, `.manifest` -
+in a committable log at the project root. Edit any of it later and `verify-seal`
+says MISMATCH.
+
+Tamper-evident, not locked: you can edit, but never quietly.
 
 ---
 
