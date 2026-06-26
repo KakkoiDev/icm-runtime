@@ -56,10 +56,11 @@ Let me show you all of it. Offline. No network, no credentials, two seconds.
 Run it live in a scratch dir - 4 commands, files persist, ~20 seconds:
 
 ```
-RUN=$(icm.sh init kakkoidev/gate-demo)
-icm.sh gate-check --tool publish               # DENY: receipt missing
+ICM=~/.agents/skills/icm/runtime/icm.sh
+RUN=$(bash $ICM init kakkoidev/gate-demo)
+bash $ICM gate-check --tool publish               # DENY: receipt missing
 echo ok > $RUN/01-publish/output/receipt.md
-icm.sh gate-check --tool publish               # ALLOW
+bash $ICM gate-check --tool publish               # ALLOW
 ```
 
 Narrate: "The gate blocks `publish` until the stage produces `receipt.md`. First

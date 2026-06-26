@@ -133,10 +133,11 @@ Recomputed exactly from the full transcript after the run. The model cannot lie 
 # Live demo - a gate, in 4 commands
 
 ```
-RUN=$(icm.sh init kakkoidev/gate-demo)
-icm.sh gate-check --tool publish               # DENY: receipt missing
+ICM=~/.agents/skills/icm/runtime/icm.sh
+RUN=$(bash $ICM init kakkoidev/gate-demo)
+bash $ICM gate-check --tool publish               # DENY: receipt missing
 echo ok > $RUN/01-publish/output/receipt.md
-icm.sh gate-check --tool publish               # ALLOW
+bash $ICM gate-check --tool publish               # ALLOW
 ```
 
 The gate blocks `publish` until `output/receipt.md` exists. Create the file, the call is let through. Files persist - open them. Offline, ~20 seconds.
@@ -146,10 +147,10 @@ The gate blocks `publish` until `output/receipt.md` exists. Create the file, the
 # Demo output (backup if no terminal)
 
 ```
-$ icm.sh gate-check --tool publish
+$ bash $ICM gate-check --tool publish
 DENY ... 01-publish: checker failed: checks/receipt.sh   # blocked: no receipt
 $ echo ok > $RUN/01-publish/output/receipt.md
-$ icm.sh gate-check --tool publish
+$ bash $ICM gate-check --tool publish
 ALLOW (exit 0)                                           # receipt present: allowed
 ```
 
