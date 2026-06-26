@@ -1,0 +1,27 @@
+#!/bin/sh
+# Pre-commit: keep diagram SVGs in sync with their .mmd sources.
+#
+# If any docs/presentation/diagrams/*.mmd is staged, re-render the SVGs and stage
+# them, so a .mmd never lands without its matching .svg. deck.html is gitignored,
+# so it is NOT built here; run `sh docs/presentation/build.sh` for that.
+#
+# Best-effort by design: if the render tooling (mmdc / Kroki) is unavailable, it
+# warns and lets the commit proceed rather than blocking it.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+set -eu
+
+staged_mmd=$(git diff --cached --name-only --diff-filter=ACM \
+    | grep '^docs/presentation/diagrams/.*\.mmd$' || true)
+[ -n "$staged_mmd" ] || exit 0
+
+repo=$(git rev-parse --show-toplevel)
+echo "pre-commit: .mmd staged, re-rendering diagram SVGs..."
+if sh "$repo/docs/presentation/diagrams/render.sh"; then
+    git add "$repo"/docs/presentation/diagrams/*.svg
+    echo "pre-commit: SVGs re-rendered and staged."
+else
+    echo "pre-commit: WARNING - diagram render failed (mmdc/Kroki unavailable?)." >&2
+    echo "pre-commit: committing .mmd without fresh SVGs; run 'sh docs/presentation/build.sh' later." >&2
+fi
+exit 0

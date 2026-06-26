@@ -55,6 +55,36 @@ Run your eval with `icm.sh eval <namespace>/<name>`, then `./installer.sh` to pi
 the skill up. `skills/kakkoidev/icm-demo/` is the canonical annotated reference for
 every construct.
 
+## Presentation
+
+The talk lives in `docs/presentation/`: `deck.md` (slides) and `talk-track.md`
+(speaker notes) are the sources, and both render on GitHub. Diagrams are
+pre-rendered SVGs in `diagrams/` from `*.mmd` sources.
+
+Rebuild both HTML files and the diagram SVGs in one step:
+
+```
+sh docs/presentation/build.sh
+```
+
+Diagrams render via a local `mmdc` if installed, else the Kroki API. To stay
+fully offline, self-host Kroki and set `KROKI_URL`:
+
+```
+docker run -d -p 8000:8000 yuzutech/kroki
+KROKI_URL=http://localhost:8000 sh docs/presentation/build.sh
+```
+
+A pre-commit hook re-renders the SVGs whenever a `.mmd` is staged - best-effort,
+so it warns but never blocks a commit if the renderer is unavailable. Enable it
+once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+The generated `*.html` are gitignored; regenerate them with `build.sh`.
+
 ## Commits
 
 Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`). Keep
