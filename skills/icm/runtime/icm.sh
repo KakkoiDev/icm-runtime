@@ -19,6 +19,8 @@
 
 set -eu
 
+ICM_VERSION="0.8.0"
+
 # --- telemetry ---
 ICM_TELEMETRY_DIR=".icm/telemetry"
 ICM_LOG_START=""
@@ -66,6 +68,15 @@ usage() {
     echo "       icm.sh audit <workspace> [--strict] [--cwd <dir>]" >&2
     echo "       icm.sh seal <workspace> [--cwd <dir>]" >&2
     echo "       icm.sh verify-seal <workspace>|--all [--cwd <dir>]" >&2
+    echo "       icm.sh --version" >&2
+    echo "" >&2
+    echo "Examples:" >&2
+    echo "  icm.sh init kakkoidev/icm-demo                       # start a new run" >&2
+    echo "  icm.sh next kakkoidev/icm-demo                       # path to the next empty stage" >&2
+    echo "  icm.sh stage-done kakkoidev/icm-demo --stage 01-lifecycle  # close a stage, snapshot tokens" >&2
+    echo "  icm.sh audit kakkoidev/icm-demo --strict             # fail on any deviation" >&2
+    echo "  icm.sh seal kakkoidev/icm-demo                       # anchor evidence digests" >&2
+    echo "  icm.sh eval kakkoidev/icm-demo                       # run the skill's eval suite" >&2
     exit 1
 }
 
@@ -1829,6 +1840,8 @@ case "$cmd" in
     seal) cmd_seal "$@" ;;
     verify-seal) cmd_verify_seal "$@" ;;
     children) cmd_children "$@" ;;
+    version|--version|-v) echo "icm.sh $ICM_VERSION" ;;
+    help|--help|-h) usage ;;
     *)
         echo "Unknown command: $cmd" >&2
         usage
