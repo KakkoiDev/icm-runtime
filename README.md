@@ -21,17 +21,27 @@ frozen into a contract a single agent reads one at a time. Every run records its
 which tools were allowed, how many tokens each stage cost, and a tamper-evident seal. The
 runtime owns the state; the model is just the glue between deterministic checkpoints.
 
-## See it in ~2 seconds
+## See it
 
-The showcase runs fully offline, no model, no network, no credentials:
+The minimal demo - one gate, blocked then allowed, with files you can open:
+
+```bash
+ICM=~/.agents/skills/icm/runtime/icm.sh
+RUN=$(bash $ICM init kakkoidev/gate-demo)      # one stage, one gate
+bash $ICM gate-check --tool publish            # DENY: receipt missing
+echo ok > "$RUN/01-publish/output/receipt.md"  # produce the precondition
+bash $ICM gate-check --tool publish            # ALLOW
+```
+
+The gate refuses the `publish` action until `output/receipt.md` exists - a precondition
+the harness enforces, not the model's good intentions.
+
+For the exhaustive offline self-test of every mechanism (gate scoping, cross-harness
+name normalization, seal verify/mismatch, contract-tamper) in one command:
 
 ```bash
 bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour
 ```
-
-It builds a throwaway run and shows a gate DENY then ALLOW, a cross-harness tool-name match,
-a seal verify then a tamper MISMATCH, and a "contract tampered" deny - the whole value
-proposition in one command.
 
 ## Install
 

@@ -53,34 +53,32 @@ Let me show you all of it. Offline. No network, no credentials, two seconds.
 
 ## [2:15-4:30] LIVE DEMO
 
-Run: `bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour`
+Run it live in a scratch dir - 4 commands, files persist, ~20 seconds:
 
-DENY/MISMATCH lines are the wins - each step prints its expectation, and all 8 match. Steps 1-4:
+```
+RUN=$(icm.sh init kakkoidev/gate-demo)
+icm.sh gate-check --tool publish               # DENY: receipt missing
+echo ok > $RUN/01-publish/output/receipt.md
+icm.sh gate-check --tool publish               # ALLOW
+```
 
-1. **Stage scoping** - stage-02 gate silent while 01 active. ALLOW.
-2. **Gate DENY** - 02 precondition (`ready.md`) missing. DENY.
-3. **Normalization** - `mcp__..__demo_publish`. Still DENY (wrapper stripped).
-4. **Non-gated** - `Read`, not named by the gate. ALLOW.
+Narrate: "The gate blocks `publish` until the stage produces `receipt.md`. First
+call, no receipt - DENY, and it names the failed checker. I create the receipt.
+Same call - ALLOW. The harness refused the action until the precondition held; the
+model cannot route around it."
 
----
-
-## LIVE DEMO - steps 5-8
-
-5. **Gate ALLOW** - create `ready.md`. Precondition met. ALLOW.
-6. **Seal + verify** - anchor the digests. SEAL OK.
-7. **Seal tamper** - fake event into `events.jsonl`. SEAL MISMATCH, exit 1.
-8. **Manifest tamper** - edit frozen `CONTEXT.md`. DENY, "contract tampered".
-
-The whole value proposition in your terminal: deny, allow, cost, tamper. (demo_publish is a stand-in - the mechanism, not a full workflow.)
+`publish` stands in for a real action (deploy, send). For the exhaustive offline
+self-test of every mechanism (scoping, normalization, seal, tamper), run
+`icm-demo`'s `sandbox-tour` - but keep that off stage; this one gate is the idea.
 
 ---
 
 ## [4:30-5:00] Close
 
-What's real: gates fire live in Claude Code, tamper-evidence holds, 114 tests on
-Linux and macOS. What's open: the pi adapter is runtime-untested, and the
-compelling demo - a gate stopping a real publish - needs MCP, so you didn't see it
-today.
+What's real: gates fire live in Claude Code, tamper-evidence holds, 119 tests on
+Linux and macOS. What's open: the pi adapter is runtime-untested, and a gate firing
+on a real model tool call mid-workflow (today's gate was hand-driven) needs MCP, so
+you didn't see that part today.
 
 The bet: mechanical, tamper-evident checks on agents are worth having. Is that
 worth pursuing? One command to try it - and tell me.

@@ -135,40 +135,38 @@ both. Enforcement adapters: `gate-hook.sh` (Claude Code), `icm-gate.ts` (pi).
 
 ---
 
-# Live demo - the enforcement engine
+# Live demo - a gate, in 4 commands
 
-`bash .../icm-demo/tools/sandbox-tour`
+```
+RUN=$(icm.sh init kakkoidev/gate-demo)
+icm.sh gate-check --tool publish               # DENY: receipt missing
+echo ok > $RUN/01-publish/output/receipt.md
+icm.sh gate-check --tool publish               # ALLOW
+```
 
-Offline. Deterministic. ~2 seconds.
-
-The DENY / MISMATCH lines are the wins - each step states its `(expect ...)`, and all 8 match.
-
-`demo_publish` stands in for a real action (deploy, publish). The mechanism firing, not a full workflow.
+The gate blocks `publish` until `output/receipt.md` exists. Create the file, the call is let through. Files persist - open them. Offline, ~20 seconds.
 
 ---
 
 # Demo output (backup if no terminal)
 
 ```
-1 STAGE SCOPING   demo_publish while 01 active -> ALLOW
-2 GATE DENY       02 active, ready.md absent   -> DENY (checks/ready.sh)
-3 NORMALIZATION   mcp__..__demo_publish        -> DENY (wrapper stripped)
-4 NON-GATED       Read                         -> ALLOW
-5 GATE ALLOW      ready.md created             -> ALLOW
-6 SEAL + VERIFY   seal                         -> SEAL OK
-7 SEAL TAMPER     fake event in events.jsonl   -> SEAL MISMATCH (exit 1)
-8 MANIFEST TAMPER edit frozen CONTEXT.md       -> DENY contract tampered
+$ icm.sh gate-check --tool publish
+DENY ... 01-publish: checker failed: checks/receipt.sh   # blocked: no receipt
+$ echo ok > $RUN/01-publish/output/receipt.md
+$ icm.sh gate-check --tool publish
+ALLOW (exit 0)                                           # receipt present: allowed
 ```
 
-Every DENY / MISMATCH above is the system working - 8 steps, 8 expectations, all met.
+The DENY is the win - the gate refused the action until its precondition held.
 
 ---
 
 # What's real, what's open
 
-**Real:** gates fire live in Claude Code; tamper-evidence holds; 114 tests, CI on Linux + macOS; offline, bash-only.
+**Real:** gates fire live in Claude Code; tamper-evidence holds; 119 tests, CI on Linux + macOS; offline, bash-only.
 
-**Open:** pi adapter runtime-untested; the real-publish-gate demo needs MCP; beta - a bet, not a product.
+**Open:** pi adapter runtime-untested; a gate firing on a real model tool call mid-workflow (today's is hand-driven) needs MCP; beta - a bet, not a product.
 
 Testers welcome.
 
@@ -182,7 +180,7 @@ A bet: mechanical, tamper-evident checks on agents are worth having. Worth pursu
 git clone github.com/KakkoiDev/icm-runtime && ./installer.sh
 ```
 
-Offline showcase, no model, ~2 seconds:
+Full offline self-test - every mechanism, one command:
 
 ```
 bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour

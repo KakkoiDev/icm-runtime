@@ -123,22 +123,24 @@ So: trust the totals; check `transcript_source` before trusting a per-stage spli
 now-complete transcript and appends `reify` events - it never rewrites the original
 `stage_done`, so an earlier seal stays valid.
 
-## The demo vs a real run
+## Three things people call "the demo"
 
-- **`tools/sandbox-tour`** (the command in the deck) calls `icm.sh gate-check`
-  **directly** - no hook, no model. It builds a throwaway run in a temp dir, shows
-  DENY/ALLOW/seal/tamper, and deletes the temp dir on exit. It proves the
-  *decision logic* is real. It does **not** show enforcement, a model reacting, or
-  a real workflow. Nothing persists. Note the gate it exercises names a
-  **fabricated tool, `demo_publish`, that nothing ever calls** - so in a live run
-  the gate is inert; the tour triggers it by hand with `gate-check --tool
-  demo_publish`. To see a gate fire on a *real* call, look at
-  `kakkoidev/publish-to-notion` (its stage 03 gates `notion-fetch` on a real
-  publish receipt).
+- **`kakkoidev/gate-demo`** - the minimal, talk-sized demo: one stage, one gate.
+  `init`, then `gate-check --tool publish` DENIES (no `receipt.md`); create the
+  file; `gate-check` ALLOWS. Files persist in `.icm/`, so the precondition is
+  visible. This is the clean one to show live.
+- **`kakkoidev/icm-demo`'s `tools/sandbox-tour`** - the comprehensive offline
+  self-test. Calls `icm.sh gate-check` directly (no hook, no model), in a temp dir
+  it deletes on exit, exercising scoping, normalization, seal, and manifest-tamper
+  in one shot. It proves the *decision logic* is real, but is too much for a live
+  demo. The gate it pokes names a **fabricated tool, `demo_publish`, that nothing
+  ever calls** - inert in a live run, triggered by hand in the tour.
 - **A real `/icm-demo` run** persists under `.icm/...`, goes through the hook (if
-  `--hooks` is installed), and a model drives the stages. That is where all four
-  mechanisms play together. Stage 01 runs `tools/run-report`, which prints the
-  actual artifacts so you can point at them.
+  `--hooks` is installed), and a model drives the stages - where all four
+  mechanisms play together.
+
+To see a gate fire on a *real* tool call, look at `kakkoidev/publish-to-notion`
+(its stage 03 gates `notion-fetch` on a real publish receipt).
 
 ## What the demo's three stages do
 
