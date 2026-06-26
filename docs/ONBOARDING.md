@@ -101,6 +101,28 @@ A useful detail: a *genuine* `DENY` fails closed (blocks), but if `icm.sh` itsel
 `.*` matcher cannot trap a whole session. "Checker says no" and "checker is
 broken" are deliberately different outcomes.
 
+### How trustworthy are the token counts?
+
+Two separate questions:
+
+- **The numbers are authoritative.** They are the API's own `usage` fields
+  (`input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`,
+  `output_tokens`), read straight from the session transcript - the same numbers you
+  are billed, never self-reported by the model. Claude Code logs each message several
+  times as it streams, so the runtime dedupes by `message.id` (keep last) or counts
+  would inflate 2-3x.
+- **Per-stage attribution is best-effort, and flagged when uncertain.** A stage's
+  counts are the usage events in its time window. Three things can skew that split,
+  all surfaced: a wrong session (no deterministic transcript -> newest-session guess;
+  the chosen `transcript_source` is recorded and `audit` flags a guess), zero-width
+  windows (two stages closed in the same second -> null counts; close stages in real
+  time), and no transcript (sandbox runs record `counts: estimated`, null fields).
+
+So: trust the totals; check `transcript_source` before trusting a per-stage split.
+`reify-telemetry` is the post-run pass that recomputes each stage's window from the
+now-complete transcript and appends `reify` events - it never rewrites the original
+`stage_done`, so an earlier seal stays valid.
+
 ## The demo vs a real run
 
 - **`tools/sandbox-tour`** (the command in the deck) calls `icm.sh gate-check`
@@ -117,6 +139,33 @@ broken" are deliberately different outcomes.
   `--hooks` is installed), and a model drives the stages. That is where all four
   mechanisms play together. Stage 01 runs `tools/run-report`, which prints the
   actual artifacts so you can point at them.
+
+## What the demo's three stages do
+
+`/icm-demo` is itself an ICM skill with three stages. Each runs one frozen,
+deterministic script (so the evidence is reproducible and eval-checkable) and asks
+the model only for the judgement the script cannot do. That split - script for facts,
+model for explanation - is the whole ICM idea in miniature.
+
+1. **`01-lifecycle`** - "what did `init` just create?" Runs `tools/run-report`, which
+   captures this run's facts: stage order, the next empty stage, the run header
+   (`run.json`), the enforcement posture (`gate-status`), and the five tracking
+   artifacts (`.manifest`, `run.json`, `events.jsonl`, the global `skill-runs.jsonl`,
+   `.icm-seals.log`). The model then explains what each artifact is.
+   Output: `output/lifecycle.md`.
+2. **`02-enforcement`** - "does enforcement actually fire?" Runs `tools/sandbox-tour`,
+   which builds a throwaway copy of the run and exercises the gate + seal directly:
+   stage scoping, gate DENY (precondition unmet), cross-harness normalization, a
+   non-gated ALLOW, gate ALLOW, SEAL OK, SEAL MISMATCH, contract-tampered DENY. This
+   stage carries the inert `demo_publish` gate described above.
+   Output: `output/enforcement.md`.
+3. **`03-telemetry-seal`** - "what did it cost, then lock it." Runs
+   `tools/show-telemetry` to print the four-field per-stage token accounting (real,
+   because stages 01-02 were closed against the live transcript), closes its own
+   stage, then - as a POST-RUN step - runs `tools/close-run` to audit, seal,
+   verify-seal, and index the run. Order matters: a stage cannot seal itself (its own
+   `stage-done` is not recorded until after its work), so sealing happens after the
+   final `stage-done`. Output: `output/telemetry.md` + a line in `.icm-seals.log`.
 
 ## Where to go next
 
