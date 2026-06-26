@@ -1146,6 +1146,27 @@ else
     t_fail "30g seal: tampered caller trips verify-seal" "rc=$vrc out=$vout"
 fi
 
+# ---- case 31: seal covers stage output files (work product is tamper-evident) ----
+WS_SEALOUT="$TMP/skills/testns/seal-out-ws"
+mkdir -p "$WS_SEALOUT/stages"
+printf '# 01-make\nproduce output\n' > "$WS_SEALOUT/stages/01-make.md"
+run_so=$("$ICM" init testns/seal-out-ws 2>/dev/null)
+mkdir -p "$run_so/01-make/output"
+printf 'original output\n' > "$run_so/01-make/output/result.md"
+"$ICM" seal testns/seal-out-ws >/dev/null 2>&1
+so_line=$(grep '"workspace":"testns/seal-out-ws"' .icm-seals.log | tail -1)
+so_ok=$("$ICM" verify-seal testns/seal-out-ws 2>&1); so_rc_ok=$?
+# Tamper ONLY the output file -> verify-seal must trip on that path.
+printf 'TAMPERED\n' >> "$run_so/01-make/output/result.md"
+so_bad=$("$ICM" verify-seal testns/seal-out-ws 2>&1); so_rc_bad=$?
+if printf '%s' "$so_line" | grep -q '01-make/output/result.md' \
+    && [ "$so_rc_ok" -eq 0 ] && printf '%s' "$so_ok" | grep -q "SEAL OK" \
+    && [ "$so_rc_bad" -eq 1 ] && printf '%s' "$so_bad" | grep -q "SEAL MISMATCH.*01-make/output/result.md"; then
+    t_ok "31 seal: stage output files sealed and tamper-evident"
+else
+    t_fail "31 seal: stage output files sealed and tamper-evident" "line=$so_line rc_ok=$so_rc_ok rc_bad=$so_rc_bad ok=$so_ok bad=$so_bad"
+fi
+
 # ---- case 41: gates are scoped to the active stage (deadlock fix) ----
 # A later stage's Write gate must NOT deny Write while an earlier stage is active.
 WS_SCOPE="$TMP/skills/testns/scope-ws"

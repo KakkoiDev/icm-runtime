@@ -1523,6 +1523,15 @@ _seal_files() {
     for sf in .manifest telemetry/run.json telemetry/events.jsonl; do
         [ -f "$1/$sf" ] && echo "$sf"
     done
+    # Stage output artifacts: the work product. Sealing these anchors a graded
+    # or reviewed output to a tamper-evident digest, not just the contract and
+    # telemetry. Sorted per stage so the seal-log line is deterministic.
+    for sd in "$1"/[0-9]*/; do
+        [ -d "$sd"output ] || continue
+        find "$sd"output -type f 2>/dev/null | LC_ALL=C sort | while IFS= read -r of; do
+            printf '%s\n' "${of#"$1"/}"
+        done
+    done
     return 0
 }
 
