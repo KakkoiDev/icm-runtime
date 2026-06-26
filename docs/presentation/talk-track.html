@@ -53,11 +53,12 @@ digest no longer matches.</li>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="5" lang="en-US">
 <h2 id="215-430-live-demo">[2:15-4:30] LIVE DEMO</h2>
 <p>Run it live in a scratch dir - 4 commands, files persist, ~20 seconds:</p>
-<pre is="marp-pre" data-auto-scaling="downscale-only"><code>ICM=~/.agents/skills/icm/runtime/icm.sh
+<pre is="marp-pre" data-auto-scaling="downscale-only"><code>cd &quot;$(mktemp -d)&quot;                  # a fresh, empty dir
+ICM=~/.agents/skills/icm/runtime/icm.sh
 RUN=$(bash $ICM init kakkoidev/gate-demo)
-bash $ICM gate-check --tool publish               # DENY: receipt missing
+bash $ICM gate-check --tool publish &amp;&amp; echo ALLOWED || echo DENIED               # DENY: receipt missing
 echo ok &gt; $RUN/01-publish/output/receipt.md
-bash $ICM gate-check --tool publish               # ALLOW
+bash $ICM gate-check --tool publish &amp;&amp; echo ALLOWED || echo DENIED               # ALLOW
 </code></pre>
 <p>Narrate: &quot;The gate blocks <code>publish</code> until the stage produces <code>receipt.md</code>. First<br />
 call, no receipt - DENY, and it names the failed checker. I create the receipt.<br />

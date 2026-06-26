@@ -28,9 +28,9 @@ The minimal demo - one gate, blocked then allowed, with files you can open:
 ```bash
 ICM=~/.agents/skills/icm/runtime/icm.sh
 RUN=$(bash $ICM init kakkoidev/gate-demo)      # one stage, one gate
-bash $ICM gate-check --tool publish            # DENY: receipt missing
+bash $ICM gate-check --tool publish && echo ALLOWED || echo DENIED            # DENY: receipt missing
 echo ok > "$RUN/01-publish/output/receipt.md"  # produce the precondition
-bash $ICM gate-check --tool publish            # ALLOW
+bash $ICM gate-check --tool publish && echo ALLOWED || echo DENIED            # ALLOW
 ```
 
 The gate refuses the `publish` action until `output/receipt.md` exists - a precondition

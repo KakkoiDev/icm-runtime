@@ -21,9 +21,9 @@ mechanism (scoping, name normalization, seal, manifest tamper) see
 ```
 ICM=~/.agents/skills/icm/runtime/icm.sh
 RUN=$(bash $ICM init kakkoidev/gate-demo)          # prints the run path
-bash $ICM gate-check --tool publish                # DENY: receipt.md missing
+bash $ICM gate-check --tool publish && echo ALLOWED || echo DENIED                # DENY: receipt.md missing
 echo ok > "$RUN/01-publish/output/receipt.md"      # produce the precondition
-bash $ICM gate-check --tool publish                # ALLOW
+bash $ICM gate-check --tool publish && echo ALLOWED || echo DENIED                # ALLOW
 ```
 
 `publish` is a stand-in for whatever real action you gate (deploy, send, publish).

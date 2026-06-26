@@ -130,28 +130,27 @@ Recomputed exactly from the full transcript after the run. The model cannot lie 
 
 ---
 
-# Live demo - a gate, in 4 commands
+# Live demo - a gate
 
 ```
+cd "$(mktemp -d)"                  # a fresh, empty dir
 ICM=~/.agents/skills/icm/runtime/icm.sh
 RUN=$(bash $ICM init kakkoidev/gate-demo)
-bash $ICM gate-check --tool publish               # DENY: receipt missing
+bash $ICM gate-check --tool publish && echo ALLOWED || echo DENIED
 echo ok > $RUN/01-publish/output/receipt.md
-bash $ICM gate-check --tool publish               # ALLOW
+bash $ICM gate-check --tool publish && echo ALLOWED || echo DENIED
 ```
-
-The gate blocks `publish` until `output/receipt.md` exists. Create the file, the call is let through. Files persist - open them. Offline, ~20 seconds.
 
 ---
 
 # Demo output (backup if no terminal)
 
 ```
-$ bash $ICM gate-check --tool publish
+$ bash $ICM gate-check --tool publish && echo ALLOWED || echo DENIED
 DENY ... 01-publish: checker failed: checks/receipt.sh   # blocked: no receipt
 $ echo ok > $RUN/01-publish/output/receipt.md
-$ bash $ICM gate-check --tool publish
-ALLOW (exit 0)                                           # receipt present: allowed
+$ bash $ICM gate-check --tool publish && echo ALLOWED || echo DENIED
+ALLOWED                                           # receipt present: allowed
 ```
 
 The DENY is the win - the gate refused the action until its precondition held.
