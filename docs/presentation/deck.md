@@ -157,11 +157,9 @@ The DENY is the win - the gate refused the action until its precondition held.
 
 ---
 
-# What's real, what's open
+# Where it stands
 
-**Real:** gates fire live in Claude Code; tamper-evidence holds; 119 tests, CI on Linux + macOS; offline, bash-only.
+**Beta, and working.** Gates fire live in Claude Code, tamper-evidence holds, 119 tests on Linux + macOS, offline and bash-only.
 
-**Open:** pi adapter runtime-untested; a gate firing on a real model tool call mid-workflow (today's is hand-driven) needs MCP; beta - a bet, not a product.
-
-Testers welcome.
+Testers welcome - try it, break it, tell me.
 
