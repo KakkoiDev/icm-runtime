@@ -57,18 +57,23 @@ Let me show you all of it. Offline. No network, no credentials, two seconds.
 
 Run: `bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour`
 
-Narrate the eight steps as they print:
+Narrate the eight steps as they print (1-4):
 
 1. **Stage scoping** - stage-02 gate silent while 01 active. ALLOW.
-2. **Gate DENY** - close 01; 02's precondition (`ready.md`) is missing. DENY.
-3. **Normalization** - same call as `mcp__...__demo_publish`. Still DENY (wrapper stripped, matched).
+2. **Gate DENY** - 02 precondition (`ready.md`) missing. DENY.
+3. **Normalization** - `mcp__..__demo_publish`. Still DENY (wrapper stripped).
 4. **Non-gated** - `Read`, not named by the gate. ALLOW.
+
+---
+
+## LIVE DEMO - steps 5-8
+
 5. **Gate ALLOW** - create `ready.md`. Precondition met. ALLOW.
 6. **Seal + verify** - anchor the digests. SEAL OK.
-7. **Seal tamper** - inject a fake event into `events.jsonl`. SEAL MISMATCH, exit 1.
-8. **Manifest tamper** - edit the frozen `CONTEXT.md`. DENY, "contract tampered".
+7. **Seal tamper** - fake event into `events.jsonl`. SEAL MISMATCH, exit 1.
+8. **Manifest tamper** - edit frozen `CONTEXT.md`. DENY, "contract tampered".
 
-That is the whole value proposition in your terminal: deny, allow, cost, tamper.
+The whole value proposition in your terminal: deny, allow, cost, tamper.
 
 ---
 

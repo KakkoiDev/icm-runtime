@@ -55,20 +55,25 @@ digest no longer matches.</li>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="5" lang="en-US">
 <h2 id="215-430-live-demo">[2:15-4:30] LIVE DEMO</h2>
 <p>Run: <code>bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour</code></p>
-<p>Narrate the eight steps as they print:</p>
+<p>Narrate the eight steps as they print (1-4):</p>
 <ol>
 <li><strong>Stage scoping</strong> - stage-02 gate silent while 01 active. ALLOW.</li>
-<li><strong>Gate DENY</strong> - close 01; 02's precondition (<code>ready.md</code>) is missing. DENY.</li>
-<li><strong>Normalization</strong> - same call as <code>mcp__...__demo_publish</code>. Still DENY (wrapper stripped, matched).</li>
+<li><strong>Gate DENY</strong> - 02 precondition (<code>ready.md</code>) missing. DENY.</li>
+<li><strong>Normalization</strong> - <code>mcp__..__demo_publish</code>. Still DENY (wrapper stripped).</li>
 <li><strong>Non-gated</strong> - <code>Read</code>, not named by the gate. ALLOW.</li>
-<li><strong>Gate ALLOW</strong> - create <code>ready.md</code>. Precondition met. ALLOW.</li>
-<li><strong>Seal + verify</strong> - anchor the digests. SEAL OK.</li>
-<li><strong>Seal tamper</strong> - inject a fake event into <code>events.jsonl</code>. SEAL MISMATCH, exit 1.</li>
-<li><strong>Manifest tamper</strong> - edit the frozen <code>CONTEXT.md</code>. DENY, &quot;contract tampered&quot;.</li>
 </ol>
-<p>That is the whole value proposition in your terminal: deny, allow, cost, tamper.</p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="6" lang="en-US">
+<h2 id="live-demo---steps-5-8">LIVE DEMO - steps 5-8</h2>
+<ol start="5">
+<li><strong>Gate ALLOW</strong> - create <code>ready.md</code>. Precondition met. ALLOW.</li>
+<li><strong>Seal + verify</strong> - anchor the digests. SEAL OK.</li>
+<li><strong>Seal tamper</strong> - fake event into <code>events.jsonl</code>. SEAL MISMATCH, exit 1.</li>
+<li><strong>Manifest tamper</strong> - edit frozen <code>CONTEXT.md</code>. DENY, &quot;contract tampered&quot;.</li>
+</ol>
+<p>The whole value proposition in your terminal: deny, allow, cost, tamper.</p>
+</section>
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="7" lang="en-US">
 <h2 id="430-500-close">[4:30-5:00] Close</h2>
 <p>Install once, skills are just markdown plus bash, every run is sealed and<br />
 token-tracked.</p>
@@ -78,12 +83,12 @@ is the pi adapter's runtime, still unverified without a pi environment. Next ste
 is cutting the tagged release.</p>
 <p>That is ICM: the framework is a folder, and the folder proves what it did.</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="7" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="8" lang="en-US">
 <h2 id="backup-if-you-cannot-share-a-terminal">Backup if you cannot share a terminal</h2>
 <p>Fall back to the &quot;demo output&quot; slide in the deck - the same eight steps, pre-run.<br />
 Read the DENY/ALLOW/SEAL/MISMATCH lines off the slide in the same order.</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="8" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="9" lang="en-US">
 <h2 id="pre-flight-do-this-before-walking-in">Pre-flight (do this before walking in)</h2>
 <ul>
 <li><code>bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour</code> once, cold.<br />
