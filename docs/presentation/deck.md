@@ -63,7 +63,7 @@ kakkoidev/icm-demo/
     03-telemetry-seal.md
   checks/*.sh         # gate checkers (frozen, hashed)
   tools/*.sh          # deterministic stage scripts (frozen, hashed)
-  eval/*.test.sh      # unit tests
+  eval/*.test.sh      # unit + structural tests
 ```
 
 Markdown + bash. No framework to learn.
