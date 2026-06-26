@@ -8,3 +8,7 @@ TASK.md
 # Runtime state from test/proof runs in this repo (the runtime's own output).
 .icm/
 .icm-seals.log
+
+# Generated presentation artifacts (source of truth is the .md; GitHub renders mermaid).
+docs/presentation/*.html
+docs/presentation/node_modules/
