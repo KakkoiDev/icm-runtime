@@ -130,21 +130,6 @@ Recomputed exactly from the full transcript after the run. The model cannot lie 
 
 ---
 
-# Cross-harness by normalization
-
-The same gate matches every harness:
-
-```
-Claude Code:  mcp__claude_ai_Notion__notion-fetch
-pi / Codex:   notion-fetch
-```
-
-Runtime strips the `mcp__<server>__` wrapper and folds built-in aliases
-(`WebSearch` -> `web_search`). Write `tools="notion-fetch"` once; it matches
-both. Enforcement adapters: `gate-hook.sh` (Claude Code), `icm-gate.ts` (pi).
-
----
-
 # Live demo - a gate, in 4 commands
 
 ```
@@ -180,20 +165,3 @@ The DENY is the win - the gate refused the action until its precondition held.
 
 Testers welcome.
 
----
-
-# Try it, then tell me
-
-A bet: mechanical, tamper-evident checks on agents are worth having. Worth pursuing?
-
-```
-git clone github.com/KakkoiDev/icm-runtime && ./installer.sh
-```
-
-Full offline self-test - every mechanism, one command:
-
-```
-bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour
-```
-
-ICM method: Van Clief & McDermott, arXiv:2603.16021
