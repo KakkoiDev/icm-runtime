@@ -1,9 +1,8 @@
 <!--
 ICM Runtime - technical deck. Plain markdown; slides split on `---`.
 Diagrams are pre-rendered SVGs in diagrams/ (source: diagrams/*.mmd).
-After editing a .mmd, regenerate with: sh diagrams/render.sh
-Renders in any markdown viewer (GitHub shows the SVGs) and via Marp:
-  marp deck.md -o deck.html      # keep deck.html beside the diagrams/ folder
+Rebuild everything (SVGs + this deck's HTML) in one step:  sh build.sh
+Renders in any markdown viewer too: GitHub shows the committed SVGs inline.
 -->
 
 # ICM Runtime
