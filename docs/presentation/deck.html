@@ -26,12 +26,18 @@
 <p>The orchestration is invisible because it is buried in code.</p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="3" lang="en-US">
+<h1 id="two-things-it-gives-you">Two things it gives you</h1>
+<p><strong>Author</strong> - scaffold a multi-stage agent skill as markdown contracts + small shell scripts (<code>icm.sh new-skill</code>). No orchestration code.</p>
+<p><strong>Enforce</strong> - at runtime the engine freezes those contracts, gates tool calls, meters tokens, and seals the evidence.</p>
+<p>Skill creator + run enforcer.</p>
+</section>
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="4" lang="en-US">
 <h1 id="the-inversion">The inversion</h1>
 <p>Put the orchestration in the <strong>filesystem</strong>, where you can see it.</p>
 <p><img src="diagrams/inversion.svg" alt="Five layers: a skill holds numbered stage contracts; a run holds state; tracking and enforcement wrap it" /></p>
 <p>The runtime owns state. The model is glue between deterministic checkpoints.</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="4" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="5" lang="en-US">
 <h1 id="anatomy-of-a-skill">Anatomy of a skill</h1>
 <pre is="marp-pre" data-auto-scaling="downscale-only"><code>kakkoidev/icm-demo/
   SKILL.md            # metadata + how to drive it
@@ -45,12 +51,12 @@
 </code></pre>
 <p>Markdown + bash. No framework to learn.</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="5" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="6" lang="en-US">
 <h1 id="lifecycle">Lifecycle</h1>
 <p><img src="diagrams/lifecycle.svg" alt="Lifecycle: init, then the stage loop (read contract, do work, stage-done), then audit and seal" /></p>
 <p>The model only lives inside the stage loop. Everything around it is deterministic.</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="6" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="7" lang="en-US">
 <h1 id="gates-mechanical-preconditions">Gates: mechanical preconditions</h1>
 <p>Declared in the stage contract:</p>
 <pre is="marp-pre" data-auto-scaling="downscale-only"><code>&lt;!-- ICM-GATE tools=&quot;demo_publish&quot; run=&quot;checks/ready.sh&quot; --&gt;
@@ -63,7 +69,7 @@ not before, not after. (Fixed a cross-stage deadlock in v0.6.0.)</li>
 </ul>
 <p>Preconditions are enforced, not suggested.</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="7" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="8" lang="en-US">
 <h1 id="tamper-evidence-two-layers">Tamper-evidence: two layers</h1>
 <p><strong>Layer 1 - manifest.</strong> sha256 of every frozen <code>CONTEXT.md</code>, <code>checks/</code>,<br />
 <code>tools/</code>. Edit a contract mid-run -&gt; gate-check DENIES: &quot;contract tampered&quot;.</p>
@@ -72,7 +78,7 @@ to <code>.icm-seals.log</code> (committable, lives at project root).<br />
 Edit a sealed file after the fact -&gt; <code>verify-seal</code> shows MISMATCH.</p>
 <p>You cannot quietly rewrite history of a run.</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="8" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="9" lang="en-US">
 <h1 id="token-telemetry-four-fields">Token telemetry: four fields</h1>
 <p>Per stage, read from the session transcript at <code>stage-done</code>:</p>
 <table>
@@ -104,7 +110,7 @@ Edit a sealed file after the fact -&gt; <code>verify-seal</code> shows MISMATCH.
 <p>Read from the transcript, <strong>never hand-passed by the model</strong>.<br />
 Reified post-run with exact counts. The model cannot lie about cost.</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="9" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="10" lang="en-US">
 <h1 id="cross-harness-by-normalization">Cross-harness by normalization</h1>
 <p>The same gate matches every harness:</p>
 <pre is="marp-pre" data-auto-scaling="downscale-only"><code>Claude Code:  mcp__claude_ai_Notion__notion-fetch
@@ -114,14 +120,14 @@ pi / Codex:   notion-fetch
 (<code>WebSearch</code> -&gt; <code>web_search</code>). Write <code>tools=&quot;notion-fetch&quot;</code> once; it matches<br />
 both. Enforcement adapters: <code>gate-hook.sh</code> (Claude Code), <code>icm-gate.ts</code> (pi).</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="10" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="11" lang="en-US">
 <h1 id="live-demo---the-enforcement-engine">Live demo - the enforcement engine</h1>
 <p><code>bash .../icm-demo/tools/sandbox-tour</code></p>
 <p>Offline. Deterministic. ~2 seconds.</p>
 <p>DENY -&gt; ALLOW -&gt; normalized DENY -&gt; SEAL OK -&gt; SEAL MISMATCH -&gt; contract tampered</p>
 <p><code>demo_publish</code> stands in for a real action (deploy, publish). This is the mechanism firing, not a full workflow.</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="11" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="12" lang="en-US">
 <h1 id="demo-output-backup-if-no-terminal">Demo output (backup if no terminal)</h1>
 <pre is="marp-pre" data-auto-scaling="downscale-only"><code>1 STAGE SCOPING   demo_publish while 01 active -&gt; ALLOW
 2 GATE DENY       02 active, ready.md absent   -&gt; DENY (checks/ready.sh)
@@ -133,13 +139,13 @@ both. Enforcement adapters: <code>gate-hook.sh</code> (Claude Code), <code>icm-g
 8 MANIFEST TAMPER edit frozen CONTEXT.md       -&gt; DENY contract tampered
 </code></pre>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="12" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="13" lang="en-US">
 <h1 id="whats-real-whats-open">What's real, what's open</h1>
 <p><strong>Real:</strong> gates fire live in Claude Code; tamper-evidence holds; 114 tests, CI on Linux + macOS; offline, bash-only.</p>
 <p><strong>Open:</strong> pi adapter runtime-untested; the real-publish-gate demo needs MCP; beta - a bet, not a product.</p>
 <p>Testers welcome.</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="13" lang="en-US">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="14" lang="en-US">
 <h1 id="try-it-then-tell-me">Try it, then tell me</h1>
 <p>A bet: mechanical, tamper-evident checks on agents are worth having. Worth pursuing?</p>
 <pre is="marp-pre" data-auto-scaling="downscale-only"><code>git clone github.com/KakkoiDev/icm-runtime &amp;&amp; ./installer.sh

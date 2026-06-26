@@ -28,6 +28,16 @@ The orchestration is invisible because it is buried in code.
 
 ---
 
+# Two things it gives you
+
+**Author** - scaffold a multi-stage agent skill as markdown contracts + small shell scripts (`icm.sh new-skill`). No orchestration code.
+
+**Enforce** - at runtime the engine freezes those contracts, gates tool calls, meters tokens, and seals the evidence.
+
+Skill creator + run enforcer.
+
+---
+
 # The inversion
 
 Put the orchestration in the **filesystem**, where you can see it.
