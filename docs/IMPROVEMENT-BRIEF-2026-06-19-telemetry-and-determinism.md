@@ -6,7 +6,7 @@
 ## How these observations were produced
 
 A new skill, `publish-to-notion`, was authored and run end to end as a real test:
-- Skill source: `~/Code/icm-runtime/skills/cyril-antoni/publish-to-notion/` (`SKILL.md` + `stages/01-render.md`, `stages/02-publish.md`, `stages/03-verify-share.md`).
+- Skill source: `~/Code/icm-runtime/skills/kakkoidev/publish-to-notion/` (`SKILL.md` + `stages/01-render.md`, `stages/02-publish.md`, `stages/03-verify-share.md`).
 - Test run (ephemeral, may be gone when you read this): `<scratchpad>/.icm/<namespace>/<skill>/<timestamp>/`. It created a real private Notion page and reached `VERIFIED: PASS`.
 - Runtime under test (canonical, editable source): `~/Code/icm-runtime/skills/icm/runtime/icm.sh`, `gate-hook.sh`, `icm-gate.ts`. The installed copies at `~/.agents/skills/icm/runtime/` are symlinks to these. Line numbers below are from this reading and will drift; grep the symbol, do not trust the number.
 
@@ -108,7 +108,7 @@ Concrete first target: pick `publish-to-notion` as the pilot, and make it the pr
 
 Beyond Requests A and B. Tagged by type and grounded in authoring/running `publish-to-notion`. The reliability lens: correctness items (#2, #3) and the fail-open hook discipline matter more than feature count - a tool that reports wrong token attribution or clobbers state under concurrency is not "reliable" no matter how many features it has.
 
-1. [real-friction, small] **Remove per-`SKILL.md` boilerplate (DRY).** The Runtime / Per-Stage Telemetry / Audit / Seal sections are copied near-verbatim across `skills/cyril-antoni/signoff-proposal/SKILL.md` and `skills/cyril-antoni/publish-to-notion/SKILL.md` (this brief's author pasted them). Change the `icm.sh` command surface and every SKILL.md silently goes stale. Direction: the runtime owns those sections (generate them into the skill at build time, or have the skill reference a single shared include) so a SKILL.md carries only skill-specific content. Needs a mechanism decision: template-at-scaffold vs runtime-injected - Claude Code loads a static SKILL.md, so injection must happen when the skill is written, not at trigger time.
+1. [real-friction, small] **Remove per-`SKILL.md` boilerplate (DRY).** The Runtime / Per-Stage Telemetry / Audit / Seal sections are copied near-verbatim across `skills/kakkoidev/signoff-proposal/SKILL.md` and `skills/kakkoidev/publish-to-notion/SKILL.md` (this brief's author pasted them). Change the `icm.sh` command surface and every SKILL.md silently goes stale. Direction: the runtime owns those sections (generate them into the skill at build time, or have the skill reference a single shared include) so a SKILL.md carries only skill-specific content. Needs a mechanism decision: template-at-scaffold vs runtime-injected - Claude Code loads a static SKILL.md, so injection must happen when the skill is written, not at trigger time.
 
 2. [real-friction, small, reliability] **Drop the `--tokens-in/--tokens-out <approx>` ask; auto-detect `--model`.** Stage "After Output" blocks tell the model to pass approximate token counts to `stage-done`. Models cannot reliably self-estimate token usage, and `cmd_reify_telemetry` (icm.sh ~774) recomputes the real counts from the transcript. So the ask is busywork that yields garbage until reify. The model name (`--model`) is likewise hand-passed and a wrong value poisons cost. Direction: contracts call `stage-done --stage X` only; the runtime/hook fills model + tokens from the transcript. Removes a whole class of human/model error.
 
@@ -131,7 +131,7 @@ Sequencing: #1 and #2 are tiny, do them now. #3 is a contained bugfix. #6 lands 
 - macOS ships `bash 3.2`. The runtime already ate one production outage from a `case` inside `$( )` that bash 3.2 mis-parses (see `RUNTIME-IMPROVEMENTS-2026-06-15.md`). Test under `/bin/bash`, not just a modern bash.
 - `gate-hook.sh` runs on EVERY tool call (matcher `.*`). It must stay fast outside `.icm` projects and FAIL OPEN on a broken checker, never fail closed and brick the session. Do not move logic into the hot path.
 - Tamper-evidence must survive: `.manifest` (sha of frozen contracts), `.icm-seals.log`. Any telemetry refactor must keep what `cmd_seal` (icm.sh ~1129) digests coherent.
-- Do not break existing skills: `cyril-antoni/signoff-proposal`, `jake-van-clief/ai-folder-research`. They read the current telemetry shape; migrate or shim.
+- Do not break existing skills: `kakkoidev/signoff-proposal`, `jake-van-clief/ai-folder-research`. They read the current telemetry shape; migrate or shim.
 - Closing stages in real time matters: batching `stage-done` yields zero-width windows and null per-stage counts (documented in skill conventions). Keep that property.
 
 ## Open questions for the implementer

@@ -4,7 +4,7 @@
 
 The ICM runtime's gated / spec'd / audited chain was, until this run, verified only against
 synthetic fixtures in `tests/gate.test.sh`. This report documents a single real run: the
-`cyril-antoni/publish-to-notion` skill executed end to end inside a live Claude Code session with
+`kakkoidev/publish-to-notion` skill executed end to end inside a live Claude Code session with
 the gate-hook **auto-firing on real harness tool calls**, creating a real Notion page, and
 `icm.sh audit` / `verify-seal` confirming the result.
 
@@ -17,12 +17,12 @@ surfaced one real defect (fixed) and one design blind spot (open).
 Environment: Claude Code (`claude-opus-4-8`), macOS `/bin/bash` 3.2, the icm gate-hook registered
 in `~/.claude/settings.json` with matcher `.*` pointing at
 `~/.agents/skills/icm/runtime/gate-hook.sh` (a directory symlink to this repo, so it runs current
-code). `~/.agents/skills/cyril-antoni/publish-to-notion` likewise symlinked to the repo.
+code). `~/.agents/skills/kakkoidev/publish-to-notion` likewise symlinked to the repo.
 
 Method: the run lived in the session's own project cwd so the PreToolUse hook (which receives the
 session cwd) would fire on the agent's real tool calls. Steps:
 
-1. **Auto-fire probe.** `icm.sh init cyril-antoni/publish-to-notion` created `.icm/...`, then a
+1. **Auto-fire probe.** `icm.sh init kakkoidev/publish-to-notion` created `.icm/...`, then a
    benign Bash call was checked: `tool-calls.jsonl` gained a `gate-check --tool Bash` record and
    `tool-args.jsonl` captured the Bash input. Conclusion: the hook auto-fires this session (no
    restart needed on this Claude Code build).
@@ -107,7 +107,7 @@ expectation (`render` is covered by `eval/render.test.sh` and the `page.md` outp
 ## Reproduce
 
 With the gate-hook installed (`./installer.sh && ./installer.sh --hooks`) and the Notion connector
-available, from a scratch project: `icm.sh init cyril-antoni/publish-to-notion`, run the three stages
+available, from a scratch project: `icm.sh init kakkoidev/publish-to-notion`, run the three stages
 (render -> create-pages -> fetch) calling `stage-done` after each, then `icm.sh audit --strict` and
 `icm.sh verify-seal`. The hook captures tool args to `.icm/telemetry/tool-args.jsonl`; audit reads
 them for the `ICM-CALL` check. Delete the created Notion page manually afterward.

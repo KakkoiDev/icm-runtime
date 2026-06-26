@@ -37,7 +37,7 @@ Net: a gate is live from the instant `init` freezes its `CONTEXT.md`, for the WH
 
 ## The deadlock (concrete trace)
 
-Pure-authoring pipeline where every stage writes its output with `Write` (e.g. `cyril-antoni/draft-report`: `01-frame`, `02-draft`, `03-tighten`). Suppose, intending a pre-condition, `02-draft` declared:
+Pure-authoring pipeline where every stage writes its output with `Write` (e.g. `kakkoidev/draft-report`: `01-frame`, `02-draft`, `03-tighten`). Suppose, intending a pre-condition, `02-draft` declared:
 
 ```
 <!-- ICM-GATE tools="Write" run="test -s ../01-frame/output/frame.md" -->
@@ -53,12 +53,12 @@ With `--hooks` installed:
 6. `check_run` prints `DENY ... 02-draft: checker failed` -> the `Write` is blocked.
 7. `frame.md` can never be created: the gate that requires it denies the only `Write` that would create it. Hard deadlock, and while the run is open EVERY `Write` in the project is denied.
 
-This is why `cyril-antoni/draft-report` ships with NO gates: any `Write`-matched gate bricks it.
+This is why `kakkoidev/draft-report` ships with NO gates: any `Write`-matched gate bricks it.
 
 ## When it bites, when it does not
 
 - Only with `--hooks` registered. Without the hook, `gate-check` is never called, gates are inert (no enforcement AND no deadlock). So enabling enforcement - required for the whole "reliable/auditable" story - is exactly what triggers the deadlock for these skills.
-- `cyril-antoni/publish-to-notion` dodges it BY ACCIDENT: its gates name MCP-specific tools (`notion-create-pages`, `notion-fetch`) that are only ever called inside their own stage. No earlier stage calls those tools, so the global scope never fires. The safety is incidental (rare tool), not designed.
+- `kakkoidev/publish-to-notion` dodges it BY ACCIDENT: its gates name MCP-specific tools (`notion-create-pages`, `notion-fetch`) that are only ever called inside their own stage. No earlier stage calls those tools, so the global scope never fires. The safety is incidental (rare tool), not designed.
 - Bites any skill whose gate references a tool an earlier stage also uses: `Write`, `Read`, `Edit`, `Bash`, `WebFetch`, etc. That is most non-MCP skills.
 
 ## Blast radius (two amplifiers)
@@ -96,8 +96,8 @@ The deadlock is a CLEAN checker failure (`test` exits 1) = a genuine `DENY` = fa
 
 ## Repro
 
-1. `cd` into a scratch dir (not a real project - a stuck `Write` gate can trap the session). `icm.sh init cyril-antoni/draft-report`.
-2. Add to `skills/cyril-antoni/draft-report/stages/02-draft.md`: `<!-- ICM-GATE tools="Write" run="test -s ../01-frame/output/frame.md" -->`. Re-`init` (gates freeze at init).
+1. `cd` into a scratch dir (not a real project - a stuck `Write` gate can trap the session). `icm.sh init kakkoidev/draft-report`.
+2. Add to `skills/kakkoidev/draft-report/stages/02-draft.md`: `<!-- ICM-GATE tools="Write" run="test -s ../01-frame/output/frame.md" -->`. Re-`init` (gates freeze at init).
 3. `installer.sh --hooks`.
 4. In a Claude Code session in that dir, run the skill. Stage 01's `Write` of `frame.md` is denied: `DENY ... 02-draft: checker failed: test -s ../01-frame/output/frame.md`.
 5. Recover: `Bash rm -rf` the stuck run dir, remove the gate from the source, `installer.sh --remove` if needed.

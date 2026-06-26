@@ -18,7 +18,7 @@ contracts. A single agent reads the right file at the right moment.
 
 ## [0:30-1:30] The model
 
-Four nouns. A **skill** is a workflow, namespaced like `cyril-antoni/icm-demo`.
+Four nouns. A **skill** is a workflow, namespaced like `kakkoidev/icm-demo`.
 Inside it, **stages** are numbered markdown files - `01-`, `02-`, `03-`. When a
 run starts, each stage file is frozen into the run as its `CONTEXT.md`: a
 contract the agent cannot silently rewrite. A **run** is a timestamped
@@ -51,7 +51,7 @@ Let me show you all of it. Offline. No network, no credentials, two seconds.
 
 ## [2:15-4:30] LIVE DEMO
 
-Run: `bash ~/.agents/skills/cyril-antoni/icm-demo/tools/sandbox-tour`
+Run: `bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour`
 
 Narrate as the eight steps print:
 
@@ -99,6 +99,6 @@ same order.
 
 ## Pre-flight (do this before walking in)
 
-- `bash ~/.agents/skills/cyril-antoni/icm-demo/tools/sandbox-tour` once, cold.
+- `bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour` once, cold.
   Confirms it prints all 8 steps and self-cleans. Took ~2.1s last run.
 - Terminal font large enough to read from the back row.

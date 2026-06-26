@@ -49,7 +49,7 @@ The runtime owns state. The model is glue between deterministic checkpoints.
 # Anatomy of a skill
 
 ```
-cyril-antoni/icm-demo/
+kakkoidev/icm-demo/
   SKILL.md            # metadata + how to drive it
   stages/
     01-lifecycle.md   # frozen into the run as CONTEXT.md
@@ -208,5 +208,5 @@ git clone ... && ./installer.sh
 
 Run the showcase, no model:
 ```
-bash ~/.agents/skills/cyril-antoni/icm-demo/tools/sandbox-tour
+bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour
 ```

@@ -52,11 +52,11 @@ Uninstall: `./installer.sh --remove`
 | Skill | What it does |
 |-------|-------------|
 | `icm` | The runtime itself (init, stages, gate-check, stage-done, reify, audit, seal). Used by every workspace skill; not invoked directly. |
-| `cyril-antoni/icm-demo` | Runnable, offline, self-teaching showcase of the runtime AND the canonical authoring template. Run it to watch gates, telemetry, and seals work. Start here. |
+| `kakkoidev/icm-demo` | Runnable, offline, self-teaching showcase of the runtime AND the canonical authoring template. Run it to watch gates, telemetry, and seals work. Start here. |
 | `jake-van-clief/ai-folder-research` | 3-stage pipeline: research a topic, draft analysis, polish into final output. |
-| `cyril-antoni/draft-report` | 3-stage: frame, draft, tighten a stakeholder report in a fixed house style. |
-| `cyril-antoni/publish-to-notion` | 3-stage: render to Notion-flavored markdown, publish via MCP, fetch back and verify. |
-| `cyril-antoni/signoff-proposal` | 3-stage: gather evidence, compose a sign-off proposal, publish and verify in Notion. |
+| `kakkoidev/draft-report` | 3-stage: frame, draft, tighten a stakeholder report in a fixed house style. |
+| `kakkoidev/publish-to-notion` | 3-stage: render to Notion-flavored markdown, publish via MCP, fetch back and verify. |
+| `kakkoidev/signoff-proposal` | 3-stage: gather evidence, compose a sign-off proposal, publish and verify in Notion. |
 
 ## Commands
 
