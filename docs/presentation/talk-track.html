@@ -53,7 +53,7 @@ digest no longer matches.</li>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="5" lang="en-US">
 <h2 id="215-430-live-demo">[2:15-4:30] LIVE DEMO</h2>
 <p>Run: <code>bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour</code></p>
-<p>Enforcement engine, offline. demo_publish stands in for a real action. Steps 1-4:</p>
+<p>DENY/MISMATCH lines are the wins - each step prints its expectation, and all 8 match. Steps 1-4:</p>
 <ol>
 <li><strong>Stage scoping</strong> - stage-02 gate silent while 01 active. ALLOW.</li>
 <li><strong>Gate DENY</strong> - 02 precondition (<code>ready.md</code>) missing. DENY.</li>
@@ -69,7 +69,7 @@ digest no longer matches.</li>
 <li><strong>Seal tamper</strong> - fake event into <code>events.jsonl</code>. SEAL MISMATCH, exit 1.</li>
 <li><strong>Manifest tamper</strong> - edit frozen <code>CONTEXT.md</code>. DENY, &quot;contract tampered&quot;.</li>
 </ol>
-<p>The whole value proposition in your terminal: deny, allow, cost, tamper.</p>
+<p>The whole value proposition in your terminal: deny, allow, cost, tamper. (demo_publish is a stand-in - the mechanism, not a full workflow.)</p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="7" lang="en-US">
 <h2 id="430-500-close">[4:30-5:00] Close</h2>

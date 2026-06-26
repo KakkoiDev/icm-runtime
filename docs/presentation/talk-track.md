@@ -55,7 +55,7 @@ Let me show you all of it. Offline. No network, no credentials, two seconds.
 
 Run: `bash ~/.agents/skills/kakkoidev/icm-demo/tools/sandbox-tour`
 
-Enforcement engine, offline. demo_publish stands in for a real action. Steps 1-4:
+DENY/MISMATCH lines are the wins - each step prints its expectation, and all 8 match. Steps 1-4:
 
 1. **Stage scoping** - stage-02 gate silent while 01 active. ALLOW.
 2. **Gate DENY** - 02 precondition (`ready.md`) missing. DENY.
@@ -71,7 +71,7 @@ Enforcement engine, offline. demo_publish stands in for a real action. Steps 1-4
 7. **Seal tamper** - fake event into `events.jsonl`. SEAL MISMATCH, exit 1.
 8. **Manifest tamper** - edit frozen `CONTEXT.md`. DENY, "contract tampered".
 
-The whole value proposition in your terminal: deny, allow, cost, tamper.
+The whole value proposition in your terminal: deny, allow, cost, tamper. (demo_publish is a stand-in - the mechanism, not a full workflow.)
 
 ---
 

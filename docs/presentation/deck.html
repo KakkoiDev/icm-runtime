@@ -124,8 +124,8 @@ both. Enforcement adapters: <code>gate-hook.sh</code> (Claude Code), <code>icm-g
 <h1 id="live-demo---the-enforcement-engine">Live demo - the enforcement engine</h1>
 <p><code>bash .../icm-demo/tools/sandbox-tour</code></p>
 <p>Offline. Deterministic. ~2 seconds.</p>
-<p>DENY -&gt; ALLOW -&gt; normalized DENY -&gt; SEAL OK -&gt; SEAL MISMATCH -&gt; contract tampered</p>
-<p><code>demo_publish</code> stands in for a real action (deploy, publish). This is the mechanism firing, not a full workflow.</p>
+<p>The DENY / MISMATCH lines are the wins - each step states its <code>(expect ...)</code>, and all 8 match.</p>
+<p><code>demo_publish</code> stands in for a real action (deploy, publish). The mechanism firing, not a full workflow.</p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="12" lang="en-US">
 <h1 id="demo-output-backup-if-no-terminal">Demo output (backup if no terminal)</h1>
@@ -138,6 +138,7 @@ both. Enforcement adapters: <code>gate-hook.sh</code> (Claude Code), <code>icm-g
 7 SEAL TAMPER     fake event in events.jsonl   -&gt; SEAL MISMATCH (exit 1)
 8 MANIFEST TAMPER edit frozen CONTEXT.md       -&gt; DENY contract tampered
 </code></pre>
+<p>Every DENY / MISMATCH above is the system working - 8 steps, 8 expectations, all met.</p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="13" lang="en-US">
 <h1 id="whats-real-whats-open">What's real, what's open</h1>

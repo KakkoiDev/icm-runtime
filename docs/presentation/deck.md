@@ -141,9 +141,9 @@ both. Enforcement adapters: `gate-hook.sh` (Claude Code), `icm-gate.ts` (pi).
 
 Offline. Deterministic. ~2 seconds.
 
-DENY -> ALLOW -> normalized DENY -> SEAL OK -> SEAL MISMATCH -> contract tampered
+The DENY / MISMATCH lines are the wins - each step states its `(expect ...)`, and all 8 match.
 
-`demo_publish` stands in for a real action (deploy, publish). This is the mechanism firing, not a full workflow.
+`demo_publish` stands in for a real action (deploy, publish). The mechanism firing, not a full workflow.
 
 ---
 
@@ -159,6 +159,8 @@ DENY -> ALLOW -> normalized DENY -> SEAL OK -> SEAL MISMATCH -> contract tampere
 7 SEAL TAMPER     fake event in events.jsonl   -> SEAL MISMATCH (exit 1)
 8 MANIFEST TAMPER edit frozen CONTEXT.md       -> DENY contract tampered
 ```
+
+Every DENY / MISMATCH above is the system working - 8 steps, 8 expectations, all met.
 
 ---
 
