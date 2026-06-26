@@ -1,10 +1,9 @@
 <!--
-ICM Runtime - technical deck. Plain markdown; slides separated by `---`.
-Mermaid diagrams render in: GitHub preview, HackMD, reveal-md, and VS Code
-(with the "Markdown Preview Mermaid Support" extension). Core Marp does NOT
-render mermaid.
-To present as slides: `npx reveal-md deck.md` (renders mermaid), or paste
-into HackMD / a mermaid-aware slide tool.
+ICM Runtime - technical deck. Plain markdown; slides split on `---`.
+Diagrams are pre-rendered SVGs in diagrams/ (source: diagrams/*.mmd).
+After editing a .mmd, regenerate with: sh diagrams/render.sh
+Renders in any markdown viewer (GitHub shows the SVGs) and via Marp:
+  marp deck.md -o deck.html      # keep deck.html beside the diagrams/ folder
 -->
 
 # ICM Runtime
@@ -34,13 +33,7 @@ The orchestration is invisible because it is buried in code.
 
 Put the orchestration in the **filesystem**, where you can see it.
 
-```mermaid
-flowchart TD
-  S["Skill (namespace/name)"] --> ST["Stages: numbered .md, frozen contracts"]
-  ST --> R["Run: timestamped state dir"]
-  R --> T["Tracking: events, manifest, seals, telemetry"]
-  R --> E["Enforcement: harness hook on every tool call"]
-```
+![Five layers: a skill holds numbered stage contracts; a run holds state; tracking and enforcement wrap it](diagrams/inversion.svg)
 
 The runtime owns state. The model is glue between deterministic checkpoints.
 
@@ -66,21 +59,7 @@ Markdown + bash. No framework to learn.
 
 # Lifecycle
 
-```mermaid
-flowchart TD
-  I["icm.sh init<br/>creates .icm/ns/skill/timestamp/"]
-  C["read CONTEXT.md (frozen)"]
-  W["do work into stage/output/"]
-  D["icm.sh stage-done<br/>snapshots tokens"]
-  A["icm.sh audit<br/>events match expected tools?"]
-  SE["icm.sh seal<br/>sha256 digest into .icm-seals.log"]
-  I --> C
-  C --> W
-  W --> D
-  D -->|"more stages"| C
-  D -->|"last stage"| A
-  A --> SE
-```
+![Lifecycle: init, then the stage loop (read contract, do work, stage-done), then audit and seal](diagrams/lifecycle.svg)
 
 The model only lives inside the stage loop. Everything around it is deterministic.
 

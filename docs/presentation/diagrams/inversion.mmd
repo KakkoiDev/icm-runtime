@@ -1,0 +1,5 @@
+flowchart TD
+  S["Skill (namespace/name)"] --> ST["Stages: numbered .md, frozen contracts"]
+  ST --> R["Run: timestamped state dir"]
+  R --> T["Tracking: events, manifest, seals, telemetry"]
+  R --> E["Enforcement: harness hook on every tool call"]
