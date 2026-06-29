@@ -498,22 +498,23 @@ cmd_init() {
     if [ -d "$ws_dir/tools" ]; then
         cp -R "$ws_dir/tools" "$run_dir/tools"
     fi
+    # Freeze static reference assets (e.g. a frozen spec/lens the stages read), so
+    # they are tamper-evident like checks/ and tools/. Read-only inputs to a run.
+    if [ -d "$ws_dir/references" ]; then
+        cp -R "$ws_dir/references" "$run_dir/references"
+    fi
     (
         cd "$run_dir"
         for ctx in [0-9]*/CONTEXT.md; do
             [ -f "$ctx" ] || continue
             sha_file "$ctx"
         done
-        if [ -d checks ]; then
-            find checks -type f | sort | while IFS= read -r cf; do
-                sha_file "$cf"
+        for frozen_dir in checks tools references; do
+            [ -d "$frozen_dir" ] || continue
+            find "$frozen_dir" -type f | sort | while IFS= read -r ff; do
+                sha_file "$ff"
             done
-        fi
-        if [ -d tools ]; then
-            find tools -type f | sort | while IFS= read -r tf; do
-                sha_file "$tf"
-            done
-        fi
+        done
     ) > "$run_dir/.manifest"
 
     # Write run metadata with stage list

@@ -1494,6 +1494,28 @@ else
     t_fail "50c collision guard: suffixed run discoverable" "rc=$rc out=$out ts2=$co_ts2"
 fi
 
+# ---- case 51: init freezes references/ into the run and the manifest ----
+# Static reference assets (a frozen spec/lens a stage reads) must be copied into
+# the run and hashed into .manifest, so they are tamper-evident like checks/tools.
+mkdir -p "$TMP/skills/testns/ref-ws/stages" "$TMP/skills/testns/ref-ws/references"
+printf '# 01-x\nwork\n' > "$TMP/skills/testns/ref-ws/stages/01-x.md"
+printf 'frozen spec content\n' > "$TMP/skills/testns/ref-ws/references/spec.md"
+ref_run=$("$ICM" init testns/ref-ws 2>/dev/null)
+if [ -f "$ref_run/references/spec.md" ] && grep -q 'references/spec.md' "$ref_run/.manifest"; then
+    t_ok "51 init: references/ frozen into run + added to manifest"
+else
+    t_fail "51 init: references/ frozen + manifested" "run=$ref_run"
+fi
+# Tamper-evidence: editing the frozen reference trips the manifest check, so the
+# next gate-check denies (the tamper check runs for every latest run, tool-agnostic).
+printf 'TAMPER\n' >> "$ref_run/references/spec.md"
+ref_g=$("$ICM" gate-check --tool zzfetch 2>&1); ref_rc=$?
+if [ "$ref_rc" -eq 1 ] && printf '%s' "$ref_g" | grep -q "DENY testns/ref-ws.*tampered"; then
+    t_ok "51b manifest: tampered frozen reference is caught (contract tampered)"
+else
+    t_fail "51b manifest: tampered reference caught" "rc=$ref_rc out=$ref_g"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
