@@ -1,0 +1,87 @@
+#!/bin/sh
+# gather-pr: deterministically gather a PR's summary, action feed, and link set.
+#
+# Usage: gather-pr <owner/repo> <pr-number> <out-dir>
+# Writes:
+#   <out-dir>/pr-context.md  - summary header, file buckets, chronological action feed
+#   <out-dir>/links.tsv      - every URL found in PR free text, with source attribution
+#
+# Pure and read-only (gh + jq). No model judgment: same PR state -> same output.
+# Parses under bash 3.2 / POSIX sh.
+set -eu
+
+OR=${1:-}; PR=${2:-}; OUT=${3:-}
+[ -n "$OR" ] && [ -n "$PR" ] && [ -n "$OUT" ] || { echo "usage: gather-pr <owner/repo> <pr#> <out-dir>" >&2; exit 2; }
+command -v gh >/dev/null 2>&1 || { echo "gather-pr: gh not found" >&2; exit 3; }
+command -v jq >/dev/null 2>&1 || { echo "gather-pr: jq not found" >&2; exit 3; }
+mkdir -p "$OUT"
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+TAB=$(printf '\t')
+
+gh pr view "$PR" --repo "$OR" --json \
+  number,title,state,isDraft,author,createdAt,updatedAt,body,labels,files,additions,deletions,commits,reviews,comments,closingIssuesReferences \
+  > "$TMP/pr.json" 2>"$TMP/err" || { echo "gather-pr: gh pr view failed:" >&2; cat "$TMP/err" >&2; exit 4; }
+
+gh api --paginate "repos/$OR/issues/$PR/timeline" > "$TMP/timeline.json" 2>/dev/null || echo '[]' > "$TMP/timeline.json"
+
+# ---- pr-context.md ----
+{
+  jq -r '
+    "# PR Context: \(.title)", "",
+    "- Repo: '"$OR"'  PR: #\(.number)  State: \(.state)\(if .isDraft then " (draft)" else "" end)",
+    "- Author: \(.author.login // "?")  Created: \(.createdAt)  Updated: \(.updatedAt)",
+    "- Size: \(.files | length) files, +\(.additions // 0) / -\(.deletions // 0)",
+    "- Labels: \((.labels // []) | map(.name) | join(", ") // "none")",
+    "- Linked issues: \((.closingIssuesReferences // []) | map("#\(.number) \(.title)") | join("; ") | if . == "" then "none" else . end)",
+    ""' "$TMP/pr.json"
+
+  echo "## File buckets"
+  jq -r '.files[].path' "$TMP/pr.json" | while IFS= read -r f; do
+      case "$f" in
+        */__tests__/*|*.test.*|*.spec.*|test/*|tests/*|*/test/*|*/tests/*) b=test ;;
+        *package-lock.json|*yarn.lock|*pnpm-lock.yaml|*Cargo.lock|*go.sum|*composer.lock|*Gemfile.lock) b=lockfile ;;
+        */dist/*|*/build/*|*/generated/*|*.pb.go|*_pb2.py|*.gen.*|*.min.js) b=generated ;;
+        *.md|docs/*|*/docs/*) b=docs ;;
+        *.yml|*.yaml|*.json|*Dockerfile*|docker-compose*|*.env*|*.toml|*.ini|*.config.*) b=config ;;
+        *) b=prod ;;
+      esac
+      printf '%s\t%s\n' "$b" "$f"
+  done | sort | awk -F'\t' '
+      { c[$1]++; files[$1]=files[$1] "  - " $2 "\n" }
+      END {
+        n=split("prod test config generated lockfile docs",o," ")
+        printf "Buckets:"
+        for(i=1;i<=n;i++) if(c[o[i]]>0) printf " %s=%d", o[i], c[o[i]]
+        printf "\n\n"
+        for(i=1;i<=n;i++) if(c[o[i]]>0) printf "### %s (%d)\n%s\n", o[i], c[o[i]], files[o[i]]
+      }'
+
+  echo "## Action feed (chronological)"
+  jq -r '
+    [ .[] | {
+        ts: (.created_at // .submitted_at // .committer.date // ""),
+        who: (.actor.login // .user.login // .author.login // .committer.name // "?"),
+        ev: (.event // "comment"),
+        note: ((.body // .message // "") | gsub("[\r\n]+";" ") | .[0:160])
+      } ]
+    | sort_by(.ts) | .[]
+    | "- [\(.ts)] \(.who) \(.ev)\(if .note != "" then ": " + .note else "" end)"
+  ' "$TMP/timeline.json" 2>/dev/null || echo "(timeline unavailable)"
+} > "$OUT/pr-context.md"
+
+# ---- links.tsv: every URL in free text, with source. Newlines collapsed so each
+# source maps to one line before extraction. Columns: url <TAB> source ----
+{
+  jq -r '(.body // "") | gsub("[\r\n]+";" ") | "PR-body\t" + .' "$TMP/pr.json"
+  jq -r '.comments[]? | "comment:\(.author.login // "?")\t" + ((.body // "") | gsub("[\r\n]+";" "))' "$TMP/pr.json"
+  jq -r '.reviews[]?  | "review:\(.author.login // "?")\t" + ((.body // "") | gsub("[\r\n]+";" "))' "$TMP/pr.json"
+  jq -r '.commits[]?  | "commit\t" + ((.messageBody // "") | gsub("[\r\n]+";" "))' "$TMP/pr.json"
+} | while IFS="$TAB" read -r src text; do
+    printf '%s\n' "$text" | grep -oE 'https?://[A-Za-z0-9._~:/?#@!$&'"'"'()*+,;=%-]+' 2>/dev/null \
+      | sed 's/[).,]*$//' | while IFS= read -r u; do
+          [ -n "$u" ] && printf '%s\t%s\n' "$u" "$src"
+      done
+done | sort -u > "$OUT/links.tsv"
+
+echo "gather-pr: $OUT/pr-context.md ($(wc -l < "$OUT/pr-context.md" | tr -d ' ') lines), $OUT/links.tsv ($(wc -l < "$OUT/links.tsv" | tr -d ' ') links)"

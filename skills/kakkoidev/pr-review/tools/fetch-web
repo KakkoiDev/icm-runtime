@@ -1,0 +1,32 @@
+#!/bin/sh
+# fetch-web: fetch a public URL deterministically and flag auth-walled pages.
+#
+# Usage: fetch-web <url>
+# Prints a crude text rendering of the page to stdout, OR a single line
+# "WALLED-OFF <reason>" when the page needs auth / is unreachable. Never errors
+# out on a wall - the caller (stage 02) records the WALLED-OFF disposition.
+# Read-only (GET). Parses under bash 3.2 / POSIX sh.
+set -eu
+
+URL=${1:-}
+[ -n "$URL" ] || { echo "usage: fetch-web <url>" >&2; exit 2; }
+command -v curl >/dev/null 2>&1 || { echo "WALLED-OFF no-curl"; exit 0; }
+
+body=$(mktemp); trap 'rm -f "$body"' EXIT
+code=$(curl -sSL -A "icm-pr-review/1.0 (+read-only)" -m 20 -o "$body" -w '%{http_code}' "$URL" 2>/dev/null || echo 000)
+
+case "$code" in
+  401|403)        echo "WALLED-OFF http-$code"; exit 0 ;;
+  000)            echo "WALLED-OFF unreachable"; exit 0 ;;
+esac
+
+# A login page often returns 200 but is really a wall. Heuristic: a password
+# field or an explicit auth prompt in the body.
+if grep -qiE 'type="password"|please (log|sign) ?-? ?in|authentication required|sign in to continue' "$body" 2>/dev/null; then
+  echo "WALLED-OFF login-required (http-$code)"; exit 0
+fi
+
+# Emit a crude text rendering: strip tags, collapse whitespace, cap size. The
+# model summarizes; we only need readable content, not fidelity.
+sed -e 's/<script[^>]*>.*<\/script>//gI' -e 's/<style[^>]*>.*<\/style>//gI' -e 's/<[^>]*>/ /g' "$body" \
+  | tr -s ' \t' ' ' | sed '/^[[:space:]]*$/d' | head -c 200000
