@@ -1677,6 +1677,19 @@ ICM_VS_EOF
 }
 
 # ---- gate-check ----
+# Print the set of run ids ("<ws>/<run_id>") whose gates are SUSPENDED because an
+# open run names them as its --caller parent: the child run is doing the work, so
+# the parent's still-open gates must not deny the child's tool calls. Shared by
+# gate-check (enforcement) and gate-status (diagnostic) so the two agree.
+_suspended_runs() {
+    latest_runs | while IFS= read -r sr_r; do
+        [ -n "$(_active_stage "$sr_r")" ] || continue
+        sr_c=$(_caller_of "$sr_r")
+        [ -n "$sr_c" ] || continue
+        printf '%s\n' "${sr_c%/*}"
+    done | sort -u
+}
+
 cmd_gate_check() {
     gc_tool=""
     while [ $# -gt 0 ]; do
@@ -1692,17 +1705,10 @@ cmd_gate_check() {
     fi
     [ -d .icm ] || exit 0
 
-    # Caller-scoping for nested runs: when a parent run invokes a child run, the
-    # child does the work while the parent waits, so the parent's still-open gate
-    # must NOT deny the child's tool calls. Suspend gate evaluation for any open
-    # run that an open run names as its caller (a parent with an open child). The
-    # tamper check still runs for every latest run; only gate evaluation is scoped.
-    gc_suspended=$(latest_runs | while IFS= read -r gc_r; do
-        [ -n "$(_active_stage "$gc_r")" ] || continue
-        gc_c=$(_caller_of "$gc_r")
-        [ -n "$gc_c" ] || continue
-        printf '%s\n' "${gc_c%/*}"
-    done | sort -u)
+    # Caller-scoping for nested runs: a parent run that invoked an open child has
+    # its gates suspended (the child does the work). The tamper check still runs
+    # for every latest run; only gate evaluation is scoped. See _suspended_runs.
+    gc_suspended=$(_suspended_runs)
 
     gc_out=$(latest_runs | while IFS= read -r gc_run; do
         if [ -n "$gc_suspended" ] && printf '%s\n' "$gc_suspended" | grep -Fxq "${gc_run#.icm/}"; then
@@ -1754,8 +1760,15 @@ cmd_gate_status() {
     done)
     if [ -n "$gs_gates" ]; then
         printf '%s\n' "$gs_gates"
+        # Same caller-scoping as enforcement: a parent suspended by an open child
+        # is not reported as blocking, so STATE matches what gate-check would do.
+        gs_suspended=$(_suspended_runs)
         gs_denies=$(latest_runs | while IFS= read -r gs_run; do
-            check_run "$gs_run" ""
+            if [ -n "$gs_suspended" ] && printf '%s\n' "$gs_suspended" | grep -Fxq "${gs_run#.icm/}"; then
+                check_run "$gs_run" "" suspend
+            else
+                check_run "$gs_run" ""
+            fi
         done)
         if [ -n "$gs_denies" ]; then
             echo "STATE: BLOCKING"

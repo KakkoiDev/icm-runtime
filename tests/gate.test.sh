@@ -1423,6 +1423,16 @@ else
     t_fail "49 caller-scope: parent gate should be suspended while child open" "rc=$rc out=$out"
 fi
 
+# gate-status (diagnostic) must agree with enforcement: a suspended parent must
+# not appear in the denies. Checks the parent specifically, so unrelated blocking
+# runs elsewhere in the shared suite do not affect this assertion.
+st=$("$ICM" gate-status 2>&1) || true
+if printf '%s' "$st" | grep -q "DENY testns/xt-parent"; then
+    t_fail "49d gate-status: suspended parent must not appear in denies" "$st"
+else
+    t_ok "49d gate-status: agrees with enforcement (suspended parent absent from denies)"
+fi
+
 # Safety: a suspended parent is still tamper-checked. Corrupt a manifested file
 # (a real sha256 mismatch), assert DENY, then restore so 49c is clean.
 cp "$xt_p/02-pub/CONTEXT.md" "$TMP/xt_ctx_bak"
