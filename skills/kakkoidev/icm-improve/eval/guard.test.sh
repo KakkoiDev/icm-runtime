@@ -26,6 +26,8 @@ MD
     printf '#!/bin/sh\ntest -s output/result.md\n' > "$1/checks/ready.sh"
     printf '#!/bin/sh\necho work\n' > "$1/tools/run.sh"
     printf -- '---\nname: t\ndescription: t\n---\n' > "$1/SKILL.md"
+    mkdir -p "$1/eval-heldout"
+    printf '#!/bin/sh\ntest -s "$ICM_RUN_DIR"/01-make/output/result.md\n' > "$1/eval-heldout/contract.test.sh"
 }
 
 guard() { sh "$SCRIPT" guard "$1" "$2" >/dev/null 2>&1; }
@@ -61,5 +63,11 @@ if guard "$A" "$B"; then echo "FAIL 5: stage add allowed"; exit 1; else echo "ok
 B="$TMP/b6"; cp -R "$A" "$B"
 printf -- '---\nname: t\ndescription: CHANGED\n---\n' > "$B/SKILL.md"
 if guard "$A" "$B"; then echo "FAIL 6: SKILL.md edit allowed"; exit 1; else echo "ok 6 SKILL.md edit forbidden"; fi
+
+# 7: editing an eval-heldout/ contract test -> FORBIDDEN (outside stages/; the
+# held-out check must not be weakenable by a prose-only improver edit)
+B="$TMP/b7"; cp -R "$A" "$B"
+printf '#!/bin/sh\nexit 0\n' > "$B/eval-heldout/contract.test.sh"
+if guard "$A" "$B"; then echo "FAIL 7: eval-heldout edit allowed"; exit 1; else echo "ok 7 eval-heldout edit forbidden"; fi
 
 echo "guard.test.sh: all assertions passed"

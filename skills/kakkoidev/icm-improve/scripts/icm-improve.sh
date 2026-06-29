@@ -18,7 +18,7 @@ die() { echo "icm-improve: $*" >&2; exit 1; }
 
 # Copy the parts of a skill a candidate needs. Only what exists is copied.
 cp_skill() {
-    for item in SKILL.md stages checks tools eval references; do
+    for item in SKILL.md stages checks tools eval eval-heldout references; do
         [ -e "$1/$item" ] && cp -R "$1/$item" "$2/"
     done
     return 0
@@ -100,16 +100,24 @@ $g_out"
     echo "GUARD OK: only stage prose changed; rubric, gates, checks, tools intact"
 }
 
-# ---- held-out: run the candidate's eval/*.test.sh (the canary the improver never sees) ----
-# $1 = candidate dir, $2 = phase dir to write heldout.txt into.
+# ---- held-out: run output-contract checks against the run's PRODUCED output ----
+# An independent deterministic floor, held out from the LLM grader (NOT hidden
+# from the improver). Each test reads the produced artifacts via $ICM_RUN_DIR,
+# so a prose edit that breaks an output contract the grader does not check shows
+# up as a held-out failure. It catches contract REGRESSIONS, not quality-gaming
+# (a deterministic check cannot measure quality).
+# $1 = produced run dir (.icm/<ns>/<ws>/<run_id>), $2 = phase dir to write
+# heldout.txt into, $3 = dir of *.test.sh to run.
 cmd_heldout() {
-    [ $# -ge 2 ] || die "held-out requires <candidate-dir> <phase-dir>"
-    ho_cand=$1; ho_out=$2
+    [ $# -ge 3 ] || die "held-out requires <run-dir> <phase-dir> <tests-dir>"
+    ho_run=$1; ho_out=$2; ho_tests=$3
+    [ -d "$ho_run" ] || die "no run dir: $ho_run"
+    ho_run_abs=$(cd "$ho_run" && pwd -P)
     ho_pass=0; ho_fail=0
-    if [ -d "$ho_cand/eval" ]; then
-        for ho_t in "$ho_cand"/eval/*.test.sh; do
+    if [ -d "$ho_tests" ]; then
+        for ho_t in "$ho_tests"/*.test.sh; do
             [ -f "$ho_t" ] || continue
-            if (cd "$ho_cand" && sh "$ho_t") >/dev/null 2>&1; then
+            if ICM_RUN_DIR="$ho_run_abs" sh "$ho_t" >/dev/null 2>&1; then
                 ho_pass=$((ho_pass + 1))
             else
                 ho_fail=$((ho_fail + 1))
@@ -152,10 +160,12 @@ cmd_results() {
             echo "| $r_name | $r_ho | $r_pr |"
         done
         echo
-        echo "## Reward-hacking check"
+        echo "## Output-contract regression check"
         echo
-        echo "If grading pass_rate rises while held-out passed-count falls, the improver"
-        echo "gamed the rubric. Promote a candidate ONLY when both move together."
+        echo "Held-out tests assert deterministic invariants on each phase's PRODUCED"
+        echo "output, independent of the LLM grader. A drop in the held-out passed-count"
+        echo "means a prose edit broke an output contract the grader does not score -"
+        echo "do NOT promote that candidate, regardless of its grading pass_rate."
         echo
         echo "## Candidate prose diffs"
         r_prev=""
@@ -217,7 +227,7 @@ icm-improve <command> [args]   (deterministic plumbing; agents are driven by SKI
   guard <prev-candidate-dir> <new-candidate-dir>   invariant 1: only stage prose may change
   install-candidate <candidate-dir> <scratch-ws>   stage candidate as a scratch skill (__improve)
   uninstall-candidate <scratch-ws>                 remove a scratch skill (__improve only)
-  held-out <candidate-dir> <phase-dir>             run the candidate's eval/*.test.sh canary
+  held-out <run-dir> <phase-dir> <tests-dir>       run output-contract checks against the produced run output
   results <session-dir>                            roll up trajectory + diffs to results.md
 EOF
     exit 1

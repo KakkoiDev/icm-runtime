@@ -7,8 +7,9 @@ description: >
   promote. A separate layer on top of an unmodified icm.sh: every phase's
   candidate, run, grading, and held-out result lands on disk under
   .icm-improve/ so the whole loop is auditable. The improver can never touch
-  gates, ICM-TOOLS, the rubric, or checks; a held-out eval the improver never
-  sees is the reward-hacking canary; promotion to canonical source is always
+  gates, ICM-TOOLS, the rubric, or checks; a deterministic held-out check runs
+  against each phase's produced output, independent of the LLM grader, to catch
+  output-contract regressions; promotion to canonical source is always
   human-gated. Reuses skill-creator's grader for the LLM judging. Use to make
   an ICM skill produce better output without weakening its contract. Triggers:
   "improve this skill", "icm-improve", "self-improve <skill>", "tighten a
@@ -28,7 +29,8 @@ invoked when you deliberately want to improve a skill's output.
    gates, writes telemetry and seals. The loop reads its artifacts.
 2. **The improver edits stage Process/instruction prose ONLY.** It must never
    change a stage's `## Outputs` section (the rubric), any `ICM-GATE` /
-   `ICM-TOOLS` / `ICM-CALL` line, `checks/`, `tools/`, `SKILL.md`, or `eval/`.
+   `ICM-TOOLS` / `ICM-CALL` line, `checks/`, `tools/`, `SKILL.md`, `eval/`, or
+   `eval-heldout/`.
    This is enforced by `icm-improve.sh guard`, which MUST pass before a candidate
    advances. If guard fails, the edit is rejected - redo it within bounds.
 3. **Promotion to canonical source is human-gated.** The loop produces candidate
@@ -52,10 +54,10 @@ flowchart TD
     S(["improve ns/skill --phases N"]) --> ST["start: seed phase-1 candidate from source"]
     ST --> U["USAGE: install candidate as scratch skill,<br>run it via icm.sh -> real audited run"]
     U --> G["GRADING: skill-creator grader scores output/*.md<br>vs each stage's frozen ## Outputs -> grading.json"]
-    G --> H["HELD-OUT: run candidate eval/*.test.sh<br>(improver never sees it) -> heldout.txt"]
+    G --> H["HELD-OUT: deterministic checks on the PRODUCED output<br>(independent of the grader) -> heldout.txt"]
     H --> I["IMPROVEMENT: improver edits stage prose only<br>-> next candidate; guard MUST pass"]
     I -->|"phase < N"| U
-    I -->|"phase == N"| R["results: trajectory + diffs + canary"]
+    I -->|"phase == N"| R["results: trajectory + diffs + regression check"]
     R --> P["human promotes a candidate (or none)"]
 ```
 
@@ -75,9 +77,14 @@ Per phase `i`:
    that stage's frozen `## Outputs` (from the run's `<stage>/CONTEXT.md`);
    `outputs_dir` = the run's `<stage>/output/`. Write the merged
    `grading.json` (with `summary.pass_rate`) to `phase-i/grading.json`.
-3. **Held-out.** `icm-improve.sh held-out <session>/phase-i/candidate phase-i`
-   runs the candidate's `eval/*.test.sh` - the deterministic canary the grader
-   and improver never see.
+3. **Held-out.** `icm-improve.sh held-out <run-dir> <session>/phase-i <session>/phase-i/candidate/eval-heldout`
+   runs the candidate's `eval-heldout/*.test.sh` against the PRODUCED run output.
+   `<run-dir>` is `.icm/<ns>/<skill>__improve/<run id recorded in phase-i/run>`;
+   each test reaches the produced artifacts via `$ICM_RUN_DIR`. These are
+   deterministic invariants held out from the LLM grader - not hidden from the
+   improver, but checking output contracts the grader does not score. They catch
+   contract REGRESSIONS, not quality-gaming (a deterministic check cannot measure
+   quality, and the improver can read the produced output).
 4. **Improvement.** `icm-improve.sh next-phase <session> i` clones the candidate
    to `phase-(i+1)/candidate`. Spawn an improver subagent given
    `phase-i/grading.json` (failed expectations + evidence) and the candidate's
@@ -93,8 +100,12 @@ Stop after N phases, or early when `pass_rate` plateaus or the held-out count dr
 `icm-improve.sh results <session>` writes `results.md`: per-phase `pass_rate`,
 held-out status, and the prose diff between consecutive candidates.
 
-**Reward-hacking check:** if `pass_rate` rises while the held-out passed-count
-falls, the improver gamed the rubric. Promote only when both move together.
+**Output-contract regression check:** the held-out passed-count is a deterministic
+floor independent of the LLM grader. If it falls, a prose edit broke an output
+contract the grader does not score - do not promote that candidate whatever its
+`pass_rate`. This catches contract regressions; it does NOT detect quality-gaming
+of the rubric. A deterministic check cannot measure quality, and the improver can
+read the produced output, so this is not a hidden anti-gaming oracle.
 
 Promotion is manual and outside this loop: a human copies the chosen
 `phase-k/candidate/stages/` over the canonical `stages/`, reviews the diff, and
@@ -106,10 +117,10 @@ commits. The loop never writes canonical source.
 .icm-improve/<ns>/<skill>/<session>/
   phases                       # target phase count
   phase-1/
-    candidate/{stages,checks,tools,SKILL.md,eval}   # phase-1 = copy of source
+    candidate/{stages,checks,tools,SKILL.md,eval,eval-heldout}  # phase-1 = copy of source
     run                        # icm run id this phase produced
     grading.json               # grader output (summary.pass_rate, per-expectation)
-    heldout.txt                # candidate eval/*.test.sh result
+    heldout.txt                # eval-heldout/*.test.sh result vs the produced output
   phase-2/ ...                 # candidate = improver's edit of phase-1
   results.md
 ```
@@ -123,8 +134,11 @@ commits. The loop never writes canonical source.
 - **Only as good as `## Outputs`:** vague declared outputs produce vague grading
   and aimless edits. A skill with thin or empty `## Outputs` will not improve
   meaningfully - fix the rubric (by hand, outside this loop) first.
-- **Held-out strength depends on the skill's `eval/`:** the canary only catches
-  regressions its assertions cover. A skill with weak eval tests has a weak canary.
+- **Held-out strength depends on the skill's `eval-heldout/`:** it only catches
+  regressions its assertions cover, and only deterministic ones - it cannot judge
+  quality or detect rubric-gaming. A skill with no `eval-heldout/` tests has no
+  output-contract floor. Author hard invariants (e.g. an exact required output
+  line), not soft properties that flap under LLM non-determinism.
 
 ## Reference
 
@@ -132,8 +146,13 @@ commits. The loop never writes canonical source.
   guard, install/uninstall-candidate, held-out, results). Env overrides:
   `ICM_SH`, `ICM_SKILLS_DIR`, `ICM_IMPROVE_ROOT`.
 - `eval/guard.test.sh` - proves the prose-only guard (rule 2) rejects rubric/
-  gate/checks/stage-set edits and allows prose-only edits.
+  gate/checks/eval-heldout/stage-set edits and allows prose-only edits.
 - `eval/smoke.test.sh` - proves session setup and candidate staging.
+- `eval/heldout-sensitivity.test.sh` - proves the held-out check reads the
+  produced run output via `$ICM_RUN_DIR` (regression test for the inert-canary
+  bug; fails on pre-fix code that ignored the run output).
+- A target skill opts in by shipping `eval-heldout/*.test.sh` that assert on the
+  produced output via `$ICM_RUN_DIR`. Pilot: `signoff-proposal/eval-heldout/`.
 
 This skill is an orchestrator, not a staged ICM workspace, so it has no
 `stages/` and `icm.sh eval` does not apply to it. Run its tests directly:
