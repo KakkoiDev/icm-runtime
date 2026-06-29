@@ -1454,6 +1454,46 @@ else
     t_fail "49c caller-scope: parent gate resumes after child closes" "rc=$rc out=$out"
 fi
 
+# ---- case 50: same-second init collision guard ----
+# Two runs of one workspace created in the same second (a parent invoking a child,
+# or rapid re-init) must get distinct dirs; the second is suffixed, and the
+# suffixed run is still the latest that latest_runs / gate-check see.
+mkdir -p "$TMP/skills/testns/collide-ws/stages"
+printf '# 01-x\n<!-- ICM-GATE tools="zonk" run="false" -->\n' > "$TMP/skills/testns/collide-ws/stages/01-x.md"
+# Pin the run-id `date` to a fixed second so the collision is deterministic (not
+# dependent on whether two real inits straddle a second boundary). The ISO
+# timestamp (created/events) still delegates to the real date.
+mkdir -p "$TMP/fakebin"
+cat > "$TMP/fakebin/date" <<'FAKEDATE'
+#!/bin/sh
+case "$*" in
+  *%Y-%m-%d_%H-%M-%S*) echo "2099-01-01_00-00-00" ;;
+  *) exec /bin/date "$@" ;;
+esac
+FAKEDATE
+chmod +x "$TMP/fakebin/date"
+co_r1=$(PATH="$TMP/fakebin:$PATH" "$ICM" init testns/collide-ws 2>/dev/null)
+co_r2=$(PATH="$TMP/fakebin:$PATH" "$ICM" init testns/collide-ws 2>/dev/null)
+if [ "$co_r1" != "$co_r2" ] && [ -d "$co_r1" ] && [ -d "$co_r2" ]; then
+    t_ok "50 collision guard: same-second inits get distinct run dirs"
+else
+    t_fail "50 collision guard: same-second inits distinct dirs" "r1=$co_r1 r2=$co_r2"
+fi
+# The second run carries the numeric suffix (proves the guard fired, not a tick).
+case "$(basename "$co_r2")" in
+    *.[0-9]*) t_ok "50b collision guard: second run is suffixed (.<n>)" ;;
+    *)        t_fail "50b collision guard: second run suffixed" "r2=$co_r2" ;;
+esac
+# latest_runs tolerates the suffix: gate-check sees the suffixed (latest) run, and
+# its failing gate denies, naming the suffixed run id.
+co_ts2=$(basename "$co_r2")
+out=$("$ICM" gate-check --tool zonk 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "DENY testns/collide-ws $co_ts2"; then
+    t_ok "50c collision guard: suffixed run discoverable by latest_runs/gate-check"
+else
+    t_fail "50c collision guard: suffixed run discoverable" "rc=$rc out=$out ts2=$co_ts2"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

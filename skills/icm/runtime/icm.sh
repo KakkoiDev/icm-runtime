@@ -287,11 +287,13 @@ _normalize_tool() {
 
 # Print the latest run dir per workspace under ./.icm. Handles both layouts
 # (.icm/<ws>/<ts> and namespaced .icm/<ns>/<ws>/<ts>) by matching the timestamp
-# format cmd_init writes, then keeping the lexically newest child per parent.
+# format cmd_init writes, then keeping the lexically newest child per parent. The
+# trailing '*' also matches a collision-suffixed id (<ts>.2) from a same-second
+# init; the suffix sorts after the bare timestamp, so "newest" stays correct.
 latest_runs() {
     [ -d .icm ] || return 0
     find .icm -mindepth 2 -maxdepth 3 -type d \
-        -name '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' \
+        -name '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_[0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' \
         2>/dev/null | sort | {
         lr_prev_parent=""
         lr_prev=""
@@ -459,7 +461,19 @@ cmd_init() {
     stages_dir="$ws_dir/stages"
 
     ts=$(date -u +%Y-%m-%d_%H-%M-%S)
+    # Same-second collision guard: two runs created in the same second (e.g. a
+    # parent skill invoking a child via --caller) would otherwise share a run dir.
+    # date is only 1s-resolution here (no portable sub-second: %N is GNU-only,
+    # bash 3.2 has no $EPOCHREALTIME), so bump a numeric suffix until the dir is
+    # free. The suffix sorts after the bare timestamp, so chronological ordering
+    # holds, and latest_runs' glob tolerates it.
     run_dir=".icm/$ws/$ts"
+    if [ -e "$run_dir" ]; then
+        _ic_n=2
+        while [ -e ".icm/$ws/$ts.$_ic_n" ]; do _ic_n=$((_ic_n + 1)); done
+        ts="$ts.$_ic_n"
+        run_dir=".icm/$ws/$ts"
+    fi
 
     mkdir -p "$run_dir"
 
