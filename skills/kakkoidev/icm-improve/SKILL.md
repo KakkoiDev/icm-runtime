@@ -45,7 +45,8 @@ improve <ns>/<skill> [--phases N]    # default N = 3
 Driver script (deterministic plumbing; never calls a model):
 `~/.agents/skills/kakkoidev/icm-improve/scripts/icm-improve.sh`
 Runtime engine: `~/.agents/skills/icm/runtime/icm.sh`
-Grader (reused as-is): `skill-creator/agents/grader.md`.
+Grader (vendored ICM skill): `kakkoidev/grade-output` - run via `icm.sh`, so the
+grading step is telemetried and its verdict sealed. No external plugin dependency.
 
 ## The loop
 
@@ -53,7 +54,7 @@ Grader (reused as-is): `skill-creator/agents/grader.md`.
 flowchart TD
     S(["improve ns/skill --phases N"]) --> ST["start: seed phase-1 candidate from source"]
     ST --> U["USAGE: install candidate as scratch skill,<br>run it via icm.sh -> real audited run"]
-    U --> G["GRADING: skill-creator grader scores output/*.md<br>vs each stage's frozen ## Outputs -> grading.json"]
+    U --> G["GRADING: grade-output skill (sealed run) scores output/*.md<br>vs each stage's frozen ## Outputs -> grading.json"]
     G --> H["HELD-OUT: deterministic checks on the PRODUCED output<br>(independent of the grader) -> heldout.txt"]
     H --> I["IMPROVEMENT: improver edits stage prose only<br>-> next candidate; guard MUST pass"]
     I -->|"phase < N"| U
@@ -73,10 +74,20 @@ Per phase `i`:
    (the seal now covers `output/*`, anchoring exactly what gets graded). Record
    the produced run id into `phase-i/run`. Then
    `icm-improve.sh uninstall-candidate <ns>/<skill>__improve`.
-2. **Grading.** Spawn the skill-creator grader. For each stage: expectations =
-   that stage's frozen `## Outputs` (from the run's `<stage>/CONTEXT.md`);
-   `outputs_dir` = the run's `<stage>/output/`. Write the merged
-   `grading.json` (with `summary.pass_rate`) to `phase-i/grading.json`.
+2. **Grading.** Run the vendored grader as its own audited, sealed ICM run:
+   ```
+   icm.sh init kakkoidev/grade-output --caller <ns>/<skill>__improve/<phase-i run id>/<graded stage>
+   ```
+   Spawn the grader subagent to execute `01-grade` against the phase-i run:
+   expectations = each graded stage's frozen `## Outputs` (from the run's
+   `<stage>/CONTEXT.md`); outputs = the run's `<stage>/output/`. It writes the
+   verdict (with `summary.pass_rate`) to the grade run's
+   `01-grade/output/grading.json`. Then `icm.sh stage-done kakkoidev/grade-output
+   --stage 01-grade` and `icm.sh seal kakkoidev/grade-output` - the verdict is now
+   telemetried and tamper-evident, and `icm.sh children` links it to the graded
+   run. Copy that `grading.json` to `phase-i/grading.json` for the results
+   roll-up. The grading run is sequential (the phase-i run already completed), so
+   its tool calls are not denied by any other open run's gate.
 3. **Held-out.** `icm-improve.sh held-out <run-dir> <session>/phase-i <session>/phase-i/candidate/eval-heldout`
    runs the candidate's `eval-heldout/*.test.sh` against the PRODUCED run output.
    `<run-dir>` is `.icm/<ns>/<skill>__improve/<run id recorded in phase-i/run>`;
