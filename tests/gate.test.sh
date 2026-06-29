@@ -1393,6 +1393,57 @@ else
     t_fail "47b eval: all pass -> exit 0" "rc=$ev_rc out=$ev_out"
 fi
 
+# ---- case 49: caller-scoping - a parent's open gate does not deny a child's tool ----
+# A parent run that invokes a child run waits while the child works; the parent's
+# still-open gate must not deny the child's legitimate tool call. Gate evaluation
+# is suspended for a parent with an open child; tamper checks are not.
+mkdir -p "$TMP/skills/testns/xt-parent/stages" "$TMP/skills/testns/xt-child/stages"
+printf '# 01-work\nwork\n' > "$TMP/skills/testns/xt-parent/stages/01-work.md"
+printf '# 02-pub\n<!-- ICM-GATE tools="mcp__x__publish" run="test -f output/evidence.md" -->\n' > "$TMP/skills/testns/xt-parent/stages/02-pub.md"
+printf '# 01-pub\n<!-- ICM-GATE tools="mcp__x__publish" run="true" -->\n' > "$TMP/skills/testns/xt-child/stages/01-pub.md"
+sleep 1
+xt_p=$("$ICM" init testns/xt-parent 2>/dev/null); xt_pts=$(basename "$xt_p")
+"$ICM" stage-done testns/xt-parent --stage 01-work >/dev/null 2>&1  # parent active on 02-pub; gate fails (no evidence)
+
+# Baseline: with no child open, the parent's active gate denies the publish tool.
+out=$("$ICM" gate-check --tool mcp__x__publish 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "DENY testns/xt-parent"; then
+    t_ok "49-pre parent's active gate denies publish (no child yet)"
+else
+    t_fail "49-pre parent's active gate denies publish" "rc=$rc out=$out"
+fi
+
+# Child invoked by the parent (open; its own gate passes). The parent's gate is
+# now suspended, so the child's publish call is allowed. FAILS on pre-fix code.
+xt_c=$("$ICM" init testns/xt-child --caller "testns/xt-parent/$xt_pts/02-pub" 2>/dev/null)
+out=$("$ICM" gate-check --tool mcp__x__publish 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+    t_ok "49 caller-scope: parent gate suspended while child open; child's publish allowed"
+else
+    t_fail "49 caller-scope: parent gate should be suspended while child open" "rc=$rc out=$out"
+fi
+
+# Safety: a suspended parent is still tamper-checked. Corrupt a manifested file
+# (a real sha256 mismatch), assert DENY, then restore so 49c is clean.
+cp "$xt_p/02-pub/CONTEXT.md" "$TMP/xt_ctx_bak"
+printf 'tamper\n' >> "$xt_p/02-pub/CONTEXT.md"
+out=$("$ICM" gate-check --tool mcp__x__publish 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "DENY testns/xt-parent.*tampered"; then
+    t_ok "49b caller-scope: suspended parent is still tamper-checked (fail-closed)"
+else
+    t_fail "49b caller-scope: suspended parent still tamper-checked" "rc=$rc out=$out"
+fi
+cp "$TMP/xt_ctx_bak" "$xt_p/02-pub/CONTEXT.md"
+
+# Resume: once the child run closes, the parent's gate enforces again.
+"$ICM" stage-done testns/xt-child --stage 01-pub >/dev/null 2>&1
+out=$("$ICM" gate-check --tool mcp__x__publish 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "DENY testns/xt-parent"; then
+    t_ok "49c caller-scope: parent gate resumes once the child run closes"
+else
+    t_fail "49c caller-scope: parent gate resumes after child closes" "rc=$rc out=$out"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -352,6 +352,16 @@ _active_stage() {
     return 0
 }
 
+# Print the caller link ("<ws>/<run_id>/<stage>") recorded in run $1's run.json,
+# or nothing for a standalone run. Used to scope gate evaluation across nested
+# runs: a parent that invoked an open child suspends its own gates while the
+# child runs (see cmd_gate_check).
+_caller_of() {
+    co_json="$1/telemetry/run.json"
+    [ -f "$co_json" ] || return 0
+    sed -n 's/.*"caller"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$co_json" | head -1
+}
+
 # Evaluate one run's frozen gates. $1=run dir, $2=tool name ("" = evaluate every
 # gate regardless of its tools regex, used by gate-status). Prints DENY lines on
 # stdout (first line is the headline); silent when nothing matches or all pass.
@@ -361,6 +371,7 @@ _active_stage() {
 check_run() {
     cr_run=$1
     cr_tool=$2
+    cr_suspend=${3:-}
     cr_ws=${cr_run%/*}
     cr_ws=${cr_ws#.icm/}
     cr_ts=${cr_run##*/}
@@ -371,6 +382,11 @@ check_run() {
             return 0
         fi
     fi
+
+    # Caller-scoping: this run's gates are suspended because an open child run it
+    # invoked is doing the work. The tamper check above still ran (fail-closed),
+    # but evaluate no gates - the parent is not the one making this tool call.
+    [ "$cr_suspend" = "suspend" ] && return 0
 
     # Scope gates to the active stage: a gate fires only while its owning stage is
     # the run's active (entered-but-not-closed) stage. A later stage's gate cannot
@@ -1676,8 +1692,24 @@ cmd_gate_check() {
     fi
     [ -d .icm ] || exit 0
 
+    # Caller-scoping for nested runs: when a parent run invokes a child run, the
+    # child does the work while the parent waits, so the parent's still-open gate
+    # must NOT deny the child's tool calls. Suspend gate evaluation for any open
+    # run that an open run names as its caller (a parent with an open child). The
+    # tamper check still runs for every latest run; only gate evaluation is scoped.
+    gc_suspended=$(latest_runs | while IFS= read -r gc_r; do
+        [ -n "$(_active_stage "$gc_r")" ] || continue
+        gc_c=$(_caller_of "$gc_r")
+        [ -n "$gc_c" ] || continue
+        printf '%s\n' "${gc_c%/*}"
+    done | sort -u)
+
     gc_out=$(latest_runs | while IFS= read -r gc_run; do
-        check_run "$gc_run" "$gc_tool"
+        if [ -n "$gc_suspended" ] && printf '%s\n' "$gc_suspended" | grep -Fxq "${gc_run#.icm/}"; then
+            check_run "$gc_run" "$gc_tool" suspend
+        else
+            check_run "$gc_run" "$gc_tool"
+        fi
     done)
     if [ -n "$gc_out" ]; then
         printf '%s\n' "$gc_out"

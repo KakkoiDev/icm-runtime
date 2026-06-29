@@ -48,12 +48,13 @@ Then spawn the grader to execute stage `01-grade` against the run being graded
 
 ## Composition note
 
-When a parent (e.g. icm-improve) invokes this, the graded run has already
-completed before grading starts - the two runs do not overlap. ICM gates are
-project-global across *open* runs (a parent's active-stage gate is evaluated
-against every tool call while it is open), so sequential invocation is what keeps
-a grading tool call from being denied by an unrelated open gate. Do not grade
-from inside a parent stage that still has a blocking gate active.
+This skill grades a run that has already completed, so the graded run has no
+active stage and its gates are dormant during grading. More generally, the
+runtime is caller-scoped: when a parent run invokes a child via `--caller`, the
+parent's gates are suspended while the child run is open (the child is doing the
+work) and resume when the child closes - so a parent's blocking gate will not
+deny a child's legitimate tool call. Tamper-evidence still applies to the
+suspended parent.
 
 ## Reference
 
