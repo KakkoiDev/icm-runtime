@@ -36,11 +36,12 @@ gathering that was optional and silent, and links that were never followed.
 
 | Stage | Does | Output |
 |-------|------|--------|
-| 01-context | `gh` PR summary + action feed + extract every link (deterministic) | `pr-context.md`, `links.tsv` |
+| 01-context | `gh` PR summary + action feed + extract every link + seal the diff (deterministic) | `pr-context.md`, `links.tsv`, `pr.diff` |
 | 02-links | follow each link depth-2 (Notion/Slack/web), flag walled-off | `link-graph.md` |
-| 03-review | ported review dimensions + 7-point + scars check | `findings.md` |
-| 04-verify | suite run + mutation-in-worktree + read-only MCP checks | `verification.md` |
-| 05-report | assemble + seal the report | `REVIEW-<PR#>.md`, `report-receipt.md` |
+| 03-runtime-evidence | how the mechanism executes: run history + a real actor/event instance + secret stores (deterministic) + per-AC execution-chain trace | `runtime-evidence.md`, `ac-execution-trace.md` |
+| 04-review | ported review dimensions + 7-point + scars check, findings tagged CONFIRMED/PLAUSIBLE/REFUTED | `findings.md` |
+| 05-verify | suite + mutation-in-worktree + read-only MCP + mandatory adversarial per-finding verify (no-oracle PRs backed by runtime-evidence, never "static only") | `verification.md` |
+| 06-report | assemble + seal the report | `REVIEW-<PR#>.md`, `report-receipt.md` |
 
 ## Invocation
 

@@ -34,4 +34,4 @@ bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/pr-review --stage 
 |----------|----------|--------|
 | PR context | output/pr-context.md | Summary (title, repo, #, state, author, dates, size, labels, linked issues); file buckets (prod/test/config/generated/lockfile/docs with paths); chronological action feed (ts, who, event, note) |
 | Link set | output/links.tsv | One row per discovered URL: `<url>\t<source>` (PR-body, comment:<author>, review:<author>, commit). Deterministic and complete - every link in the PR's free text. |
-| Diff | output/pr.diff | `gh pr diff` output - the exact change under review, sealed with the context so stage 03 reviews a reproducible artifact, not an ad-hoc re-fetch. |
+| Diff | output/pr.diff | `gh pr diff` output - the exact change under review, sealed with the context so the review stage reads a reproducible artifact, not an ad-hoc re-fetch. |
