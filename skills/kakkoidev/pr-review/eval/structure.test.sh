@@ -24,7 +24,7 @@ grep -q 'ICM-GATE .*run="test -s ../03-review/output/findings.md"' stages/04-ver
 grep -q 'ICM-GATE .*run="test -s ../04-verify/output/verification.md"' stages/05-report.md || { echo "FAIL: 05 gate must require 04 verification.md"; exit 1; }
 
 # Deterministic tools present and executable.
-for t in tools/gather-pr tools/fetch-web; do
+for t in tools/gather-pr tools/fetch-web tools/gather-runtime-evidence; do
     test -x "$t" || { echo "FAIL: $t missing or not executable"; exit 1; }
 done
 

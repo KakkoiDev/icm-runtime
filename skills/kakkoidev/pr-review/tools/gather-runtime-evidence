@@ -1,0 +1,115 @@
+#!/bin/sh
+# gather-runtime-evidence: deterministically gather how a PR's changed mechanisms
+# actually execute - workflow run history, a real instance of every actor/event the
+# diff is conditional on, and the secret stores a referenced secret resolves in.
+#
+# Usage: gather-runtime-evidence <owner/repo> <pr-number> <out-dir>
+# Writes:
+#   <out-dir>/runtime-evidence.md  - deterministic runtime facts, NO judgment
+#
+# Read-only (gh + jq). Emits secret NAMES only (the API never exposes values).
+#
+# Determinism caveat: unlike gather-pr (a merged PR's state is frozen), this queries
+# LIVE repo state - workflow runs, current secret stores, recent bot PRs - which drift
+# over time. The METHOD is deterministic; the snapshot is as-of-now. Absence is a
+# recorded fact ("no run history"), never a silent skip - so the stage gate can enforce
+# "you looked" without wedging on repos that legitimately have no evidence yet.
+# Parses under bash 3.2 / POSIX sh.
+set -eu
+
+OR=${1:-}; PR=${2:-}; OUT=${3:-}
+[ -n "$OR" ] && [ -n "$PR" ] && [ -n "$OUT" ] || { echo "usage: gather-runtime-evidence <owner/repo> <pr#> <out-dir>" >&2; exit 2; }
+command -v gh >/dev/null 2>&1 || { echo "gather-runtime-evidence: gh not found" >&2; exit 3; }
+command -v jq >/dev/null 2>&1 || { echo "gather-runtime-evidence: jq not found" >&2; exit 3; }
+mkdir -p "$OUT"
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+
+# Changed file list + the diff text (drives actor/event/secret detection). Best-effort:
+# a failed fetch degrades to empty, recorded as such - never aborts the gather.
+gh pr view "$PR" --repo "$OR" --json files,body > "$TMP/pr.json" 2>/dev/null || echo '{"files":[],"body":""}' > "$TMP/pr.json"
+gh pr diff "$PR" --repo "$OR" > "$TMP/pr.diff" 2>/dev/null || : > "$TMP/pr.diff"
+jq -r '.files[]?.path' "$TMP/pr.json" > "$TMP/files.txt" 2>/dev/null || : > "$TMP/files.txt"
+
+{
+  echo "# Runtime evidence: $OR #$PR"
+  echo "_Live snapshot (workflow runs / secrets / bot PRs drift over time). Facts only, no judgment._"
+  echo
+
+  # ---- 1. Changed workflows + run history ----
+  echo "## Changed workflows + run history"
+  WFS=$(grep -E '^\.github/workflows/.+\.ya?ml$' "$TMP/files.txt" 2>/dev/null || true)
+  if [ -z "$WFS" ]; then
+    echo "- (no workflow files changed)"
+  else
+    for wf in $WFS; do
+      base=$(basename "$wf")
+      echo "### $wf"
+      if gh run list --repo "$OR" --workflow "$base" --limit 10 \
+           --json databaseId,event,status,conclusion,createdAt,displayTitle \
+           > "$TMP/runs.json" 2>/dev/null; then
+        cnt=$(jq 'length' "$TMP/runs.json" 2>/dev/null || echo 0)
+        if [ "$cnt" = "0" ]; then
+          echo "- run history: NONE (workflow never run, or no runs visible)"
+        else
+          jq -r '.[] | "- [\(.createdAt)] event=\(.event) status=\(.status) conclusion=\(.conclusion // "?") title=\(.displayTitle // "")"' "$TMP/runs.json" 2>/dev/null || echo "- run history: parse failed"
+        fi
+      else
+        echo "- run history: unavailable (gh run list failed / no permission)"
+      fi
+    done
+  fi
+  echo
+
+  # ---- 2. Conditional actors / events: pull a real instance ----
+  echo "## Conditional actors / events (real instance)"
+  COND=""
+  if grep -qiE 'dependabot' "$TMP/files.txt" "$TMP/pr.diff" 2>/dev/null; then COND="$COND dependabot"; fi
+  if grep -qE 'pull_request_target' "$TMP/pr.diff" 2>/dev/null; then COND="$COND pull_request_target"; fi
+  EVTYPES=$(grep -hoE 'types:[[:space:]]*\[[^]]*\]' "$TMP/pr.diff" 2>/dev/null | tr -d ' ' | sort -u || true)
+
+  if echo "$COND" | grep -qw dependabot 2>/dev/null; then
+    echo "### actor: dependabot[bot] - a real recent Dependabot PR"
+    if gh pr list --repo "$OR" --author "app/dependabot" --state all --limit 1 \
+         --json number,title > "$TMP/dpr.json" 2>/dev/null && \
+       [ "$(jq 'length' "$TMP/dpr.json" 2>/dev/null || echo 0)" != "0" ]; then
+      dn=$(jq -r '.[0].number' "$TMP/dpr.json")
+      dt=$(jq -r '.[0].title' "$TMP/dpr.json")
+      echo "- Dependabot PR #$dn: $dt"
+      if gh api --paginate "repos/$OR/issues/$dn/timeline" > "$TMP/dtl.json" 2>/dev/null; then
+        echo "- timeline operations (event / actor / time):"
+        jq -r '[ .[] | select(.event=="labeled" or .event=="unlabeled" or .event=="assigned" or .event=="review_requested" or .event=="reviewed") ]
+               | .[] | "  - \(.event) by \(.actor.login // "?") at \(.created_at // .submitted_at // "?")\(if .label then " [label=\(.label.name)]" else "" end)"' \
+               "$TMP/dtl.json" 2>/dev/null | head -40 || echo "  - (timeline parse failed)"
+      else
+        echo "- timeline: unavailable"
+      fi
+    else
+      echo "- no Dependabot PRs found (or not visible)"
+    fi
+  fi
+  [ -n "$EVTYPES" ] && echo "- workflow trigger event filters in diff: $(echo "$EVTYPES" | tr '\n' ' ')"
+  [ -z "$COND" ] && [ -z "$EVTYPES" ] && echo "- (no conditional bot/event actor detected in the diff by pattern)"
+  echo
+
+  # ---- 3. Secret stores for referenced secrets (names only) ----
+  echo "## Secret stores (names only; values never exposed by the API)"
+  SECREFS=$(grep -hoE 'secrets\.[A-Za-z0-9_]+' "$TMP/pr.diff" 2>/dev/null | sed 's/secrets\.//' | sort -u || true)
+  if [ -z "$SECREFS" ]; then
+    echo "- (diff references no secrets.*)"
+  else
+    echo "- secrets referenced in diff: $(echo "$SECREFS" | tr '\n' ' ')"
+    gh api "repos/$OR/actions/secrets" --jq '.secrets[].name' > "$TMP/asec.txt" 2>/dev/null || : > "$TMP/asec.txt"
+    gh api "repos/$OR/dependabot/secrets" --jq '.secrets[].name' > "$TMP/dsec.txt" 2>/dev/null || : > "$TMP/dsec.txt"
+    echo "- Actions secret store: $([ -s "$TMP/asec.txt" ] && tr '\n' ' ' < "$TMP/asec.txt" || echo '(empty / no access)')"
+    echo "- Dependabot secret store: $([ -s "$TMP/dsec.txt" ] && tr '\n' ' ' < "$TMP/dsec.txt" || echo '(empty / no access)')"
+    for s in $SECREFS; do
+      ina=no; ind=no
+      grep -qx "$s" "$TMP/asec.txt" 2>/dev/null && ina=yes
+      grep -qx "$s" "$TMP/dsec.txt" 2>/dev/null && ind=yes
+      echo "  - $s: in Actions store=$ina, in Dependabot store=$ind"
+    done
+  fi
+} > "$OUT/runtime-evidence.md"
+
+echo "gather-runtime-evidence: $OUT/runtime-evidence.md ($(wc -l < "$OUT/runtime-evidence.md" | tr -d ' ') lines)"
