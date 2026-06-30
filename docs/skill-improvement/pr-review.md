@@ -227,3 +227,59 @@ VERDICT: the ensemble COVERS every agent finding AND adds 3+ unique verified fin
 ### Iteration 10 (final) - dominance n=2 confirmed; loop terminal
 - 5 improvements (I1 trace-failure, I2 verify+dispatch+synthesize, I3 assertion-strength, I4 verify-before-clear, I5 ensemble). 12 skill runs across 5 PRs / 5 shapes + 2 clean ensembles. Full proof + reusable method committed.
 - pr-review improvement is COMPLETE: prose-levers exhausted (I1-I4), structural lever validated (I5 ensemble, n=2 dominance). Re-running /loop on this prompt is now genuinely redundant - the remaining levers are BREADTH (apply the method to another skill - needs a target) and COST-TUNING K (a product decision), neither of which is more pr-review iteration.
+
+---
+
+## Iteration 11 (#24126) - the "terminal" verdict was shape-limited; weakness #3 found
+
+The "COMPLETE" claim above was wrong, and the way it was wrong is the lesson: the 5
+shapes (validation bug, large refactor, oracle-fidelity, security, migration) did NOT
+include a **CI / automation / config PR with no test oracle**. A live self-run on
+#24126 (SOBA-54: dependabot auto-bump + Slack notify) exposed the third weakness the
+README never claimed to fix - alongside silent-context (fixed by the deterministic
+gather) and unfollowed-links (fixed by stage 02):
+
+> **Verification is code-test-shaped and silently degrades to "static only" on exactly
+> the PRs where execution evidence matters most - CI / workflow / IaC / config.**
+
+- The single review pass ran clean (gather, links, review, verify, seal; both held-out
+  checks passed) but never asked the load-bearing question: does the `labeled` trigger
+  even fire when Dependabot applies the label? It assumed the run starts. Stage 04
+  hit the `no runner: static coverage only` branch (04-verify.md:21) and stopped.
+- The independent human review pulled a real Dependabot PR timeline, saw the bot
+  applies labels as discrete timestamped ops, and reasoned the trigger fires.
+- Root cause is **non-application of existing levers** (verify-before-clearing prose +
+  the optional ensemble were both available, neither used) PLUS a **data gap** (nothing
+  in the skill fetches a real instance of the triggering actor).
+
+The skill produced its own improvement spec (`ICM-PR-REVIEW-IMPROVEMENTS.md`). Critical
+read of that spec (it is a hypothesis, not ground truth): premises verified true
+(gather-pr never sealed the diff; stage 04 has the static-only escape hatch; ensemble
+is optional), but the spec over-builds off n=1 - 6 frozen structures from a single PR,
+against this doc's own validate-across-shapes guardrail. Two design flaws caught before
+building: C3 as written would false-FAIL a source-verified finding (no execution token);
+C2 as written could wedge a run with no runtime evidence. Both fixed in the build
+(CONFIRMED accepts source-citation OR execution-token; the gate enforces "you looked",
+recording `none available` to satisfy itself).
+
+### Shipped + validated this iteration
+- **C0** (`704f214`): `gather-pr` now seals `output/pr.diff` - the review reads a
+  reproducible artifact, not an ad-hoc re-fetch. Verified on #24126 (27-line diff).
+- **C1** (`31f4d69`): new deterministic `tools/gather-runtime-evidence` - workflow run
+  history + a real instance of every conditional actor/event + secret-store membership
+  (names only). Read-only; absence is a recorded fact, never a silent skip.
+  - **Cold-validation (the proof the approach yields the missing signal):** run cold on
+    #24126 it pulled Dependabot PR #22493 and emitted `labeled by dependabot[bot]` as
+    discrete timestamped operations - i.e. it hands the reviewer the exact load-bearing
+    fact the single pass missed, deterministically, with no judgment.
+  - Determinism caveat materialized as designed: doc expected #22118, tool found #22493
+    (most-recent dependabot PR now). Different instance, same stable fact (live snapshot).
+  - Not exercised on #24126: the secret-store branch (#24126 changes only dependabot.yml;
+    the workflow + `secrets.*` are in the sibling PR) - to validate on the workflow PR.
+
+### Remaining (build-permissive, then validate on #24126 + a 2nd shape before tightening)
+- C4: insert stage `03-runtime-evidence` (runs C1 + per-AC execution-chain trace), renumber review->04 / verify->05 / report->06; rewrite gates + stage-done + evals.
+- C2: stage-05 (verify) branch for no-oracle PRs ("execution-backed" = run-history + real-actor instance) + a gate that enforces runtime-evidence was gathered.
+- C3: new held-out `execution-evidence.test.sh` - CONFIRMED/PLAUSIBLE/REFUTED status per CRITICAL/HIGH; CONFIRMED needs evidence (source-citation OR execution token); load-bearing-but-unexecuted claims tagged `UNVERIFIED:`.
+- C5/L1/L2/L3: mandatory adversarial per-finding verify; prior-review/approval/"manually tested" treated as hypotheses; runtime-context checklist in the config lens; mandatory-ensemble rule for auth/secrets/CI-triggers/payment/migrations.
+- Fixture: re-run #24126 cold (fails-on-revert net per spec section 5) + one second shape (cron/webhook/migration) to prove the lens generalizes before freezing C2/C3 thresholds.
