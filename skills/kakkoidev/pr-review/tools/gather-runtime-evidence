@@ -3,7 +3,9 @@
 # actually execute - workflow run history, a real instance of every actor/event the
 # diff is conditional on, and the secret stores a referenced secret resolves in.
 #
-# Usage: gather-runtime-evidence <owner/repo> <pr-number> <out-dir>
+# Usage: gather-runtime-evidence <owner/repo> <pr-number> <out-dir> [pinned-diff-file]
+#   The optional 4th arg pins detection to a specific commit's diff (e.g. when the PR
+#   was updated/force-pushed after the review was requested - review the right state).
 # Writes:
 #   <out-dir>/runtime-evidence.md  - deterministic runtime facts, NO judgment
 #
@@ -17,8 +19,8 @@
 # Parses under bash 3.2 / POSIX sh.
 set -eu
 
-OR=${1:-}; PR=${2:-}; OUT=${3:-}
-[ -n "$OR" ] && [ -n "$PR" ] && [ -n "$OUT" ] || { echo "usage: gather-runtime-evidence <owner/repo> <pr#> <out-dir>" >&2; exit 2; }
+OR=${1:-}; PR=${2:-}; OUT=${3:-}; DIFF=${4:-}
+[ -n "$OR" ] && [ -n "$PR" ] && [ -n "$OUT" ] || { echo "usage: gather-runtime-evidence <owner/repo> <pr#> <out-dir> [pinned-diff-file]" >&2; exit 2; }
 command -v gh >/dev/null 2>&1 || { echo "gather-runtime-evidence: gh not found" >&2; exit 3; }
 command -v jq >/dev/null 2>&1 || { echo "gather-runtime-evidence: jq not found" >&2; exit 3; }
 mkdir -p "$OUT"
@@ -27,9 +29,16 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
 # Changed file list + the diff text (drives actor/event/secret detection). Best-effort:
 # a failed fetch degrades to empty, recorded as such - never aborts the gather.
-gh pr view "$PR" --repo "$OR" --json files,body > "$TMP/pr.json" 2>/dev/null || echo '{"files":[],"body":""}' > "$TMP/pr.json"
-gh pr diff "$PR" --repo "$OR" > "$TMP/pr.diff" 2>/dev/null || : > "$TMP/pr.diff"
-jq -r '.files[]?.path' "$TMP/pr.json" > "$TMP/files.txt" 2>/dev/null || : > "$TMP/files.txt"
+# A 4th arg pins the review to a specific commit's diff (so a PR that was later
+# force-pushed/pivoted is grounded against the state actually under review, not live HEAD);
+# the changed-file list is then derived from the diff's `+++ b/` headers.
+if [ -n "$DIFF" ] && [ -f "$DIFF" ]; then
+    cp "$DIFF" "$TMP/pr.diff"
+    grep -E '^\+\+\+ b/' "$TMP/pr.diff" | sed -E 's#^\+\+\+ b/##' | sort -u > "$TMP/files.txt"
+else
+    gh pr diff "$PR" --repo "$OR" > "$TMP/pr.diff" 2>/dev/null || : > "$TMP/pr.diff"
+    gh pr view "$PR" --repo "$OR" --json files --jq '.files[]?.path' > "$TMP/files.txt" 2>/dev/null || : > "$TMP/files.txt"
+fi
 
 {
   echo "# Runtime evidence: $OR #$PR"
