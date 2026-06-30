@@ -309,7 +309,22 @@ independent of yield:
   per-finding verify in stage 05).
 - Verification done: structure eval `ok`; C3 tested 3 directions; runtime suite **146/0**;
   stale-reference sweep clean; 6-stage init smoke + manifest coverage confirmed.
-- **STILL PENDING (empirical, not static):** the cold re-run of the restructured skill on
-  #24126 (does the new pipeline actually surface the trigger question a single old pass missed?
-  fails-on-revert) + one second shape to prove the lens generalizes before any threshold
-  tightening. Static correctness is proven; behavioral proof is not yet captured.
+- **Empirical validation DONE for shape 1 (#24126), pinned to the correct commit.** The PR
+  had pivoted (06-30 `5432f2a0` dropped the reviewed workflow), so the review was pinned to
+  `93035c789fc5` - which required a new capability: `gather-runtime-evidence` now takes a
+  pinned-diff arg (`e0c87d2`). A/B cold workflow (`wf_4ce67f14-501`, full record in
+  `baselines/24126-ab-validation.md`):
+  - ARM A (new pipeline: + runtime-evidence + mechanism-trace) grounded BOTH load-bearing
+    facts (trigger fires, cited real Dependabot PR #24217; token absent from the store) with
+    0 false positives.
+  - ARM B (pre-improvement) only ASSERTED them, tilted the trigger direction WRONG ("may not
+    fire" - refuted by #24217), never store-checked, 2 false positives.
+  - Grader (ground-truth-aware): `a_beats_b: true`, `fails_on_revert: true`.
+  - **Honest verdict**: the win is grounding + trigger-direction correctness + precision (0 vs
+    2 FPs), NOT a flipped missed-CRITICAL - ARM B still flagged the token CRITICAL, both arms
+    BLOCK. fails-on-revert holds for *grounding/accuracy*, not for *catching a missed bug*, on
+    this PR. The original "missed the trigger question" was a degraded single static-only pass;
+    a K=2 old-pipeline proxy engages it (wrongly). The improvement is real and measured; it is
+    not the dramatic miss->catch the doc implied.
+- **STILL PENDING:** a second shape (migration/webhook/cron) to claim cross-shape
+  generalization before tightening C2/C3 thresholds (README validate-across-shapes guardrail).
