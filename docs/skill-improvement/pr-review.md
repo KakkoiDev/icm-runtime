@@ -197,3 +197,8 @@ VERDICT: the ensemble COVERS every agent finding AND adds 3+ unique verified fin
 - 3-pass ensemble on #24146 (v3+v4+v5) strictly dominates the agent (covers all + 3 unique verified findings + 0 false-positives). I5 closed the run-variance ceiling structurally.
 - The skill is now as-good-or-better than the agent in BOTH regimes: routine = single-pass parity (cheap); high-stakes = ensemble strict-dominance (~Kx cost).
 - Loop converged on success. Remaining work is generalization (apply the method+ensemble to other skills) + cost-tuning K, not further pr-review improvement. Method + full proof (5 improvements I1-I5, 9 runs, 5 PRs, ensemble) committed under docs/skill-improvement/.
+
+### Iteration 10 (2026-06-30) - clean same-version K=3 ensemble; validate I5 properly + dominance n=2
+- Gap addressed: the #24146 dominance proof used union(v3,v4,v5) = MIXED skill versions, and was n=1. Not a clean test of the ENCODED I5 (which is K passes of one version).
+- Launched a TRUE K=3 ensemble: 3 independent v5 single-passes on #24134 (the hard PG-migration shape; agent baseline = Issue 1 HIGH lock/P2024 + Issue 2 HIGH no-op-unverified + Issue 2a false-comment, and v3-Run7 already matched both + a unique CRITICAL 2FA fail-open). 
+- On return: union + dedup + adversarial-verify the 3 passes, compare to the agent baseline, test STRICT DOMINANCE. This validates the encoded I5 with same-version passes AND makes dominance n=2 (2nd shape). RESULT PENDING.
