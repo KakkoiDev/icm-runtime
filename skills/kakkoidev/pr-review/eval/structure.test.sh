@@ -28,6 +28,9 @@ for t in tools/gather-pr tools/fetch-web; do
     test -x "$t" || { echo "FAIL: $t missing or not executable"; exit 1; }
 done
 
+# C0: gather-pr seals the diff (reproducible review artifact, not an ad-hoc re-fetch).
+grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/pr.diff (C0)"; exit 1; }
+
 # Scars lens frozen into the skill.
 test -s references/scars.md || { echo "FAIL: references/scars.md missing"; exit 1; }
 

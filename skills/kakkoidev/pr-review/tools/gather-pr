@@ -5,6 +5,7 @@
 # Writes:
 #   <out-dir>/pr-context.md  - summary header, file buckets, chronological action feed
 #   <out-dir>/links.tsv      - every URL found in PR free text, with source attribution
+#   <out-dir>/pr.diff        - the change under review (sealed, reproducible)
 #
 # Pure and read-only (gh + jq). No model judgment: same PR state -> same output.
 # Parses under bash 3.2 / POSIX sh.
@@ -84,4 +85,9 @@ gh api --paginate "repos/$OR/issues/$PR/timeline" > "$TMP/timeline.json" 2>/dev/
       done
 done | sort -u > "$OUT/links.tsv"
 
-echo "gather-pr: $OUT/pr-context.md ($(wc -l < "$OUT/pr-context.md" | tr -d ' ') lines), $OUT/links.tsv ($(wc -l < "$OUT/links.tsv" | tr -d ' ') links)"
+# ---- pr.diff: the change under review, sealed with the context. Fatal on failure -
+# a review with no diff is worthless, so fail loud rather than degrade silently. ----
+gh pr diff "$PR" --repo "$OR" > "$OUT/pr.diff" 2>"$TMP/differr" \
+  || { echo "gather-pr: gh pr diff failed:" >&2; cat "$TMP/differr" >&2; exit 5; }
+
+echo "gather-pr: $OUT/pr-context.md ($(wc -l < "$OUT/pr-context.md" | tr -d ' ') lines), $OUT/links.tsv ($(wc -l < "$OUT/links.tsv" | tr -d ' ') links), $OUT/pr.diff ($(wc -l < "$OUT/pr.diff" | tr -d ' ') lines)"
