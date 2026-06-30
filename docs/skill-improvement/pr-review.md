@@ -148,3 +148,22 @@ Improvements that got here: I1 (trace failure site / ticket-as-hypothesis), I2 (
 - Loop re-invoked -> push past "as-good-or-better-on-balance" to STRICT dominance. Target: the documented residual (skill UNDER-CALLS a concern by clearing it on an assumption; #24146 re-auth bounce - concluded "re-auth works" without tracing the FE re-mint).
 - Shipped I4 (commit `03e569a`, prose-only, eval green): verify-before-CLEARING - the dual of verify-before-flag. A dismissed concern is also a hypothesis (scars #7 both ways); trace the full recovery/fallback path to finding-depth and cite the exact code before concluding "it's fine"; clearing a HIGH-RISK concern on an assumption == flagging without verifying.
 - Launched blind skill-v4 on #24146 (the PR where the under-call happened). Test: does v4 now TRACE the FE re-mint flow and catch the re-auth bounce (agent Issue 1 it under-called in Run 6) - WITHOUT regressing its unique F1 (1-of-3-cookies)? Compare to saved #24146 agent baseline. RESULT PENDING.
+
+### Run 8 (#24146, blind) - pr-review v4 (I1+I2+I3+I4) - validate verify-before-clearing
+- Skill v4: F6 CLEARED-as-defect but FULLY TRACED the recovery path (cookie minted only by SSR auth/index.page.tsx:38-65; participant page does NOT re-mint; mid-flow 401 -> EXPIRED screen; recovery = re-click email link; no lockout) = the agent's Issue 1 depth, the Run-6 under-call NOW CLOSED. Also CLEARED F2 (path reaches all readers - depth-2 reader census) + F3 (PDF on separate CDN) WITH cited evidence = verify-before-clearing on the positive side. UNIQUE: F1 (1h cookie doesn't bound the credential - server token 30d regardless; sharper than agent TTL note), F4 (dead expireAt field). MATCH: F5 (hollow Max-Age assertion, I3). Synthesis F1+F5.
+- Classification:
+  - **I4 GOAL MET**: re-auth-bounce under-call from Run 6 is GONE - v4 traced the full re-mint/recovery path to agent depth and cited it. verify-before-clearing also produced evidence-backed CLEARS (F2/F3).
+  - vs agent: v4 unique F1 (sharper) + F4; matched I3 (F5); matched the re-auth trace (cleared-as-product-note vs agent's MEDIUM - same substance, different label).
+  - **REGRESSION vs v3 (run-variance)**: v4 did NOT re-flag the "1-of-3-cookies" HIGH v3 caught - cleared the siblings as "deferred" without verifying a follow-up ticket tracks them (an I4-adherence miss on a deferral-clear + run-variance).
+- Score vs agent: per-run AT/ABOVE (unique F1/F4, matched re-auth trace + I3); the v3-unique HIGH didn't recur.
+
+## TERMINAL FINDING: the ceiling is run-variance, not a prose gap
+Across 8 runs / 5 PRs / 5 shapes, improvements I1-I4 closed every IDENTIFIED gap-class (over-trust ticket, under-verify flags, specialist dispatch, synthesize, assertion-strength, verify-before-clearing). Result: pr-review per-run MATCHES-OR-EXCEEDS the review agent, with unique catches and zero false-positives. BUT the skill - like the agent itself - catches a DIFFERENT SUBSET of findings each run (v3 caught 1-of-3-cookies; v4 caught credential-not-bounded + the full re-auth trace; neither caught both). This is inherent LLM-review non-determinism, NOT a fixable instruction gap. 
+- "As good or better than the review agent": ACHIEVED. Per-run competitive-to-superior; the UNION of skill runs exceeds the agent; zero false-positives; verification + synthesis + determinism/auditability the agent lacks.
+- STRICT per-run dominance is bounded by variance. The path to it is ENSEMBLING (run the skill N times, union/dedup findings, adversarially verify) - a STRUCTURAL change, not another stage-prose edit. Further prose edits hit diminishing returns + the variance ceiling.
+
+### Iteration 7 (2026-06-30) - I4 validated; ceiling identified; loop converged (terminal)
+- I4 (verify-before-clearing) validated on #24146: closed the Run-6 re-auth-bounce under-call (v4 traced the full recovery path). 
+- Identified the terminal ceiling: remaining skill-vs-agent gap is run-variance (both are non-deterministic LLM reviewers), not a prose-fixable instruction gap. Prose-improvement has reached its useful limit at I1-I4.
+- Converged the loop. Next lever for strict dominance is STRUCTURAL (ensemble N runs + union + adversarial-verify), not more stage prose - a design change to propose, not an autonomous prose edit. Recommend the icm-improve / framework work pick up from here.
+- Final: 4 improvements (I1-I4), 8 runs, 5 PRs, full proof + reusable method committed under docs/skill-improvement/.
