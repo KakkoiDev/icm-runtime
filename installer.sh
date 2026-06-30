@@ -3,12 +3,26 @@
 # (pi/Codex, namespaced) and ~/.claude/skills/ (Claude Code, flattened).
 #
 # Usage:
-#   ./installer.sh            Symlink skills (default, single source of truth)
-#   ./installer.sh --copy     Copy skills (safer if agent doesn't follow symlinks)
-#   ./installer.sh --remove   Remove installed skills
-#   ./installer.sh --hooks    Register gate enforcement (Claude Code hook + pi extension)
+#   ./installer.sh                      Symlink ALL skills (default, single source of truth)
+#   ./installer.sh <skill>...           Granular: link only the named skills as Claude Code
+#                                        /commands (e.g. ./installer.sh pr-review grade-output).
+#                                        The ~/.agents namespace links (runtime) are kept for all.
+#   ./installer.sh --copy               Copy skills (safer if agent doesn't follow symlinks)
+#   ./installer.sh --remove [<skill>...] Remove all installed skills, or only the named /commands
+#   ./installer.sh --hooks              Register gate enforcement (Claude Code hook + pi extension)
 
 set -eu
+
+# Optional skill-name filter (positional args). Empty = act on all skills. Controls
+# which skills are exposed as Claude Code /commands (the ~/.claude/skills flat links).
+SELECT=()
+# True when no filter is set, or when $1 is one of the named skills.
+selected() {
+    [ ${#SELECT[@]} -eq 0 ] && return 0
+    local s
+    for s in "${SELECT[@]}"; do [ "$s" = "$1" ] && return 0; done
+    return 1
+}
 
 SKILLS_DIR="$HOME/.agents/skills"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
@@ -72,6 +86,7 @@ install_claude_symlink() {
     while IFS= read -r skill_md; do
         skill_dir=$(cd "$(dirname "$skill_md")" && pwd)
         skill_name=$(basename "$skill_dir")
+        selected "$skill_name" || continue
         target="$CLAUDE_SKILLS_DIR/$skill_name"
 
         if [ -L "$target" ]; then
@@ -114,6 +129,7 @@ install_claude_copy() {
     while IFS= read -r skill_md; do
         skill_dir=$(cd "$(dirname "$skill_md")" && pwd)
         skill_name=$(basename "$skill_dir")
+        selected "$skill_name" || continue
         target="$CLAUDE_SKILLS_DIR/$skill_name"
 
         if [ -L "$target" ]; then
@@ -127,25 +143,32 @@ install_claude_copy() {
 }
 
 remove() {
-    for skill_dir in "$SOURCE_DIR"/*/; do
-        [ -d "$skill_dir" ] || continue
-        skill_name=$(basename "$skill_dir")
-        target="$SKILLS_DIR/$skill_name"
+    # Full uninstall (no name filter) removes the ~/.agents namespace links and
+    # the gate hooks. A granular remove (named skills) only unlinks those skills
+    # as Claude Code /commands, leaving the runtime namespace links and hooks intact
+    # - e.g. ./installer.sh --remove nest-demo-child drops one stray /command.
+    if [ ${#SELECT[@]} -eq 0 ]; then
+        for skill_dir in "$SOURCE_DIR"/*/; do
+            [ -d "$skill_dir" ] || continue
+            skill_name=$(basename "$skill_dir")
+            target="$SKILLS_DIR/$skill_name"
 
-        if [ -L "$target" ]; then
-            rm "$target"
-            ok "$skill_name (symlink removed)"
-        elif [ -d "$target" ]; then
-            rm -rf "$target"
-            ok "$skill_name (copy removed)"
-        else
-            ok "$skill_name (not installed)"
-        fi
-    done
+            if [ -L "$target" ]; then
+                rm "$target"
+                ok "$skill_name (symlink removed)"
+            elif [ -d "$target" ]; then
+                rm -rf "$target"
+                ok "$skill_name (copy removed)"
+            else
+                ok "$skill_name (not installed)"
+            fi
+        done
+    fi
 
     while IFS= read -r skill_md; do
         skill_dir=$(cd "$(dirname "$skill_md")" && pwd)
         skill_name=$(basename "$skill_dir")
+        selected "$skill_name" || continue
         target="$CLAUDE_SKILLS_DIR/$skill_name"
 
         if [ -L "$target" ]; then
@@ -166,7 +189,7 @@ remove() {
         fi
     done < <(find "$SOURCE_DIR" -name SKILL.md)
 
-    unregister_hooks
+    [ ${#SELECT[@]} -eq 0 ] && unregister_hooks
 }
 
 # Remove enforcement adapter registrations. A dangling gate-hook with the
@@ -290,17 +313,49 @@ install_hooks() {
 mkdir -p "$SKILLS_DIR"
 mkdir -p "$CLAUDE_SKILLS_DIR"
 
-case "${1:-install}" in
-    --symlink|-s) install_symlink; install_claude_symlink ;;
-    --copy|-c)    install_copy; install_claude_copy ;;
-    --remove|-r)  remove ;;
-    --hooks)      install_hooks ;;
-    install)      install_symlink; install_claude_symlink ;;  # default
-    *)
-        echo "Usage: $0 [--symlink|--copy|--remove|--hooks]" >&2
-        echo "  Default (no flag): symlink" >&2
-        exit 1
-        ;;
+usage() {
+    echo "Usage: $0 [--symlink|--copy|--remove|--hooks] [skill...]" >&2
+    echo "  (no args)          symlink ALL skills (default)" >&2
+    echo "  skill...           link only the named skills as Claude Code /commands" >&2
+    echo "  --remove           full uninstall (namespace links + /commands + hooks)" >&2
+    echo "  --remove skill...  unlink only the named /commands (keeps namespace + hooks)" >&2
+    echo "  --copy             copy instead of symlink   --hooks  register gate enforcement" >&2
+}
+
+# Parse: one optional action flag, then any number of skill names (the filter).
+ACTION=install
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --symlink|-s)  ACTION=install ;;
+        --copy|-c)     ACTION=copy ;;
+        --remove|-r)   ACTION=remove ;;
+        --hooks)       ACTION=hooks ;;
+        -h|--help)     usage; exit 0 ;;
+        --*)           err "unknown option: $1"; usage; exit 1 ;;
+        *)             SELECT+=("$1") ;;
+    esac
+    shift
+done
+
+# Typo protection: every named skill must exist as skills/*/<name>/SKILL.md.
+if [ ${#SELECT[@]} -gt 0 ]; then
+    for s in "${SELECT[@]}"; do
+        found=0
+        while IFS= read -r skill_md; do
+            [ "$(basename "$(dirname "$skill_md")")" = "$s" ] && { found=1; break; }
+        done < <(find "$SOURCE_DIR" -name SKILL.md)
+        if [ "$found" -ne 1 ]; then
+            err "unknown skill: $s (no skills/*/$s/SKILL.md)"
+            exit 1
+        fi
+    done
+fi
+
+case "$ACTION" in
+    install) install_symlink; install_claude_symlink ;;
+    copy)    install_copy; install_claude_copy ;;
+    remove)  remove ;;
+    hooks)   install_hooks ;;
 esac
 
 echo ""
