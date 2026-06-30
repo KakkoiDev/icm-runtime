@@ -326,5 +326,31 @@ independent of yield:
     this PR. The original "missed the trigger question" was a degraded single static-only pass;
     a K=2 old-pipeline proxy engages it (wrongly). The improvement is real and measured; it is
     not the dramatic miss->catch the doc implied.
-- **STILL PENDING:** a second shape (migration/webhook/cron) to claim cross-shape
-  generalization before tightening C2/C3 thresholds (README validate-across-shapes guardrail).
+### Shape 2 DONE - #23852 (cron/schedule), generalization holds but NARROWS
+A/B on a cron-schedule PR (`wf_31ca7688-4dd`, full record `baselines/23852-ab-validation.md`).
+The runtime-evidence TOOL generalized (its value shifted from a dependabot timeline to workflow
+run-history: 10/10 successful nightly `event=schedule` runs).
+- ARM A: schedule-fires GROUNDED + caught the subtle "success != fresh prod image built" dedup
+  gap; hotfix-latency grounded; 0 FP. ARM B: schedule-fires only ASSERTED from the greens;
+  hotfix-latency grounded; 0 FP. Grader: `a_beats_b: true`, **`margin: narrow`**.
+- **Honest deltas vs shape 1**: (a) NARROW not decisive - both arms see the cron + removed-push
+  in the diff, so the only gap is run-history grounding + a dedup catch, not a hidden fact;
+  (b) ARM A's win was carried by pass 2 - pass 1 shipped a factually-WRONG HIGH that pass 2
+  self-refuted, so the **mandatory ensemble (C5) is load-bearing for reliability**, a single
+  new-pipeline pass still errs; (c) bonus - a sub-agent ran the REAL skill end-to-end via icm.sh
+  and stage 03 produced a high-quality `ac-execution-trace.md` (`baselines/23852-skill-ac-execution-trace.md`)
+  that independently reached the same dedup insight - the new stage works in the real pipeline.
+
+### Cross-shape conclusion (shapes 1 + 2) + a real bug found
+- The improvement beats the pre-improvement pipeline on BOTH CI shapes - decisive (shape 1,
+  hidden secret-store fact), narrow (shape 2, visible cron change). Consistent value = GROUNDING +
+  catching verification gaps; NOT consistently miss->catch (both arms blocked shape 1; both
+  approved-with-caveats shape 2). Reliability needs the mandatory ensemble.
+- **Limit of the claim**: both shapes are CI/workflow; the runtime-evidence tool is CI-specific by
+  design. A non-CI shape (migration/app-flag) where only the prose levers apply is untested this
+  iteration (expected A approx B; prose levers already validated I1-I5).
+- **Bug found (gate-hook)**: an orphaned/incomplete run's `tools="Write"` gate DENIES every Write
+  tool call in the session, not just writes belonging to the run (caller-scoping covers parent/
+  child, not orphans). Recorded in `baselines/23852-ab-validation.md` with a candidate fix
+  (scope the Write-gate to the run dir, or expire stale runs). Not yet fixed.
+- **STILL OPTIONAL**: a 3rd (non-CI) shape to test prose-only generalization; the gate-hook fix.
