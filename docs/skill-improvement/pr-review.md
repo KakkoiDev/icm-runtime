@@ -47,12 +47,20 @@ Goal: pr-review as good or better than the review agent, proven on real PRs.
 - Classification: MATCH the toFixed delta. **SHALLOWER**: agent connected delta -> "oracle is the FE copy, validates wrong reference"; skill CLAIMED "fixtures faithful" and **missed the one infidel fixture** (SKILL-MISSED + a fidelity false-claim). **SKILL-MISSED**: unitCost lax assertion, toformat description error. 
 - Score: misses>=2, fp=0, depth < agent (didn't connect). -> Below agent (solid but not as deep).
 
+### Run 4 (#24126, blind) - pr-review v2 (after improvement I2, commit bc4e65c)
+- Skill v2: F1 HIGH (secrets-unreachable, now VERIFIED: `gh api dependabot/secrets`->0, `git show origin/master:.github/dependabot.yml`->no labels key, docs fetched), F2 MEDIUM (PR-title->Slack injection - NEW catch), F3 MEDIUM (#24127 test is human-actor, verified author=mofiky-mm - the rigged-test finding). "Verified-and-cleared" section: label EXISTS (no false-positive), bot's 4-space nit FALSE, paths correct. Synthesis: F1+F3 = "silently inert feature whose only test is rigged." Verdict BLOCK.
+- Classification vs agent baseline + v1:
+  - **G2 CLOSED**: v1's F3 false-positive ("label may not exist") GONE -> v2 verified+cleared it. All findings cite verification; honestly flagged the one unverifiable item.
+  - **G3 PARTIAL**: v2 NOW caught the injection (F2) v1 missed / agent caught (mandatory dispatch worked). STILL MISSED agent's import-time-integrity, limit-1 staleness, dir-collision (specialist ran but shallow).
+  - **G4 APPLIED**: synthesized the connected F1+F3 conclusion.
+- Score vs agent: misses~3 (down from ~2 + a false-positive + no-synthesis), fp=0 (was 1), unique_real=1 (F1, verified harder), synthesis=yes. Much closer to parity; residual gap = specialist DEPTH, not dispatch.
+
 ## Gap-classes
 
 - **G1 [CLOSED, generalizes]** - over-trusts ticket/tests as ground truth. FIX: improvement I1 (commit cfa42e2) - stage-03 "trace the actual failure site; the ticket is a hypothesis; a fix broader than the bug is a finding even if it matches the ticket; verify the gate is keyed on the exact set the failing path consumes." Proven on #24151 (blind), held on #24126 (F1/F4) + #24145 (F1/F2).
-- **G2 [OPEN]** - under-verifies checkable facts. Flags hypotheses without the cheap check (label existence #24126 F3 false-pos; fixture fidelity #24145 false-claim). The agent runs `gh`/`grep`/diffs the actual artifact.
-- **G3 [OPEN]** - inconsistent specialist breadth/dispatch. Missed injection+supply-chain (#24126), unitCost+toformat (#24145); dispatched specialists on #24145 but not #24126.
-- **G4 [OPEN, harder]** - atomized findings; doesn't synthesize/connect (the agent's #24145 delta+wrong-oracle = one finding).
+- **G2 [CLOSED by I2, measured #24126 Run 4]** - under-verifies checkable facts. FIX: stage-03 verify-before-flag / verify-fidelity-before-trusting. Result: the #24126 label false-positive is gone (verified+cleared); findings cite verification. Cross-shape validation on #24145 pending (does verify-fidelity catch the FE-copy oracle it claimed-faithful?).
+- **G3 [PARTIAL after I2]** - specialist breadth. Mandatory dispatch (I2) made v2 catch the injection it missed before. RESIDUAL: specialist DEPTH - v2 still missed import-time-integrity, limit-1 staleness, dir-collision (agent's supply-chain/config lens reasoned deeper). Next: enrich the lens prompts with generalizable risk patterns (consumption model eager-vs-lazy; operational failure modes: staleness/limits/ownership; latent config collisions) WITHOUT overfitting - validate on another shape first.
+- **G4 [APPLIED by I2, held #24126]** - synthesize connected findings. v2 produced the F1+F3 synthesis. Watch it holds on other shapes.
 
 ## Improvements
 
@@ -64,4 +72,14 @@ Goal: pr-review as good or better than the review agent, proven on real PRs.
 - #24145 oracle fidelity: skill said "fixtures faithful", agent said `shared.ts#toFixed` is the FE copy. Direct contradiction; verify by diffing the fixture vs master BE/FE `decimal.ts`. (Either way reinforces G2.)
 
 ## Iteration log
-- (below, appended each loop iteration)
+
+### Iteration 1 (2026-06-30) - I2 shipped, measurement launched
+- Set up `docs/skill-improvement/` (method README + this log). Committed `202a00b`.
+- Shipped improvement I2 (commit `bc4e65c`, prose-only, structure eval green): stage-03 gains (G2) verify-checkable-facts-before-flagging + verify-fidelity-before-trusting; (G3) MANDATORY specialist dispatch by changed-file bucket with the bucket->specialist map; (G4) a synthesize-connections step.
+- Launched blind skill-v2 measurement run on #24126 (the PR where G2's F3 false-positive + G3's missed injection/supply-chain appeared). Tests: does v2 now (a) verify the label exists instead of flagging "may not exist", (b) dispatch insecure-defaults+supply-chain and catch the injection + import-time integrity the agent caught? Compare to the saved #24126 agent baseline. RESULT PENDING (wakes the loop on completion).
+- Open after this: if I2 closes G2/G3 on #24126, re-verify on a different shape (#24145 - did it stop claiming fidelity / catch the oracle infidelity?); then settle the 2 contested findings; then assess parity.
+
+### Iteration 2 (2026-06-30) - I2 measured on #24126, cross-shape validation launched
+- Graded Run 4 (v2 on #24126): G2 CLOSED (false-positive gone, verification throughout), G3 PARTIAL (caught injection via dispatch; still missed import-time-integrity / limit-1 / dir-collision = specialist DEPTH gap), G4 APPLIED (F1+F3 synthesis). Much closer to parity; residual = specialist depth.
+- Launched blind skill-v2 run on #24145 (the refactor) to validate I2's verify-fidelity cross-shape: does v2 now diff the parity oracle and catch that `shared.ts#toFixed` is the FE copy (the infidelity v1 missed while claiming "fixtures faithful")? Compare to saved #24145 agent baseline. RESULT PENDING.
+- Decision held: do NOT pile on a G3-depth edit yet - validate I2 on #24145 first (avoid overfitting to #24126), THEN decide whether to enrich specialist lenses.
