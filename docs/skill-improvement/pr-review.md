@@ -167,3 +167,8 @@ Across 8 runs / 5 PRs / 5 shapes, improvements I1-I4 closed every IDENTIFIED gap
 - Identified the terminal ceiling: remaining skill-vs-agent gap is run-variance (both are non-deterministic LLM reviewers), not a prose-fixable instruction gap. Prose-improvement has reached its useful limit at I1-I4.
 - Converged the loop. Next lever for strict dominance is STRUCTURAL (ensemble N runs + union + adversarial-verify), not more stage prose - a design change to propose, not an autonomous prose edit. Recommend the icm-improve / framework work pick up from here.
 - Final: 4 improvements (I1-I4), 8 runs, 5 PRs, full proof + reusable method committed under docs/skill-improvement/.
+
+### Iteration 8 (2026-06-30) - I5 ensemble mode (structural; targets the variance ceiling)
+- Loop re-invoked -> take the structural step the terminal finding named (ensembling).
+- Shipped I5 (commit `038914d`, prose-only, eval green): optional ensemble mode in stage-03 - spawn K=3 INDEPENDENT full-review passes (Task) -> union + dedup -> adversarially verify each vs source (scars #7) -> merged verified set. Strictly exceeds any single pass (catches the union), cancels per-run misses. ~Kx cost, opt-in for high-stakes diffs. Honest: a single LLM pass can't ensemble itself; ensembling is multi-invocation orchestration, which a staged skill can drive but a monolithic agent invocation cannot - that's the skill's structural edge.
+- VALIDATION (cheap): I am the ensemble coordinator. Have v3 (Run 6) + v4 (Run 8) on #24146 already; launched 1 more independent pass (v5) -> union(v3,v4,v5) = a 3-pass ensemble for the cost of 1 new run. On return: union + adversarial-verify, test union(passes) ⊃ agent findings (strict dominance). RESULT PENDING.
