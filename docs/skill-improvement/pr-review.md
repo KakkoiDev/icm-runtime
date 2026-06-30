@@ -105,3 +105,41 @@ pr-review v2 ≈ review agent (as-good-or-better substantially met). Wins: rigor
 ### Iteration 4 (2026-06-30) - I3 + fresh-shape comparison (loop resumed)
 - Shipped I3 (commit `7331839`, prose-only, eval green): extend verify-fidelity to assertion STRENGTH (a test that exists can still assert weakly - stripped field / loosened matcher / oracle that can't fail / mock standing in for the unit). Targets the #24145 unitCost-lax miss, generalized.
 - Launched FRESH-shape comparison (4 unnamed agents) on PRs the skill was NEVER tuned against: #24146 (security/auth - e-signature cookie scope+TTL, nginx 400) + #24134 (additive Prisma migration, ESignatureParticipant.use2FA, PR1/3). skill-v3 + review-agent on each. Purpose: (a) honest parity test on new shapes (no tuning bias), (b) does the skill's security + migration lens match the agent, (c) opportunistic I3 validation, (d) systematicity of long-tail depth patterns. RESULTS PENDING.
+
+### Reference baseline: #24146 (security/auth, fresh shape) - review agent
+- Verdict SHIP WITH FIXES. Issue 1 MEDIUM: cookie `maxAge=1h` << DB token `expireAt` (days) -> mid-session re-auth bounce (traced token lifecycle + FE SSR cookie-mint + 401->EXPIRED map). Issue 2 MEDIUM: 1h TTL not sized vs the real nginx header limit; path-scoping is the structural fix, TTL is belt-and-suspenders that creates Issue 1 for no gain. Security adversarial: 3 vectors VERIFIED FALSE (no legit reader broken; no auth weakening; no path-prefix collision) -> net security improvement. LOW: presence-only `Max-Age=\d+` test assertion is weak (assertion-strength - the I3 dimension). 7-point all PASS.
+- (Run vs skill-v3 #24146 pending.)
+
+### Reference baseline: #24134 (additive migration, fresh shape) - review agent
+- Verdict SHIP WITH FIXES. Issue 1 HIGH: ALTER+UPDATE in ONE Prisma transaction -> ACCESS EXCLUSIVE held through the UPDATE, no `lock_timeout` -> P2024 head-of-line blocking (the pattern that reverted #22980/#23075); "metadata-only != lock-free". Issue 2 HIGH: "no-op backfill" claim UNVERIFIED - the LD flag `isReleaseESignature2fa` gates only the FE, not the backend write (verified e-signature.service.ts:1313/1140 write `use2FA ?? false` with no flag check). Issue 2a MEDIUM: migration comment "ACCESS EXCLUSIVE は取らない" is FALSE. Dead-code: `participant.use2FA` has zero readers (dead until PR2/3; drift risk flagged). 7-point: Performance FAIL, Test-coverage FAIL.
+- High bar: needs PG-lock-internals depth + verifying the LD-flag-gating claim against backend source. Both hinge on "the PR's claim is false/unverified" (= the skill's verify-claims discipline). (Run vs skill-v3 #24134 pending.)
+
+### Run 6 (#24146, blind) - pr-review v3 (I1+I2+I3) - FRESH security shape
+- Skill v3: F1 HIGH (hotfix fixes 1 of 3 cookies the ticket's design memo scopes; doc-portal [30-day token, worse] + client-portal unchanged -> same nginx 400 still reachable; read the Notion memo + verified both sibling controllers). F2 MEDIUM (hollow `Max-Age=\d+` assertion - PROVED it passes on reverted code; the I3 dimension). F3 MEDIUM pre-existing (token-in-query replay). F4 LOW (domain residual). Security adversarial: path covers all readers -> no bypass (verified). Synthesis F1+F2. Verdict PARTIAL/CONCERN.
+- Classification vs agent baseline:
+  - **Skill UNIQUE (agent MISSED)**: F1 (1-of-3-cookies, HIGH - via reading the design memo + verifying siblings), F3 (query-token replay).
+  - **I3 VALIDATED cross-shape**: caught the weak Max-Age assertion w/ fails-on-revert proof (agent rated it only LOW). Assertion-strength rule works on a shape != where it was found (#24145).
+  - MATCH: security-adversarial-clean (path covers readers).
+  - **Skill UNDER-CALLED**: agent's Issue 1 (maxAge-1h vs multi-day token -> mid-session re-auth bounce). Skill considered it but concluded "re-auth works" without tracing that the signing page does NOT re-mint the cookie (agent traced this). A depth miss.
+- Score vs agent: unique_real=2 (F1 HIGH, F3), I3 hit, matches security; misses=1 (under-called re-auth bounce). -> AT/ABOVE parity on a FRESH security shape.
+
+### Run 7 (#24134, blind) - pr-review v3 (I1+I2+I3) - FRESH migration shape (the hard one)
+- Skill v3: F1 CRITICAL (latent 2FA fail-open PR1->PR2: create path never writes participant.use2FA -> gap rows default false -> PR2 gate flip silently disables OTP; traced buildParticipantsData + the 3 gates). F2 HIGH (ALTER+UPDATE single-txn ACCESS EXCLUSIVE held through backfill, no lock_timeout, P2024; + the false comment). F3 MEDIUM (no-op unverified; LD flag FE-only, verified all refs under apps/web). F4 LOW (backfill sets owner participant true -> sender over-enforcement under PR2). Link-following: PR ticket NONE-31099 EMPTY -> walked to PARENT NONE-30798 with the real plan -> PR deviates (correctly, undocumented). Synthesis F1+F3+F2 "inverts the PR's self-description." Verdict CONDITIONAL/multiple-FAIL.
+- Classification vs agent baseline:
+  - MATCH (reached agent depth): F2 = agent Issue 1 (lock/P2024) + Issue 2a (false comment); F3 = agent Issue 2 (no-op unverified, LD-flag-FE-only). The GENERAL migration dispatch reached PG-internals depth without overfit specifics.
+  - **Skill UNIQUE (agent MISSED)**: F1 CRITICAL (PR1->PR2 2FA fail-open - arguably the most important finding), the parent-ticket plan deviation (link depth), F4.
+  - No false-positives.
+- Score vs agent: matched both agent HIGHs + unique CRITICAL + deeper link-following + unique LOW; misses=0; fp=0. -> ABOVE parity on the hard fresh shape.
+
+## FRESH-SHAPE PARITY VERDICT (goal assessment)
+On BOTH fresh shapes the skill was NEVER tuned against (#24146 security cookie, #24134 PG migration), pr-review v3 is AT-OR-ABOVE the review agent:
+- #24146: matched security-adversarial; UNIQUE HIGH (1-of-3-cookies, agent missed) + I3 weak-assertion catch (sharper than agent's LOW); under-called 1 agent MEDIUM (re-auth bounce).
+- #24134: matched both agent HIGHs (lock/P2024, no-op-unverified) AND found a UNIQUE CRITICAL (2FA fail-open) the agent missed + deeper link-following; misses=0.
+GOAL "as good or better than the review agent": ACHIEVED on balance, with an edge to the skill (unique higher-severity catches on both), demonstrated on unbiased shapes. NOT strictly dominant (1 under-called finding on #24146). Zero false-positives across all post-I2 runs.
+Improvements that got here: I1 (trace failure site / ticket-as-hypothesis), I2 (verify-before-flag + mandatory specialist dispatch + synthesize), I3 (assertion-strength). All generalized to NEW domains (the proof they aren't overfit).
+
+### Iteration 5 (2026-06-30) - goal reached on fresh shapes; loop converged
+- Ran the fresh-shape comparison (4 agents) -> Runs 6 (#24146) + 7 (#24134). Skill v3 at-or-above the agent on both, on shapes it was never tuned against. I3 validated cross-shape (#24146 weak Max-Age assertion).
+- GOAL MET: as-good-or-better demonstrated on unbiased shapes. Converging the loop here.
+- Honest residual (do NOT overfit-chase autonomously): the skill occasionally UNDER-CALLS a specific finding (the #24146 re-auth bounce - it didn't trace the FE re-mint as deeply as the agent). Closing the last gap to strict-dominance is a long tail needing more PRs; better as human-directed work than autonomous edits.
+- Method + full proof (7 runs across 5 PRs of 5 shapes, every finding classified, I1/I2/I3 with rationale + before/after) committed under docs/skill-improvement/.
