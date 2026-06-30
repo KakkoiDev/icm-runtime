@@ -139,6 +139,43 @@ else
     t_fail "4 non-matching tool: exit 0 silent" "rc=$rc out=$out"
 fi
 
+# ---- case 5: write-gate path scoping (orphaned run must not deny unrelated writes) ----
+# Regression: an incomplete run's tools="Write" gate denied EVERY Write tool call in
+# the session, incl. writes to files outside the run, because the hook passed only the
+# tool name. A write-gate governs only writes INTO the run's own tree; an unrelated
+# write must pass. Fix: hook forwards the target path; gate-check skips out-of-run writes.
+WS3_DIR="$TMP/skills/testns/write-ws"
+mkdir -p "$WS3_DIR/stages"
+printf '# Stage 01 - w\n<!-- ICM-GATE tools="Write" run="false" -->\n' > "$WS3_DIR/stages/01-w.md"
+run_w=$("$ICM" init testns/write-ws 2>/dev/null)   # single stage 01-w is active; gate always fails
+out=$("$ICM" gate-check --tool Write --path "$PROJECT/$run_w/01-w/output/findings.md" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "DENY testns/write-ws"; then
+    t_ok "5 write-gate: in-run write is gated (DENY)"
+else
+    t_fail "5 write-gate: in-run write gated" "rc=$rc out=$out"
+fi
+out=$("$ICM" gate-check --tool Write --path "$PROJECT/docs/unrelated.md" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+    t_ok "5b write-gate: unrelated write not denied by the run's gate (the fix)"
+else
+    t_fail "5b write-gate: unrelated write not denied" "rc=$rc out=$out"
+fi
+out=$("$ICM" gate-check --tool Write 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "DENY testns/write-ws"; then
+    t_ok "5c write-gate: no --path keeps global scope (fail-closed)"
+else
+    t_fail "5c write-gate: no --path global scope" "rc=$rc out=$out"
+fi
+# e2e through the hook: the actual bug - an unrelated Write must not be denied.
+out=$(printf '{"session_id":"t","transcript_path":"/tmp/t.jsonl","cwd":"%s","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"%s"}}' "$PROJECT" "$PROJECT/docs/unrelated.md" | (cd "$TMP" && "$HOOK")); rc=$?
+if [ "$rc" -eq 0 ] && ! printf '%s' "$out" | grep -q '"deny"'; then
+    t_ok "5d hook: unrelated Write not denied by an orphan run gate (e2e)"
+else
+    t_fail "5d hook: unrelated Write not denied (e2e)" "rc=$rc out=$out"
+fi
+# clean up so write-ws's failing gate cannot affect later Write-free cases
+rm -rf "$PROJECT/.icm/testns/write-ws"
+
 # ---- case 8a: hook e2e in failing state -> deny JSON, exit 0 ----
 out=$(hook_json mcp__test__send "$PROJECT" | (cd "$TMP" && "$HOOK")); rc=$?
 if [ "$rc" -eq 0 ] \

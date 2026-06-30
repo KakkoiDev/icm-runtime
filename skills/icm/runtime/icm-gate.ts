@@ -94,8 +94,14 @@ export default function (pi: ExtensionAPI) {
       return { block: true, reason: "icm gate: icm.sh not found, cannot evaluate gates. Reinstall icm-runtime or remove this extension." };
     }
 
+    // Target path of a file-writing tool (Write/Edit/NotebookEdit); lets gate-check
+    // scope a run's write-gate to that run's own tree, so an orphaned run does not
+    // deny unrelated writes. Empty for path-less tools (keeps global scope).
+    const ti = event?.args ?? event?.input ?? event?.toolInput ?? {};
+    const toolPath = ti?.file_path ?? ti?.path ?? ti?.notebook_path ?? "";
+
     try {
-      execFileSync(icmSh, ["gate-check", "--tool", event.toolName, "--cwd", cwd], {
+      execFileSync(icmSh, ["gate-check", "--tool", event.toolName, "--cwd", cwd, "--path", String(toolPath)], {
         encoding: "utf8",
         timeout: 15000,
       });

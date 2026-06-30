@@ -374,6 +374,7 @@ check_run() {
     cr_run=$1
     cr_tool=$2
     cr_suspend=${3:-}
+    cr_path=${4:-}
     cr_ws=${cr_run%/*}
     cr_ws=${cr_ws#.icm/}
     cr_ts=${cr_run##*/}
@@ -419,6 +420,19 @@ check_run() {
                     continue
                 fi
                 [ "$cr_rc" -eq 0 ] || continue
+            fi
+            # Path scoping: a file-write tool call (Write/Edit) carries a target
+            # path. A run's gate governs ONLY writes INTO that run's own tree
+            # (stage output) - a write to an unrelated file is not this run's
+            # concern, so an orphaned/incomplete run cannot deny every Write in
+            # the session. Writes inside the run dir stay gated; path-less tool
+            # calls (fetch/bash activity gates) carry no cr_path and keep global
+            # scope, unchanged.
+            if [ -n "$cr_path" ]; then
+                case "$cr_path" in
+                    *"$cr_run"/*) : ;;
+                    *) continue ;;
+                esac
             fi
             if [ ! -f "$cr_run/.manifest" ]; then
                 echo "DENY $cr_ws $cr_ts $cr_stage: no .manifest in run, cannot verify frozen contract (re-init the run)"
@@ -1707,9 +1721,11 @@ _suspended_runs() {
 
 cmd_gate_check() {
     gc_tool=""
+    gc_path=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --tool) gc_tool=$2; shift 2 ;;
+            --path) gc_path=$2; shift 2 ;;
             --cwd)  cd "$2"; shift 2 ;;
             *) echo "Unknown gate-check option: $1" >&2; usage ;;
         esac
@@ -1727,9 +1743,9 @@ cmd_gate_check() {
 
     gc_out=$(latest_runs | while IFS= read -r gc_run; do
         if [ -n "$gc_suspended" ] && printf '%s\n' "$gc_suspended" | grep -Fxq "${gc_run#.icm/}"; then
-            check_run "$gc_run" "$gc_tool" suspend
+            check_run "$gc_run" "$gc_tool" suspend "$gc_path"
         else
-            check_run "$gc_run" "$gc_tool"
+            check_run "$gc_run" "$gc_tool" "" "$gc_path"
         fi
     done)
     if [ -n "$gc_out" ]; then

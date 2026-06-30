@@ -37,9 +37,11 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 0
 fi
 
-# One jq fork for all fields: this path runs on every tool call.
-vals=$(printf '%s' "$input" | jq -r '[.tool_name // "", .cwd // "", .transcript_path // ""] | @tsv' 2>/dev/null || :)
-IFS='	' read -r tool_name cwd tp <<EOF
+# One jq fork for all fields: this path runs on every tool call. tool_path is the
+# target of a file-writing tool (Write/Edit/NotebookEdit); empty for path-less
+# tools. gate-check uses it to scope a run's write-gate to that run's own tree.
+vals=$(printf '%s' "$input" | jq -r '[.tool_name // "", .cwd // "", .transcript_path // "", (.tool_input.file_path // .tool_input.path // .tool_input.notebook_path // "")] | @tsv' 2>/dev/null || :)
+IFS='	' read -r tool_name cwd tp tool_path <<EOF
 $vals
 EOF
 
@@ -75,7 +77,7 @@ fi
 # So: genuine denials fail closed; a broken checker fails OPEN, but loudly --
 # stderr warning + a telemetry breadcrumb so the breakage is visible, not silent.
 gc_rc=0
-out=$("$SCRIPT_DIR/icm.sh" gate-check --tool "$tool_name" 2>&1) || gc_rc=$?
+out=$("$SCRIPT_DIR/icm.sh" gate-check --tool "$tool_name" --path "$tool_path" 2>&1) || gc_rc=$?
 if [ "$gc_rc" -eq 0 ]; then
     exit 0
 fi
