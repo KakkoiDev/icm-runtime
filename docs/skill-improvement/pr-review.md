@@ -101,3 +101,7 @@ Goal: pr-review as good or better than the review agent, proven on real PRs.
 
 ## Parity verdict (current)
 pr-review v2 ≈ review agent (as-good-or-better substantially met). Wins: rigor (verify-before-flag), unique catches (secrets-CRITICAL #24126, design-depth+trap #24145), zero false-positives, synthesis, determinism+auditability+seal (process the agent lacks). Behind: a long tail of specialist-depth MEDIUM/LOW findings on 2 PRs. Method + proof fully documented for reuse on other skills.
+
+### Iteration 4 (2026-06-30) - I3 + fresh-shape comparison (loop resumed)
+- Shipped I3 (commit `7331839`, prose-only, eval green): extend verify-fidelity to assertion STRENGTH (a test that exists can still assert weakly - stripped field / loosened matcher / oracle that can't fail / mock standing in for the unit). Targets the #24145 unitCost-lax miss, generalized.
+- Launched FRESH-shape comparison (4 unnamed agents) on PRs the skill was NEVER tuned against: #24146 (security/auth - e-signature cookie scope+TTL, nginx 400) + #24134 (additive Prisma migration, ESignatureParticipant.use2FA, PR1/3). skill-v3 + review-agent on each. Purpose: (a) honest parity test on new shapes (no tuning bias), (b) does the skill's security + migration lens match the agent, (c) opportunistic I3 validation, (d) systematicity of long-tail depth patterns. RESULTS PENDING.
