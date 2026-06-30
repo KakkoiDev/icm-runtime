@@ -143,3 +143,8 @@ Improvements that got here: I1 (trace failure site / ticket-as-hypothesis), I2 (
 - GOAL MET: as-good-or-better demonstrated on unbiased shapes. Converging the loop here.
 - Honest residual (do NOT overfit-chase autonomously): the skill occasionally UNDER-CALLS a specific finding (the #24146 re-auth bounce - it didn't trace the FE re-mint as deeply as the agent). Closing the last gap to strict-dominance is a long tail needing more PRs; better as human-directed work than autonomous edits.
 - Method + full proof (7 runs across 5 PRs of 5 shapes, every finding classified, I1/I2/I3 with rationale + before/after) committed under docs/skill-improvement/.
+
+### Iteration 6 (2026-06-30) - I4 (verify-before-clearing); chasing strict dominance
+- Loop re-invoked -> push past "as-good-or-better-on-balance" to STRICT dominance. Target: the documented residual (skill UNDER-CALLS a concern by clearing it on an assumption; #24146 re-auth bounce - concluded "re-auth works" without tracing the FE re-mint).
+- Shipped I4 (commit `03e569a`, prose-only, eval green): verify-before-CLEARING - the dual of verify-before-flag. A dismissed concern is also a hypothesis (scars #7 both ways); trace the full recovery/fallback path to finding-depth and cite the exact code before concluding "it's fine"; clearing a HIGH-RISK concern on an assumption == flagging without verifying.
+- Launched blind skill-v4 on #24146 (the PR where the under-call happened). Test: does v4 now TRACE the FE re-mint flow and catch the re-auth bounce (agent Issue 1 it under-called in Run 6) - WITHOUT regressing its unique F1 (1-of-3-cookies)? Compare to saved #24146 agent baseline. RESULT PENDING.
