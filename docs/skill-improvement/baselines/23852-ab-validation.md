@@ -63,8 +63,9 @@ The orphaned skill run (open at 04-review/05-verify with no `findings.md`) cause
 `tools="Write"` gate to DENY *every* Write tool call in the session, including unrelated doc
 writes - the gate-hook gates by TOOL, not by whether the write belongs to the run. Caller-scoping
 fixed parent/child cross-talk but not "an orphaned/incomplete run blocks an unrelated agent's
-writes." Workaround: clean the stale run. Candidate fix: scope the global Write-gate to writes
-under the run dir, or auto-expire/ignore runs with no recent telemetry.
+writes." FIXED in `62462af`: the hook + pi adapter forward the tool's target path and `check_run`
+scopes a write-gate to writes into that run's own tree (path-less activity gates keep global scope).
+Regression test gate.test.sh case 5/5b/5c/5d, fails-on-revert verified, suite 150/0.
 
 ## Conclusion (shapes 1 + 2)
 The runtime-evidence + mechanism-trace improvement beats the pre-improvement pipeline on BOTH CI

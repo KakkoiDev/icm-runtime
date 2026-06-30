@@ -349,8 +349,9 @@ run-history: 10/10 successful nightly `event=schedule` runs).
 - **Limit of the claim**: both shapes are CI/workflow; the runtime-evidence tool is CI-specific by
   design. A non-CI shape (migration/app-flag) where only the prose levers apply is untested this
   iteration (expected A approx B; prose levers already validated I1-I5).
-- **Bug found (gate-hook)**: an orphaned/incomplete run's `tools="Write"` gate DENIES every Write
-  tool call in the session, not just writes belonging to the run (caller-scoping covers parent/
-  child, not orphans). Recorded in `baselines/23852-ab-validation.md` with a candidate fix
-  (scope the Write-gate to the run dir, or expire stale runs). Not yet fixed.
+- **Bug found AND fixed (gate-hook)**: an orphaned/incomplete run's `tools="Write"` gate DENIED
+  every Write tool call in the session, not just writes belonging to the run (caller-scoping
+  covered parent/child, not orphans). FIXED in `62462af`: the hook + pi adapter forward the tool's
+  target path; `check_run` scopes a write-gate to writes into that run's own tree. Regression test
+  gate.test.sh case 5/5b/5c/5d (fails-on-revert verified); suite 150/0.
 - **STILL OPTIONAL**: a 3rd (non-CI) shape to test prose-only generalization; the gate-hook fix.
