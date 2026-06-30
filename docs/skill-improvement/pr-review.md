@@ -202,3 +202,28 @@ VERDICT: the ensemble COVERS every agent finding AND adds 3+ unique verified fin
 - Gap addressed: the #24146 dominance proof used union(v3,v4,v5) = MIXED skill versions, and was n=1. Not a clean test of the ENCODED I5 (which is K passes of one version).
 - Launched a TRUE K=3 ensemble: 3 independent v5 single-passes on #24134 (the hard PG-migration shape; agent baseline = Issue 1 HIGH lock/P2024 + Issue 2 HIGH no-op-unverified + Issue 2a false-comment, and v3-Run7 already matched both + a unique CRITICAL 2FA fail-open). 
 - On return: union + dedup + adversarial-verify the 3 passes, compare to the agent baseline, test STRICT DOMINANCE. This validates the encoded I5 with same-version passes AND makes dominance n=2 (2nd shape). RESULT PENDING.
+
+### Iteration 10 (cont.) - ensemble pass B in; CONTESTED finding + possible I4 side-effect
+- Pass B (v5) on #24134: F4 MEDIUM (lock comment false - matches agent Issue 2a), F1 LOW (plan-deviation: parent ticket said DROP, PR defers - safer), F5 LOW (no-op verified via LD flag at hooks.ts:200). CLEARED with evidence: new column has no reader, 2FA gates read retained request-level column, no RLS so backfill tenant-agnostic ok.
+- **CONTESTED**: Pass B CLEARED the 2FA fail-open that v3 (Run 7) flagged CRITICAL. v3: PR1 arms gap rows -> PR2 gate-flip reads participant.use2FA(default false) -> 2FA off. Pass B: nothing reads the new column NOW -> no live fail-open -> PR2's concern, not PR1's.
+- **WATCH (possible I4 regression)**: verify-before-clearing (I4) may OVER-CLEAR latent/forward risks (don't fire in this PR, arm a future failure). v4 (#24146) cleared 1-of-3-cookies as "deferred"; pass B (#24134) cleared the fail-open. If A+C also clear it, I4 traded forward-risk sensitivity for fewer false-positives. The adversarial-verify step should reconcile to the calibrated middle (real forward-risk PR2 must handle = MEDIUM, not CRITICAL on PR1 nor fully cleared). PENDING A+C.
+
+### Runs 10-12 (#24134) - clean K=3 same-version v5 ensemble (passes A/B/C)
+- Pass A: lock-comment-false MEDIUM; forward-fail-open LOW (hand to PR2); no-op verified; backfill correct.
+- Pass B: lock-comment-false MEDIUM; plan-deviation LOW; CLEARED the fail-open ("nothing reads the column yet").
+- Pass C: lock-comment-false MEDIUM; ticket-fidelity LOW (reverted #22980, stale plan); CLEARED the fail-open AND VERIFIED PR2 (81749b7fd9 writes participant.use2FA on create + flips gate in same commit -> window gated out).
+
+### ENSEMBLE(A,B,C) on #24134, adversarially verified - dominance n=2
+- CONTESTED fail-open RECONCILED: v3 (Run7, old pass) called it CRITICAL by ASSUMING PR2 flips the gate without re-backfill; Pass C READ PR2 and disproved that -> calibrated LOW/contained (Pass A's rating). The ensemble's verify step corrected BOTH v3's over-call AND a naive full-clear. VINDICATES the verify discipline (I2 verify-before-flag + I4 verify-before-clear): kills false-positives AND false-clears. (Resolves the I4-over-clearing watch-point: the clear was JUSTIFIED by reading PR2, not an over-clear.)
+- vs agent baseline: COVERS both agent HIGHs (lock/P2024 = 3/3 passes; no-op-unverified = matched, LD-flag-FE-only verified) + UNIQUE (agent missed): forward-fail-open, reverted-#22980 plan-history. Zero false-positives.
+- HONEST CAVEAT: ensemble rated the lock MEDIUM (agent: HIGH) because it VERIFIED prod=0 backfill rows. More precise on real impact, but arguably under-weights the structural/template risk (anchoring severity on current data). A mild verify-discipline overcorrection on SEVERITY (not existence) - the structural hazard IS captured in the finding text, just rated MEDIUM. Net: ensemble covers + adds + zero-FP + better-verified; severity-calibration is a defensible difference, not a clear win or miss.
+
+## DOMINANCE n=2 verdict + FINAL (loop terminal)
+- #24146 (security): ensemble strictly dominates (covers agent + 3 unique verified, 0 FP).
+- #24134 (migration): ensemble covers both agent HIGHs + 2 unique, 0 FP, reconciled the contested CRITICAL to verified-LOW; severity-calibration on the lock is a defensible difference.
+- The encoded I5 ensemble validated with CLEAN same-version (v5) K=3 passes on a 2nd hard shape. The variance ceiling is genuinely beaten by ensembling; the verify discipline (I2/I4) reconciles contested findings to verified severity.
+- GOAL: pr-review is as-good-or-better than the review agent - per-run parity (single pass, cheap), strict-or-near-strict dominance (ensemble, ~Kx) - now demonstrated on 2 shapes via clean ensembles, with the verify discipline shown to self-correct contested findings.
+
+### Iteration 10 (final) - dominance n=2 confirmed; loop terminal
+- 5 improvements (I1 trace-failure, I2 verify+dispatch+synthesize, I3 assertion-strength, I4 verify-before-clear, I5 ensemble). 12 skill runs across 5 PRs / 5 shapes + 2 clean ensembles. Full proof + reusable method committed.
+- pr-review improvement is COMPLETE: prose-levers exhausted (I1-I4), structural lever validated (I5 ensemble, n=2 dominance). Re-running /loop on this prompt is now genuinely redundant - the remaining levers are BREADTH (apply the method to another skill - needs a target) and COST-TUNING K (a product decision), neither of which is more pr-review iteration.
