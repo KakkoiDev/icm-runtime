@@ -283,3 +283,33 @@ recording `none available` to satisfy itself).
 - C3: new held-out `execution-evidence.test.sh` - CONFIRMED/PLAUSIBLE/REFUTED status per CRITICAL/HIGH; CONFIRMED needs evidence (source-citation OR execution token); load-bearing-but-unexecuted claims tagged `UNVERIFIED:`.
 - C5/L1/L2/L3: mandatory adversarial per-finding verify; prior-review/approval/"manually tested" treated as hypotheses; runtime-context checklist in the config lens; mandatory-ensemble rule for auth/secrets/CI-triggers/payment/migrations.
 - Fixture: re-run #24126 cold (fails-on-revert net per spec section 5) + one second shape (cron/webhook/migration) to prove the lens generalizes before freezing C2/C3 thresholds.
+
+### Shipped (cont.) - full structural build in, statically verified (`807b2b0`)
+The user overrode the "defer Tier 3" caution with two correct arguments: (1) a gate/check
+is untestable until built, so deferral was circular; (2) low-frequency-but-real, high-
+severity yield (the review agent demonstrably caught these) at near-zero marginal cost
+justifies building. Conceded. Built all of it, with the two design-flaw fixes that survive
+independent of yield:
+- **C4** (`807b2b0`): new gated stage `03-runtime-evidence`; pipeline renumbered to 6
+  (review->04, verify->05, report->06). Runtime globs `stages/*.md` so it was pure renames;
+  `icm.sh init` scaffolds + manifests all 6 stages (smoke-verified, the new stage's CONTEXT.md
+  is in the run manifest -> tamper-evidence covers it).
+- **C2** (`807b2b0`): stage-05 no-test-oracle branch - "execution-backed" for a CI/config PR
+  = run-history + a real actor/event instance, never "static only". Wedge-proofed: the
+  gate-on-prior-stage chain guarantees runtime-evidence exists upstream, and the tool always
+  emits content (absence is recorded), so the gate enforces "you looked" without ever blocking.
+- **C3** (`807b2b0`): held-out `execution-evidence.test.sh`. Fixed contract (the flaw caught
+  before building): a CONFIRMED finding's evidence may be a source citation OR an execution
+  token - reading source IS evidence - so it never false-fails a grounded report. Directionally
+  tested: FAILs the #24126 shape (CRITICAL/HIGH, no status), PASSes a grounded report, FAILs
+  CONFIRMED-without-evidence.
+- **Prose** (`807b2b0`): L1 (prior reviews/approvals/"manually tested" = hypotheses), L2
+  (runtime-context checklist in the config lens), L3 (ensemble MANDATORY for auth/secrets/
+  CI-trigger/payment/migration or actor/event-conditional diffs), C5 (mandatory adversarial
+  per-finding verify in stage 05).
+- Verification done: structure eval `ok`; C3 tested 3 directions; runtime suite **146/0**;
+  stale-reference sweep clean; 6-stage init smoke + manifest coverage confirmed.
+- **STILL PENDING (empirical, not static):** the cold re-run of the restructured skill on
+  #24126 (does the new pipeline actually surface the trigger question a single old pass missed?
+  fails-on-revert) + one second shape to prove the lens generalizes before any threshold
+  tightening. Static correctness is proven; behavioral proof is not yet captured.
