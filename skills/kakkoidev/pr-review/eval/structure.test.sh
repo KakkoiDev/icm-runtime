@@ -21,15 +21,18 @@ done
 # Grounding (03) precedes review (04): review gates on runtime-evidence, not the diff alone.
 grep -q 'ICM-GATE .*run="test -s ../01-context/output/links.tsv"' stages/02-links.md || { echo "FAIL: 02 gate must require 01 links.tsv"; exit 1; }
 grep -q 'ICM-GATE .*run="test -s ../02-links/output/link-graph.md"' stages/03-runtime-evidence.md || { echo "FAIL: 03 gate must require 02 link-graph.md"; exit 1; }
-grep -q 'ICM-GATE .*run="test -s ../03-runtime-evidence/output/runtime-evidence.md"' stages/04-review.md || { echo "FAIL: 04 gate must require 03 runtime-evidence.md"; exit 1; }
+grep -q 'ICM-GATE .*run="test -s ../03-runtime-evidence/output/runtime-evidence.md' stages/04-review.md || { echo "FAIL: 04 gate must require 03 runtime-evidence.md"; exit 1; }
+grep -q 'ICM-GATE .*impact.md' stages/04-review.md || { echo "FAIL: 04 gate must also require 03 impact.md (changed-value dual)"; exit 1; }
 grep -q 'ICM-GATE .*run="test -s ../04-review/output/findings.md"' stages/05-verify.md || { echo "FAIL: 05 gate must require 04 findings.md"; exit 1; }
 grep -q 'ICM-GATE .*run="test -s ../05-verify/output/verification.md"' stages/06-report.md || { echo "FAIL: 06 gate must require 05 verification.md"; exit 1; }
 
 # C1: the runtime-evidence stage runs the deterministic grounding tool.
 grep -q 'gather-runtime-evidence' stages/03-runtime-evidence.md || { echo "FAIL: 03-runtime-evidence must invoke gather-runtime-evidence (C1)"; exit 1; }
+# C-dual: the same stage runs the changed-value impact tool (dead-code's reverse direction).
+grep -q 'gather-impact' stages/03-runtime-evidence.md || { echo "FAIL: 03-runtime-evidence must invoke gather-impact (changed-value dual)"; exit 1; }
 
 # Deterministic tools present and executable.
-for t in tools/gather-pr tools/fetch-web tools/gather-runtime-evidence; do
+for t in tools/gather-pr tools/fetch-web tools/gather-runtime-evidence tools/gather-impact; do
     test -x "$t" || { echo "FAIL: $t missing or not executable"; exit 1; }
 done
 
@@ -38,6 +41,12 @@ grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/p
 
 # Scars lens frozen into the skill.
 test -s references/scars.md || { echo "FAIL: references/scars.md missing"; exit 1; }
+
+# Changed-value dual: the offline tool check + its frozen fixture present and runnable
+# (in eval/ so `icm.sh eval` runs it - it is a deterministic tool check, not a graded contract).
+test -x eval/changed-literal-impact.test.sh || { echo "FAIL: eval/changed-literal-impact.test.sh missing or not executable"; exit 1; }
+test -f eval/fixtures/changed-literal/pr.diff || { echo "FAIL: changed-literal fixture diff missing"; exit 1; }
+test -d eval/fixtures/changed-literal/repo || { echo "FAIL: changed-literal fixture repo missing"; exit 1; }
 
 # No ICM-CALL: this skill's tool calls are not arg-verified, and a scraped
 # ICM-CALL with no matching real call is a permanent audit deviation.

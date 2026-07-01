@@ -1,7 +1,7 @@
 # Stage 04: Review (ported judgment)
 
 <!-- ICM-TOOLS expect="(Read|Grep|Bash|Task)" -->
-<!-- ICM-GATE tools="Write" run="test -s ../03-runtime-evidence/output/runtime-evidence.md" -->
+<!-- ICM-GATE tools="Write" run="test -s ../03-runtime-evidence/output/runtime-evidence.md && test -s ../03-runtime-evidence/output/impact.md" -->
 
 Run the code review against the gathered context, the resolved requirements, and the
 runtime evidence. The gate blocks writing findings until the runtime-evidence grounding
@@ -15,6 +15,7 @@ assume the diff was written by a competitor that compiles and passes lint.
 | PR context | ../01-context/output/pr-context.md | summary, buckets, action feed |
 | Link graph | ../02-links/output/link-graph.md | resolved tickets + authoritative requirements |
 | Runtime evidence | ../03-runtime-evidence/output/runtime-evidence.md | run history, real actor/event instance, secret stores (facts) |
+| Changed-value impact | ../03-runtime-evidence/output/impact.md | tests/snapshots that still assert a value the diff removes (breakage candidates) |
 | AC execution trace | ../03-runtime-evidence/output/ac-execution-trace.md | per mechanism-AC: trigger->condition->step->effect, each link verified/unverified/broken |
 | Diff | ../01-context/output/pr.diff | the change to review (sealed in 01) |
 | Scars | references/scars.md | documented past failures (frozen this run) |
@@ -40,7 +41,7 @@ Read EVERY file in the diff end-to-end before judging (scars #9: a partial read 
    - large diff (>=50 files or >=500 lines) -> `differential-review`
 4. **External-rule check (grounded in stage 02)**: for every hardcoded constant or gating set that encodes a domain rule (tax code list, rate, regex, limit, code list, date cutoff), verify it matches the authoritative requirement fetched in the link graph - NOT the PR's own tests (scars: self-consistent tests prove nothing). Also verify the rule's SCOPE matches the actual failure: is the gate keyed on the right set - the exact set the failing code path consumes? A gate on a different or narrower set than the failure actually needs is a behavior-change finding even if it "validates against an authoritative set." If the requirement was `walled-off` or absent, the constant is `Unverified external constant` (HIGH). For *mechanism/effect* ACs rather than value constants ("notification sent on PR open", "job runs nightly", "flag gates the path"), judge against stage 03's `ac-execution-trace.md`: an AC whose chain carries an `unverified` or `broken` link is NOT satisfied even if the code "looks right", and a finding (or a clearance) built on a chain link the trace marks `unverified` must itself be labeled unverified - or handed to stage 05 to execute - not asserted as fact.
 5. **Adversarial + blast radius**: per HIGH-RISK file, give 3 attack vectors (precondition, exploit, impact); for new public exports, grep callers and classify blast radius.
-6. **Dead code + scope drift**: every added symbol has a consumer outside tests; every changed file serves the PR (scars: "for future callers" / "for consistency" / dead error handling are defects, not style).
+6. **Dead code + scope drift + changed-value breakage (the dual)**: every added symbol has a consumer outside tests; every changed file serves the PR (scars: "for future callers" / "for consistency" / dead error handling are defects, not style). AND the reverse direction, from `impact.md`: a user-visible value this PR REMOVES (an i18n label/message swapped or deleted) that an existing test/snapshot still asserts is a **breakage candidate** - read the assertion/locator and decide whether that value is the oracle (a real latent break -> test-coverage finding, even if the suite is not in the PR pipeline) or an incidental match (a comment, an unrelated row). Do not skip a candidate as "no test for this component": the oracle often lives in an e2e/constants file keyed on the OLD rendered value, one alias hop from the assertion (scars: #24198 - the review that missed exactly this). A `0 consumers` clear line in impact.md clears the value; silence never does.
 7. **Scars check**: scan the diff for recurrence of any documented failure in references/scars.md; cite the scar by ticket id when one matches.
 8. **Severity**: CRITICAL (data loss/auth bypass/RCE/payment/schema), HIGH (2 specialists same line, or 1 + reproducible vector, or unverified external constant), MEDIUM (1 specialist + file:line evidence), LOW (style only -> Recommendations, not blockers). No nits.
 

@@ -355,3 +355,75 @@ run-history: 10/10 successful nightly `event=schedule` runs).
   target path; `check_run` scopes a write-gate to writes into that run's own tree. Regression test
   gate.test.sh case 5/5b/5c/5d (fails-on-revert verified); suite 150/0.
 - **STILL OPTIONAL**: a 3rd (non-CI) shape to test prose-only generalization; the gate-hook fix.
+
+---
+
+## Iteration 12 (#24198 / SOBA-265) - the non-CI shape lands; the FIRST real miss; dual-check added
+
+The "STILL OPTIONAL" non-CI shape (line 357) arrived as a real A/B and broke the pattern:
+this is the **first documented shape where the skill MISSED a finding the agent CAUGHT** -
+not a severity/precision difference, an outright miss. It re-narrows every "dominance"
+verdict above: those held on CI (shapes 1-2) and on the security/refactor/migration shapes
+(I1-I5), but NONE of them was a prod PR that changes a user-visible string an existing test
+asserts. On that shape the skill was NOT a superset.
+
+- PR #24198: an i18n label-unification (`原価`->`支出` etc). A/B: `/pr-review` skill vs the
+  `review` agent, both on the same worktree.
+- **Skill caught, agent missed**: a dead translation key `balanceManagement:'Cost price'`
+  (grep 0 refs, adversarial-refuted, scar-checked, regression-spec'd). Agent asserted
+  "Dead code: PASS" without grepping.
+- **Agent caught, skill missed**: a latent E2E break - `tests/e2e/.../balance.spec.ts:165`
+  asserts `原価` via `Label.COST_PRICE='原価'` (`constants/index.ts:1016`); the PR stops
+  rendering `原価`, so the `hasText:'原価'` locator matches nothing and the assertion fails.
+  The skill wrote "test coverage PASS (no oracle)" and never searched the e2e tree.
+- **Root cause** (the generalizable lesson): the skill implemented only ONE direction of a
+  dual. Dead-code = "an ADDED symbol -> zero consumers -> dead" (present). Its reverse =
+  "a REMOVED user-visible value -> an existing test still asserts it -> breakage" (absent).
+  Plus two concrete bugs: consumer greps were scoped to app-source dirs (never the e2e
+  tree), and "no oracle" was read as "no colocated test file" when the oracle lived in the
+  e2e tree keyed on the OLD value, one alias hop from the assertion.
+- Pre-fix, the two reviewers were **complementary**, not one-strictly-better. The prior log
+  overstated "dominance" as if universal; this shape shows it was shape-limited (again).
+
+### Shipped this iteration (deterministic tool + gate + held-out check - the doc's own philosophy, not prose)
+- **`tools/gather-impact`**: the dual of dead-code. For every i18n key/value the diff
+  REMOVES, resolve the value (grep dict-candidate files directly for the key - no reliance
+  on a namespace->filename transform) and grep the TEST TREE ONLY (`*.spec.*`/`*.test.*`/
+  `__snapshots__`/e2e/cypress/playwright; code + snapshot extensions, docs excluded) for the
+  value, listing each consumer as a breakage CANDIDATE. Test-tree scoping is the precision
+  source (repo-wide `原価` hits 754 files - swagger dumps; scoped to code tests it is the
+  handful of assertions). Ranks assertion/alias sites (spec/snap/constants/enums) first so a
+  load-bearing consumer is never capped out. Visual/screenshot snapshots marked NOT searched
+  (never a false clear). Read-only, no gh/network.
+  - **Cold-validation on the real #24198**: run against the sealed diff + the worktree in
+    2.4s (198 dict files, 2848 test files), it surfaces `constants/index.ts:1016 COST_PRICE:
+    '原価'` - the exact alias the agent hand-traced to reach `balance.spec.ts:165`. The miss
+    is now deterministic surfacing; stage 04/05 prose does the one alias hop to the assertion.
+- **Gate**: stage 04 now gates on `impact.md` (as well as `runtime-evidence.md`) - the
+  guarantee is enforced, not optional.
+- **Prose (2 lines only)**: stage 04 - a test asserting a removed value is a breakage
+  CANDIDATE to verify (not an auto-finding: the value can appear in comments / unrelated
+  rows). Stage 05 step 1 - consult `impact.md` before writing "no oracle"; separate the
+  code-logic claim ("assertion breaks") from the CI claim ("pipeline red") - the agent's own
+  correction-log lesson on this same PR.
+- **`eval/changed-literal-impact.test.sh`** (offline, known-answer fixture, no gh/network;
+  in `eval/` not `eval-heldout/` because `icm.sh eval` only runs `eval/*.test.sh`, and this is
+  a deterministic TOOL check, not an LLM-graded output contract): asserts resolution ran
+  (value present, not just "file written"),
+  test-tree-scoped grep found the real consumer, the dict source is NOT listed (whole-repo
+  revert would list it), a non-i18n literal ("Save") is not emitted (precision), and CLEARED
+  (`0 consumers`) is distinguished from NOT-SEARCHED. **Fails-on-revert proven** on 2 bad
+  reverts: skip resolution -> A1 fails; whole-repo grep instead of test-tree scope -> A3 fails.
+- Verification: structure eval `ok`; changed-literal-impact check `ok`; both reverts break it.
+
+### Honest scope of the claim
+- This makes the skill's finding set a **superset of the agent FOR THIS CLASS** (removed
+  user-visible i18n value asserted by an existing test) - it now catches that AND the dead
+  key the agent missed. It is NOT a fresh universal-dominance claim; it closes one named gap.
+- **Residual misses (documented, not solved)** - in the tool header + scars: visual/screenshot
+  snapshots (grep can't read pixels - flagged NOT searched, not cleared), computed/interpolated
+  strings (value never appears verbatim), and non-i18n hardcoded user-visible strings (out of
+  the i18n tier by design - a precision choice: bare-literal grep floods).
+- Deferred: the F2 severity fork (skill LOW/PM vs agent MEDIUM "unify goal ships a new
+  divergence") - the skill's read of the AC's explicit location list is defensible; forcing
+  "narrower-than-stated-goal = finding" risks noise. Not changed.

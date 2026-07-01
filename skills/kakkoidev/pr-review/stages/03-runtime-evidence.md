@@ -31,6 +31,19 @@ It does not judge - that is stage 04. Do not flag findings here.
    stores any referenced `secrets.*` resolves in. Absence is a recorded fact, never a
    silent skip. The tool is a live snapshot (run history / secrets drift) - that is
    expected; the load-bearing fact (e.g. "the bot applies the label") is stable.
+1b. **Gather changed-value impact (deterministic) - the dual of the dead-code check.** Run:
+   ```bash
+   bash ~/.agents/skills/kakkoidev/pr-review/tools/gather-impact ../01-context/output/pr.diff output
+   ```
+   Dead-code asks "an ADDED symbol - does anything consume it?"; this asks the reverse:
+   "a user-visible value this PR REMOVES - does an existing test/snapshot still assert it?"
+   For every i18n key/value the diff removes, it resolves the value and greps the TEST TREE
+   (scoped: `*.spec.*`, `*.test.*`, `__snapshots__`, e2e/cypress/playwright) for it, listing
+   each consumer as a BREAKAGE CANDIDATE. This is the deterministic surfacing of exactly the
+   miss the A/B on #24198 exposed (an e2e assertion on a label the PR stopped rendering). It
+   emits facts only - "candidate to verify", never "confirmed break"; visual/screenshot
+   snapshots are explicitly marked NOT searched (never a false clear). Stage 04 judges which
+   candidates are real; the tool never judges here.
 2. **Per-AC execution-chain trace (model).** For every acceptance criterion that asserts
    an *effect or mechanism* (not just a value), lay out the chain
    `trigger -> condition -> step -> external effect` and mark each link
@@ -53,4 +66,5 @@ bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/pr-review --stage 
 | Artifact | Location | Format |
 |----------|----------|--------|
 | Runtime evidence | output/runtime-evidence.md | Tool output (verbatim): changed-workflow run history; per conditional actor/event a real instance (timeline ops with actor + timestamp); secret-store membership (names only). Facts, no judgment. |
+| Changed-value impact | output/impact.md | Tool output (verbatim): per user-visible value the diff REMOVES (i18n key/value), the test/snapshot files that still assert it (breakage candidates), each with `file:line`; an explicit `0 consumers` clear line where none; visual snapshots marked NOT searched. Facts, no judgment. |
 | AC execution trace | output/ac-execution-trace.md | One block per mechanism-AC: the `trigger -> condition -> step -> external effect` chain, each link tagged `executes for the real actor` / `unverified` / `broken` with a citation into runtime-evidence.md. Value-only ACs are noted as "constant - checked in 04", not traced. |

@@ -1,0 +1,203 @@
+#!/bin/sh
+# gather-impact: the deterministic DUAL of the dead-code check.
+#
+# Dead-code (stage 04) asks: an ADDED symbol - does anything consume it? (0 refs = dead)
+# gather-impact asks the reverse: a value this PR REMOVES from the rendered output -
+# does an existing test/snapshot still assert it? (a hit = a breakage CANDIDATE)
+#
+# Scope: the i18n tier. The high-precision, high-recall shape is a user-visible string
+# routed through an i18n dictionary. We extract i18n keys/values the diff removes,
+# resolve each key to its dictionary VALUE, then grep the TEST TREE ONLY for that value.
+# Scoping the value-grep to the test tree is the precision source: repo-wide a value like
+# a Japanese label hits swagger/openapi dumps in the hundreds; inside tests/ it is the
+# handful of assertions that will actually break.
+#
+# Usage: gather-impact <pr-diff-file> <out-dir> [repo-root]
+#   repo-root defaults to `git rev-parse --show-toplevel` (the checkout under review).
+# Writes:
+#   <out-dir>/impact.md  - per removed value, its test-tree consumers (or an explicit
+#                          "searched <trees>, 0 consumers" clear line). NO judgment.
+#
+# Read-only. No gh, no network. POSIX sh / bash 3.2.
+#
+# Known residual misses (documented, not solved - see references/scars.md):
+#   - visual/screenshot snapshots (.png) encode the value as pixels; grep can't see them.
+#     Emitted explicitly as "NOT searched" so a visual break never reads as a false clear.
+#   - computed/interpolated strings (`${A}${B}`, .toUpperCase()) - value never appears verbatim.
+#   - non-i18n hardcoded user-visible strings - out of the i18n tier by design.
+set -eu
+
+DIFF=${1:-}; OUT=${2:-}; ROOT=${3:-}
+[ -n "$DIFF" ] && [ -n "$OUT" ] || { echo "usage: gather-impact <pr-diff-file> <out-dir> [repo-root]" >&2; exit 2; }
+[ -f "$DIFF" ] || { echo "gather-impact: diff file not found: $DIFF" >&2; exit 2; }
+if [ -z "$ROOT" ]; then
+    ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+fi
+[ -d "$ROOT" ] || { echo "gather-impact: repo root not a directory: $ROOT" >&2; exit 2; }
+mkdir -p "$OUT"
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+TAB=$(printf '\t')
+
+# A bracket class matching either quote char: [ " ' ]  (built to survive sh quoting).
+QC='["'"'"']'
+# i18n dictionary file path signature (case-insensitive), and the test-tree signature.
+DICT_PAT='i18n|locale|dictionar|translat|/lang/|/lng/|/messages/'
+TEST_PAT='(^|/)(tests?|e2e|cypress|playwright|__snapshots__)/|\.(spec|test)\.[A-Za-z0-9]+$|\.snap$'
+PRUNE='node_modules|/\.git/|/\.icm/|/dist/|/build/|/coverage/'
+CAP=25   # max consumer lines listed per value; the rest are counted, never silently dropped
+
+# ---- Inventory the repo once: dict-candidate files, test-tree files ----
+find "$ROOT" \( -name node_modules -o -name .git -o -name .icm -o -name dist -o -name build -o -name coverage \) -prune \
+     -o -type f -print 2>/dev/null > "$TMP/allfiles.txt" || : > "$TMP/allfiles.txt"
+
+grep -Ei "$DICT_PAT" "$TMP/allfiles.txt" 2>/dev/null | grep -Ev "$PRUNE" \
+    | grep -Ei '\.(ts|tsx|js|jsx|mjs|cjs|json|po|arb|yaml|yml)$' > "$TMP/dictfiles.txt" || : > "$TMP/dictfiles.txt"
+# Test tree = EXECUTABLE test / snapshot files only. A value in a markdown design/research
+# doc under tests/ asserts nothing and cannot break - restrict to code + snapshot extensions
+# so those docs (often the bulk of hits) never bury the real assertion sites.
+grep -E "$TEST_PAT" "$TMP/allfiles.txt" 2>/dev/null | grep -Ev "$PRUNE" \
+    | grep -Ei '\.(ts|tsx|js|jsx|mjs|cjs|py|rb|go|java|kt|swift|snap)$' > "$TMP/testfiles.txt" || : > "$TMP/testfiles.txt"
+
+DICT_N=$(wc -l < "$TMP/dictfiles.txt" | tr -d ' ')
+TEST_N=$(wc -l < "$TMP/testfiles.txt" | tr -d ' ')
+
+# ---- Extract removed i18n signals from the diff ----
+# Removed lines only (a '-' line that is not the '--- a/...' file header).
+grep -E '^-' "$DIFF" 2>/dev/null | grep -Ev '^--- ' > "$TMP/removed.txt" || : > "$TMP/removed.txt"
+
+# Pattern 1: keys from removed t('ns:key') / t("ns:key") usages (any file).
+#   -> the property name to resolve is the part after the first ':' (ns stripped).
+grep -oE "t\([[:space:]]*${QC}[^\"']+" "$TMP/removed.txt" 2>/dev/null \
+    | sed -E "s/^t\([[:space:]]*${QC}//" \
+    | sed -E 's/^[^:]*:(.*)$/\1/' \
+    | sed '/^$/d' | sort -u > "$TMP/keys.txt" || : > "$TMP/keys.txt"
+
+# Pattern 2: values from removed object-entry lines that live in a DICT-context file.
+#   awk tags removed lines by whether the current +++ file path is a dict file (static
+#   regex, no quote handling in awk); sed then pulls the RHS value (quote handling in sh).
+awk '
+  /^\+\+\+ /{ f=$0; sub(/^\+\+\+ b\//,"",f); sub(/^\+\+\+ /,"",f); next }
+  /^--- /{ next }
+  /^-/ { if (tolower(f) ~ /i18n|locale|dictionar|translat|\/lang\/|\/lng\/|\/messages\//) print }
+' "$DIFF" 2>/dev/null > "$TMP/dictremoved.txt" || : > "$TMP/dictremoved.txt"
+sed -nE "s/^-.*${QC}[^\"']*${QC}[[:space:]]*:[[:space:]]*${QC}([^\"']*)${QC}.*/\1/p" \
+    "$TMP/dictremoved.txt" 2>/dev/null | sed '/^$/d' | sort -u > "$TMP/vals_direct.txt" || : > "$TMP/vals_direct.txt"
+
+# ---- Resolve Pattern-1 keys to dictionary values ----
+: > "$TMP/vals_resolved.txt"      # value <TAB> key provenance
+: > "$TMP/vals_unresolved.txt"
+if [ -s "$TMP/keys.txt" ] && [ -s "$TMP/dictfiles.txt" ]; then
+    DICTLIST=$(tr '\n' ' ' < "$TMP/dictfiles.txt")
+    while IFS= read -r key; do
+        [ -n "$key" ] || continue
+        # escape ERE/sed specials in the key (spaces are fine); '/' too (sed delimiter).
+        kre=$(printf '%s' "$key" | sed 's/[][\\.^$*+?(){}|/]/\\&/g')
+        # grep dict files for  "key" :  / 'key' :  and pull the RHS value.
+        got=$(grep -hIE -- "${QC}${kre}${QC}[[:space:]]*:" $DICTLIST 2>/dev/null \
+              | sed -nE "s/.*${QC}${kre}${QC}[[:space:]]*:[[:space:]]*${QC}([^\"']*)${QC}.*/\1/p" \
+              | sed '/^$/d' | sort -u)
+        if [ -n "$got" ]; then
+            printf '%s\n' "$got" | while IFS= read -r v; do
+                [ -n "$v" ] && printf '%s\t%s\n' "$v" "$key"
+            done >> "$TMP/vals_resolved.txt"
+        else
+            printf '%s\n' "$key" >> "$TMP/vals_unresolved.txt"
+        fi
+    done < "$TMP/keys.txt"
+fi
+
+# Merge all removed values (resolved-from-key + direct-dict-line) with provenance.
+: > "$TMP/values.tsv"   # value <TAB> provenance
+[ -s "$TMP/vals_resolved.txt" ] && cat "$TMP/vals_resolved.txt" >> "$TMP/values.tsv"
+if [ -s "$TMP/vals_direct.txt" ]; then
+    while IFS= read -r v; do [ -n "$v" ] && printf '%s\tdict-line\n' "$v"; done < "$TMP/vals_direct.txt" >> "$TMP/values.tsv"
+fi
+sort -u "$TMP/values.tsv" -o "$TMP/values.tsv" 2>/dev/null || true
+
+# ---- Grep the TEST TREE for each removed value ----
+grep_tests() {  # $1 = value ; prints  file:line:content  for hits (filenames forced with -H)
+    [ -s "$TMP/testfiles.txt" ] || return 0
+    tr '\n' '\0' < "$TMP/testfiles.txt" | xargs -0 grep -HnI -F -- "$1" 2>/dev/null || true
+}
+# generic = pure-ASCII AND short/stopword: test-tree hits are likely incidental. Flagged, not dropped.
+is_generic() {
+    v=$1
+    case "$v" in *[!\ -~]*) return 1 ;; esac   # any non-ASCII byte -> NOT generic (kept)
+    n=$(printf '%s' "$v" | wc -c | tr -d ' ')
+    [ "$n" -lt 3 ] && return 0
+    lc=$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')
+    case " the and for add new edit save delete ok yes no name id type status title value item list " in
+        *" $lc "*) return 0 ;;
+    esac
+    return 1
+}
+
+TREES='tests/,e2e/,cypress/,playwright/,__snapshots__/,*.spec.*,*.test.*,*.snap'
+
+# ---- Emit impact.md ----
+{
+  echo "# Changed-value impact (i18n tier): who still asserts what this PR removes"
+  echo "_Deterministic dual of the dead-code check. A value the diff removes that an existing"
+  echo "test/snapshot still asserts is a BREAKAGE CANDIDATE - stage 04/05 confirm which is a real"
+  echo "oracle vs an incidental match. Read-only, no judgment here._"
+  echo "_Value (text) assertions only. Visual/screenshot snapshots (.png) are NOT searched -"
+  echo "a value rendered into a pixel snapshot will not appear here; treat that as unknown, not clear._"
+  echo
+  echo "- Repo root: $ROOT"
+  echo "- Dict-candidate files scanned: $DICT_N | Test-tree files scanned: $TEST_N"
+  echo "- Test trees searched: $TREES"
+  echo
+
+  if [ ! -s "$TMP/values.tsv" ]; then
+    echo "## No i18n key/value changes detected in the diff"
+    echo "The diff removed no \`t('ns:key')\` usage and no dictionary value line."
+    echo "(This is the expected 'clear' output for a PR that touches no i18n strings.)"
+    if [ -s "$TMP/vals_unresolved.txt" ]; then
+      echo
+      echo "Note: removed i18n keys that did not resolve to a dictionary value (dict not in this checkout?):"
+      sed 's/^/  - /' "$TMP/vals_unresolved.txt"
+    fi
+  else
+    echo "## Removed values and their test-tree consumers"
+    echo
+    # iterate unique values, join provenance keys
+    cut -f1 "$TMP/values.tsv" | sort -u | while IFS= read -r val; do
+      [ -n "$val" ] || continue
+      prov=$(awk -F'\t' -v v="$val" '$1==v{print $2}' "$TMP/values.tsv" | paste -sd',' - 2>/dev/null)
+      gtag=""
+      is_generic "$val" && gtag="  [generic value - test-tree hits may be incidental]"
+      echo "### value: \"$val\"  (from: ${prov:-?})$gtag"
+      hits=$(grep_tests "$val")
+      if [ -z "$hits" ]; then
+        echo "- searched $TREES -> 0 consumers (CLEAR: no existing test asserts this value)"
+      else
+        # Rank the load-bearing sites first (assertion specs, snapshots, and the
+        # constant/enum/selector files that alias the value) so they can never be
+        # capped out below lower-signal hits.
+        hits=$(printf '%s\n' "$hits" | awk -F: -v T="$TAB" '
+          { p=$1; r=2;
+            if (p ~ /\.(spec|test)\.[A-Za-z0-9]+$/ || p ~ /\.snap$/) r=0;
+            else if (p ~ /(constant|enum|fixture|mock|selector|label|locator)/) r=0;
+            print r T $0 }' \
+          | sort -t"$TAB" -k1,1n -s | cut -f2-)
+        total=$(printf '%s\n' "$hits" | grep -c . || echo 0)
+        printf '%s\n' "$hits" | head -n "$CAP" | sed 's/^/- /'
+        if [ "$total" -gt "$CAP" ]; then
+          echo "- ... $((total - CAP)) more consumer line(s) suppressed (cap $CAP; not silently dropped)"
+        fi
+        echo "  (=> BREAKAGE CANDIDATE: an existing test asserts a value this PR removes; verify in stage 04/05)"
+      fi
+      echo
+    done
+
+    if [ -s "$TMP/vals_unresolved.txt" ]; then
+      echo "## Removed i18n keys with no resolved value"
+      echo "(dictionary not in this checkout, or key nested/computed - could not resolve to a value to search)"
+      sed 's/^/- /' "$TMP/vals_unresolved.txt"
+      echo
+    fi
+  fi
+} > "$OUT/impact.md"
+
+echo "gather-impact: $OUT/impact.md ($(wc -l < "$OUT/impact.md" | tr -d ' ') lines); values=$(cut -f1 "$TMP/values.tsv" 2>/dev/null | sort -u | grep -c . || echo 0), dictfiles=$DICT_N, testfiles=$TEST_N"

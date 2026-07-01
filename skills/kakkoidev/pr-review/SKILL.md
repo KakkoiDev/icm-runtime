@@ -38,7 +38,7 @@ gathering that was optional and silent, and links that were never followed.
 |-------|------|--------|
 | 01-context | `gh` PR summary + action feed + extract every link + seal the diff (deterministic) | `pr-context.md`, `links.tsv`, `pr.diff` |
 | 02-links | follow each link depth-2 (Notion/Slack/web), flag walled-off | `link-graph.md` |
-| 03-runtime-evidence | how the mechanism executes: run history + a real actor/event instance + secret stores (deterministic) + per-AC execution-chain trace | `runtime-evidence.md`, `ac-execution-trace.md` |
+| 03-runtime-evidence | how the mechanism executes: run history + a real actor/event instance + secret stores (deterministic); the changed-value impact sweep (tests that still assert a value the diff removes - the dual of dead-code, deterministic); per-AC execution-chain trace | `runtime-evidence.md`, `impact.md`, `ac-execution-trace.md` |
 | 04-review | ported review dimensions + 7-point + scars check, findings tagged CONFIRMED/PLAUSIBLE/REFUTED | `findings.md` |
 | 05-verify | suite + mutation-in-worktree + read-only MCP + mandatory adversarial per-finding verify (no-oracle PRs backed by runtime-evidence, never "static only") | `verification.md` |
 | 06-report | assemble + seal the report | `REVIEW-<PR#>.md`, `report-receipt.md` |
@@ -80,5 +80,6 @@ Seal makes `REVIEW-<PR#>.md` tamper-evident; suggest committing `.icm-seals.log`
 
 ## Reference
 - `tools/gather-pr` - deterministic PR gather (gh + links). `tools/fetch-web` - curl + auth-wall detect.
+- `tools/gather-impact` - deterministic changed-value dual of dead-code: for each user-visible value the diff removes, the tests/snapshots that still assert it (`impact.md`). Catches the class the review agent caught by hand and the skill missed (#24198).
 - `references/scars.md` - documented past failures, frozen into the run and used as a review lens in 03.
 - `eval/structure.test.sh` - skill shape. `eval-heldout/` - output-contract floor (link coverage, report contract) for icm-improve.

@@ -16,10 +16,12 @@ never modified. Never implement a fix, commit, push, or POST to any live service
 |--------|----------|-------|
 | Findings | ../04-review/output/findings.md | what to back with execution + statuses to confirm/refute |
 | Runtime evidence | ../03-runtime-evidence/output/runtime-evidence.md | the execution oracle for no-test-oracle (CI/config/IaC) PRs |
+| Changed-value impact | ../03-runtime-evidence/output/impact.md | existing tests that assert a value the diff removes - an oracle you must not miss |
 | PR repo | the local checkout of `<owner>/<repo>`, if present | to run the suite |
 
 ## Process
 1. **Detect runner**: package.json `test` / vitest|jest|mocha config / pytest / a `scripts/**/run-all.sh`. If the PR's repo is not checked out locally or no runner is found, write `no runner: static coverage only` for the SUITE line and skip steps 2-3 (do NOT fabricate results) - BUT do not stop there (see step 1b).
+   **Consult `impact.md` BEFORE writing "no oracle".** If any existing test/snapshot asserts a value this PR removes (a breakage candidate in impact.md), that test IS an oracle for this change - "no oracle / no test for this component" is then FALSE. Trace each candidate: does the assertion or page locator depend on the removed value? If yes it is a latent break (test-coverage finding), even when that suite is `workflow_dispatch`/deploy-only and stays green on the PR pipeline - separate the code-logic claim ("the assertion breaks") from the CI claim ("the pipeline goes red"); assert only the one you verified.
 1b. **No-test-oracle PRs (CI / workflow / IaC / config / integration): "execution-backed" does NOT mean static.** A diff with no code test oracle is exactly where the worst misses hide. For such a PR, execution-backing means: the workflow run-history + the real-actor/event instance gathered in stage 03's `runtime-evidence.md`, plus an event/security-context analysis (does the trigger fire for the real actor? does the secret resolve in the store that context uses?). A verification MUST NOT be marked verified for a no-oracle PR on static reads alone - cite the runtime-evidence facts that confirm or refute each mechanism finding. If runtime-evidence genuinely had nothing to show (e.g. brand-new workflow, no history), say so explicitly and mark the relevant findings `UNVERIFIED`, not verified.
 2. **Suite**: run the changed area's tests; record total / passed / failed / skipped.
 3. **Mutation** (HIGH-risk findings + questioned symbols only):

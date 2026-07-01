@@ -1,0 +1,16 @@
+diff --git a/src/BalanceForm.ts b/src/BalanceForm.ts
+--- a/src/BalanceForm.ts
++++ b/src/BalanceForm.ts
+@@ -1,4 +1,4 @@
+ export const rows = () => [
+-  { label: t('balanceManagement:Cost price'), value: costPrice },
+-  { label: t('balanceManagement:Lonely key'), value: lonely },
++  { label: t('balanceManagement:Spending'), value: costPrice },
++  { label: t('balanceManagement:Spending'), value: lonely },
+ ]
+diff --git a/src/App.ts b/src/App.ts
+--- a/src/App.ts
++++ b/src/App.ts
+@@ -1 +1 @@
+-  const title = "Save";
++  const title = "Store";
