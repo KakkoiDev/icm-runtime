@@ -129,6 +129,22 @@ latest_run() {
     echo "$newest"
 }
 
+# Cold-path hint: a run-scoped command found no run in the CURRENT cwd. If the
+# workspace DOES have runs at the git toplevel, the caller is almost certainly
+# running from a stage/subdir (.icm resolves cwd-relative). Point them at the
+# repo root instead of the misleading "no active run". One git fork, only in the
+# already-failing error branch - never the gate hot path (which uses latest_runs).
+_cwd_hint() {
+    _ch_ws=$1
+    [ -d ".icm/$_ch_ws" ] && return 0
+    _ch_top=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+    [ -n "$_ch_top" ] || return 0
+    [ "$_ch_top" = "$PWD" ] && return 0
+    if [ -d "$_ch_top/.icm/$_ch_ws" ]; then
+        echo "  hint: no .icm/ in this cwd; the run lives at the repo root -- run from: cd $_ch_top" >&2
+    fi
+}
+
 # Check if a directory is empty (POSIX)
 is_empty_dir() {
     [ -z "$(ls -A "$1" 2>/dev/null)" ]
@@ -541,6 +557,13 @@ cmd_init() {
     mkdir -p "$run_dir/telemetry"
     mkdir -p ".icm/telemetry"
 
+    # Sanctioned scratch area for heavy verification state (throwaway worktrees,
+    # probe specs, extracted files). Seal-invisible by construction (_seal_files
+    # digests only .manifest, telemetry/, and stage output/), and pruned with the
+    # run by `clean`. A worktree created here must be `git worktree remove`d
+    # before clean deletes the dir, or git leaves a stale registration.
+    mkdir -p "$run_dir/work"
+
     for stage_file in "$stages_dir"/*.md; do
         [ -f "$stage_file" ] || continue
         stage_name=$(basename "$stage_file" .md)
@@ -631,6 +654,7 @@ cmd_next() {
     ws=$1
     latest=$(latest_run "$ws")
     if [ -z "$latest" ]; then
+        _cwd_hint "$ws"
         echo "Error: no runs found for workspace '$ws'" >&2
         exit 1
     fi
@@ -1022,6 +1046,7 @@ cmd_telemetry() {
     fi
     latest=$(latest_run "$ws")
     if [ -z "$latest" ]; then
+        _cwd_hint "$ws"
         echo "no runs for $ws" >&2
         exit 1
     fi
@@ -1127,6 +1152,14 @@ cmd_stage_done() {
         echo "stage-done: --full requires jq; nothing snapshotted" >&2
     fi
 
+    # Duplicate-closure visibility: re-closing a stage appends a second boundary
+    # (tolerated - audit downgrades attribution on non-monotonic boundaries), but
+    # a silent re-close hides a re-run. Warn so the operator notices (no behavior
+    # change).
+    if [ -f "$_events" ] && grep -Eq '"type":"stage_done","stage":"'"$stage"'"' "$_events" 2>/dev/null; then
+        echo "stage-done: WARNING - $stage already has a stage-done; appending another (re-run?)." >&2
+    fi
+
     # Write the stage_done boundary event (replaces stages.jsonl + the per-stage
     # .stage-telemetry marker). tokens_in/tokens_out default to null.
     _ti_val="$tokens_in"
@@ -1166,6 +1199,7 @@ cmd_reify_telemetry() {
 
     latest=$(latest_run "$ws")
     if [ -z "$latest" ]; then
+        _cwd_hint "$ws"
         echo "no runs for $ws" >&2
         exit 1
     fi
@@ -1278,6 +1312,7 @@ cmd_audit() {
 
     latest=$(latest_run "$ws")
     if [ -z "$latest" ]; then
+        _cwd_hint "$ws"
         echo "No runs for workspace '$ws'." >&2
         exit 1
     fi
@@ -1318,6 +1353,16 @@ cmd_audit() {
                 echo "  ✓ $sn -- telemetry reported"
             else
                 echo "  ✗ $sn -- MISSING stage-done telemetry"
+                deviations=$((deviations + 1))
+            fi
+        done
+        # Duplicate closures: >1 stage_done boundary for a stage is a silent
+        # re-run (attribution is already downgraded on non-monotonic boundaries;
+        # surface the duplicate itself as a deviation).
+        for sn in $completed_stages; do
+            _dups=$(grep -Ec '"type":"stage_done","stage":"'"$sn"'"' "$events_log" 2>/dev/null || true)
+            if [ "${_dups:-0}" -gt 1 ]; then
+                echo "  ! $sn -- $_dups stage-done boundaries (duplicate closure / re-run)"
                 deviations=$((deviations + 1))
             fi
         done
@@ -1604,6 +1649,51 @@ cmd_audit() {
     fi
 }
 
+# ---- cost ----
+# Per-stage token summary for a run: the four fields stage_done/reify carry
+# (new-input / output / cache-creation / cache-read), plus totals. Cost itself is
+# intentionally NOT computed (downstream prices the tokens); this sums what
+# telemetry already has, so stage 06 can print one calibration line in the report.
+cmd_cost() {
+    ws=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --cwd) cd "$2"; shift 2 ;;
+            *) ws="$1"; shift ;;
+        esac
+    done
+    [ -n "$ws" ] || { echo "cost requires workspace name" >&2; exit 1; }
+    latest=$(latest_run "$ws")
+    if [ -z "$latest" ]; then
+        _cwd_hint "$ws"
+        echo "no runs for $ws" >&2
+        exit 1
+    fi
+    _cost_ev=".icm/$ws/$latest/telemetry/events.jsonl"
+    if [ ! -f "$_cost_ev" ]; then
+        echo "no events for $ws/$latest" >&2
+        exit 1
+    fi
+    echo "COST: $ws / $latest"
+    echo "=========================================="
+    _run_stage_records "$_cost_ev" | awk '
+      function val(key,   p, i, s){
+        p = "\"" key "\":"
+        i = index($0, p); if (i == 0) return "null"
+        s = substr($0, i + length(p)); sub(/[,}].*/, "", s); gsub(/"/, "", s)
+        return s
+      }
+      function n(s){ return (s=="null"||s=="") ? 0 : s+0 }
+      BEGIN{ printf "  %-22s %9s %9s %10s %10s  %s\n","stage","in","out","cache_cr","cache_rd","counts" }
+      {
+        st=val("stage"); ti=val("tokens_in"); to=val("tokens_out")
+        cc=val("cache_creation"); cr=val("cache_read"); ct=val("counts")
+        printf "  %-22s %9s %9s %10s %10s  %s\n", st, ti, to, cc, cr, ct
+        TI+=n(ti); TO+=n(to); CC+=n(cc); CR+=n(cr)
+      }
+      END{ printf "  %-22s %9d %9d %10d %10d\n","TOTAL",TI,TO,CC,CR }'
+}
+
 # ---- seal / verify-seal ----
 # Seal: append a digest line for the latest run's evidence files to
 # .icm-seals.log at the project root, which is committable while .icm/ stays
@@ -1641,6 +1731,7 @@ cmd_seal() {
     fi
     latest=$(latest_run "$ws")
     if [ -z "$latest" ]; then
+        _cwd_hint "$ws"
         echo "no runs for $ws" >&2
         exit 1
     fi
@@ -1775,6 +1866,7 @@ ICM_VS_EOF
     fi
     latest=$(latest_run "$ws")
     if [ -z "$latest" ]; then
+        _cwd_hint "$ws"
         echo "no runs for $ws" >&2
         exit 1
     fi
@@ -2006,6 +2098,7 @@ case "$cmd" in
     stage-done) cmd_stage_done "$@" ;;
     reify-telemetry) cmd_reify_telemetry "$@" ;;
     audit) cmd_audit "$@" ;;
+    cost) [ $# -ge 1 ] || usage; cmd_cost "$@" ;;
     seal) cmd_seal "$@" ;;
     verify-seal) cmd_verify_seal "$@" ;;
     children) cmd_children "$@" ;;

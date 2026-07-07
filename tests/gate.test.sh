@@ -1662,6 +1662,84 @@ else
     t_fail "53d seal integrity: --force overrides + forced:true + verify-seal OK" "rc=$sfrc line=$si_line vrc=$vfrc vf=$vf"
 fi
 
+# ---- case 54: init creates the sanctioned work/ scratch dir (D4) ----
+if [ -d "$d2/work" ]; then
+    t_ok "54 init: creates seal-invisible work/ scratch dir"
+else
+    t_fail "54 init: creates work/ dir" "run=$d2"
+fi
+# work/ must NOT be sealed (heavy scratch state stays out of the digest).
+printf 'scratch\n' > "$d2/work/junk.txt"
+printf 'done\n' > "$d2/01-x/output/o.md"
+"$ICM" stage-done testns/done-ws --stage 01-x --model m >/dev/null 2>&1
+"$ICM" seal testns/done-ws --force >/dev/null 2>&1
+d2_line=$(grep '"workspace":"testns/done-ws"' .icm-seals.log | tail -1)
+if ! printf '%s' "$d2_line" | grep -q 'work/junk.txt'; then
+    t_ok "54b seal: work/ scratch is seal-invisible (not in the digest)"
+else
+    t_fail "54b seal: work/ excluded from seal" "line=$d2_line"
+fi
+
+# ---- case 55: D2 cwd hint - run-scoped command from a subdir points at repo root ----
+if command -v git >/dev/null 2>&1; then
+    GH="$TMP/githint"
+    mkdir -p "$GH/sub"
+    ( cd "$GH" && git init -q 2>/dev/null; git config user.email t@t.t; git config user.name t
+      "$ICM" init testns/gated-ws >/dev/null 2>&1 ) || true
+    hint=$( cd "$GH/sub" && "$ICM" next testns/gated-ws 2>&1 ); hrc=$?
+    if [ "$hrc" -ne 0 ] && printf '%s' "$hint" | grep -qi "hint:" \
+        && printf '%s' "$hint" | grep -q "$GH"; then
+        t_ok "55 D2 cwd hint: run-scoped cmd in a subdir names the repo root"
+    else
+        t_fail "55 D2 cwd hint: names repo root from subdir" "rc=$hrc out=$hint"
+    fi
+    # No false hint when the workspace genuinely has no run anywhere.
+    hint2=$( cd "$GH/sub" && "$ICM" next testns/never-ws 2>&1 ) || true
+    if ! printf '%s' "$hint2" | grep -qi "hint:"; then
+        t_ok "55b D2 cwd hint: no hint when the workspace has no run at the root either"
+    else
+        t_fail "55b D2 cwd hint: false hint for absent workspace" "out=$hint2"
+    fi
+else
+    echo "SKIP  55 D2 cwd hint (git not installed)"
+fi
+
+# ---- case 56: D5 duplicate stage-done - stderr warn + audit surfaces it ----
+mkdir -p "$TMP/skills/testns/dup-ws/stages"
+printf '# 01-x\nwork\n' > "$TMP/skills/testns/dup-ws/stages/01-x.md"
+sleep 1
+dup=$("$ICM" init testns/dup-ws 2>/dev/null)
+printf 'done\n' > "$dup/01-x/output/o.md"
+"$ICM" stage-done testns/dup-ws --stage 01-x --model m >/dev/null 2>&1   # first close: no warn
+dwarn=$("$ICM" stage-done testns/dup-ws --stage 01-x --model m 2>&1)     # second close: warn
+if printf '%s' "$dwarn" | grep -qi "already has a stage-done"; then
+    t_ok "56 stage-done: warns on a duplicate closure (re-run)"
+else
+    t_fail "56 stage-done: warns on duplicate closure" "out=$dwarn"
+fi
+daudit=$("$ICM" audit testns/dup-ws 2>&1)
+if printf '%s' "$daudit" | grep -q "duplicate closure"; then
+    t_ok "56b audit: lists the duplicate closure as a deviation"
+else
+    t_fail "56b audit: lists duplicate closure" "out=$daudit"
+fi
+
+# ---- case 57: D6 cost - per-stage token table + totals ----
+mkdir -p "$TMP/skills/testns/cost-ws/stages"
+printf '# 01-x\nwork\n' > "$TMP/skills/testns/cost-ws/stages/01-x.md"
+sleep 1
+cst=$("$ICM" init testns/cost-ws 2>/dev/null)
+printf 'done\n' > "$cst/01-x/output/o.md"
+"$ICM" stage-done testns/cost-ws --stage 01-x --model m --tokens-in 100 --tokens-out 40 >/dev/null 2>&1
+cout=$("$ICM" cost testns/cost-ws 2>&1); crc=$?
+if [ "$crc" -eq 0 ] && printf '%s' "$cout" | grep -q "COST: testns/cost-ws" \
+    && printf '%s' "$cout" | grep -q "01-x" \
+    && printf '%s' "$cout" | grep -qE "TOTAL +100 +40"; then
+    t_ok "57 cost: per-stage token table with totals"
+else
+    t_fail "57 cost: per-stage token table with totals" "rc=$crc out=$cout"
+fi
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
