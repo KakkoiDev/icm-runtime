@@ -568,7 +568,9 @@ else
 fi
 
 # ---- case 18: icm.sh telemetry writes to global file ----
-later_run=$("$ICM" init testns/tool-ws 2>/dev/null)
+# run_e (case 16) was left incomplete + tampered; supersede it with --force
+# (the open-run guard refuses a bare re-init while a run is open).
+later_run=$("$ICM" init testns/tool-ws --force 2>/dev/null)
 printf 'done\n' > "$later_run/01-work/output/done.md"
 "$ICM" stage-done testns/tool-ws --stage 01-work --model claude-test \
     --tokens-in 500 --tokens-out 200 2>/dev/null || true
@@ -1264,7 +1266,7 @@ fi
 # Built-in alias: gate names canonical web_search; harness reports WebSearch.
 printf '# 01-pub\n<!-- ICM-GATE tools="^web_search$" run="false" -->\n' > "$WS_NORM/stages/01-pub.md"
 sleep 1
-run_nm2=$("$ICM" init testns/norm-ws 2>/dev/null)
+run_nm2=$("$ICM" init testns/norm-ws --force 2>/dev/null)  # supersede the still-open run_nm
 out=$("$ICM" gate-check --tool WebSearch 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "DENY testns/norm-ws"; then
     t_ok "42b tool-name norm: canonical gate matches built-in alias (WebSearch)"
@@ -1493,8 +1495,9 @@ fi
 
 # ---- case 50: same-second init collision guard ----
 # Two runs of one workspace created in the same second (a parent invoking a child,
-# or rapid re-init) must get distinct dirs; the second is suffixed, and the
-# suffixed run is still the latest that latest_runs / gate-check see.
+# or a --force supersede) must get distinct dirs; the second is suffixed, and the
+# suffixed run is still the latest that latest_runs / gate-check see. The second
+# init uses --force because the first run is still open (the open-run guard).
 mkdir -p "$TMP/skills/testns/collide-ws/stages"
 printf '# 01-x\n<!-- ICM-GATE tools="zonk" run="false" -->\n' > "$TMP/skills/testns/collide-ws/stages/01-x.md"
 # Pin the run-id `date` to a fixed second so the collision is deterministic (not
@@ -1510,7 +1513,7 @@ esac
 FAKEDATE
 chmod +x "$TMP/fakebin/date"
 co_r1=$(PATH="$TMP/fakebin:$PATH" "$ICM" init testns/collide-ws 2>/dev/null)
-co_r2=$(PATH="$TMP/fakebin:$PATH" "$ICM" init testns/collide-ws 2>/dev/null)
+co_r2=$(PATH="$TMP/fakebin:$PATH" "$ICM" init testns/collide-ws --force 2>/dev/null)
 if [ "$co_r1" != "$co_r2" ] && [ -d "$co_r1" ] && [ -d "$co_r2" ]; then
     t_ok "50 collision guard: same-second inits get distinct run dirs"
 else
@@ -1551,6 +1554,57 @@ if [ "$ref_rc" -eq 1 ] && printf '%s' "$ref_g" | grep -q "DENY testns/ref-ws.*ta
     t_ok "51b manifest: tampered frozen reference is caught (contract tampered)"
 else
     t_fail "51b manifest: tampered reference caught" "rc=$ref_rc out=$ref_g"
+fi
+
+# ---- case 52: open-run guard - a second init while a run is open is refused ----
+# The 2026-07-02 incident: a second init silently orphaned a live run (the newer
+# timestamp dir shadowed the old one). The guard refuses a bare re-init while a
+# run is open (incomplete, not superseded); --force supersedes it explicitly.
+mkdir -p "$TMP/skills/testns/guard-ws/stages"
+printf '# 01-x\nwork\n' > "$TMP/skills/testns/guard-ws/stages/01-x.md"
+sleep 1
+g1=$("$ICM" init testns/guard-ws 2>/dev/null)   # open: no output written
+g1ts=$(basename "$g1")
+gout=$("$ICM" init testns/guard-ws 2>&1); grc=$?
+if [ "$grc" -ne 0 ] && printf '%s' "$gout" | grep -q "$g1ts" \
+    && printf '%s' "$gout" | grep -qi "force"; then
+    t_ok "52 init guard: bare re-init refused while a run is open (names it + --force)"
+else
+    t_fail "52 init guard: bare re-init refused while open" "rc=$grc out=$gout"
+fi
+n_runs=$(cd .icm/testns/guard-ws && ls -1 2>/dev/null | wc -l | tr -d ' ')
+if [ "$n_runs" -eq 1 ]; then
+    t_ok "52b init guard: refused init created no orphan dir"
+else
+    t_fail "52b init guard: no orphan dir on refusal" "n_runs=$n_runs"
+fi
+sleep 1
+g2=$("$ICM" init testns/guard-ws --force 2>/dev/null)
+if [ "$g2" != "$g1" ] && [ -d "$g2" ] \
+    && grep -q '"type":"run_superseded"' "$g1/telemetry/events.jsonl"; then
+    t_ok "52c init guard: --force supersedes (tombstone on old run + new run created)"
+else
+    t_fail "52c init guard: --force supersedes" "g1=$g1 g2=$g2 ev=$(cat "$g1/telemetry/events.jsonl" 2>/dev/null)"
+fi
+# --caller bypasses the guard even with an open run (nested runs are cross-workspace).
+gc=$("$ICM" init testns/guard-ws --caller "testns/other/x/01-x" 2>/dev/null); gcrc=$?
+if [ "$gcrc" -eq 0 ] && [ -d "$gc" ] && [ "$gc" != "$g2" ]; then
+    t_ok "52d init guard: --caller bypasses the guard (nested run allowed)"
+else
+    t_fail "52d init guard: --caller bypasses guard" "rc=$gcrc gc=$gc"
+fi
+# A completed run does NOT block a fresh init (open = incomplete, not merely unsealed).
+mkdir -p "$TMP/skills/testns/done-ws/stages"
+printf '# 01-x\nwork\n' > "$TMP/skills/testns/done-ws/stages/01-x.md"
+sleep 1
+d1=$("$ICM" init testns/done-ws 2>/dev/null)
+printf 'done\n' > "$d1/01-x/output/o.md"   # all stages have output -> complete
+sleep 1
+d2=$("$ICM" init testns/done-ws 2>/dev/null); d2rc=$?
+if [ "$d2rc" -eq 0 ] && [ -d "$d2" ] && [ "$d2" != "$d1" ]; then
+    t_ok "52e init guard: a completed (all-output) run does not block a fresh init"
+else
+    t_fail "52e init guard: completed run should not block init" "rc=$d2rc d1=$d1 d2=$d2"
 fi
 
 echo ""

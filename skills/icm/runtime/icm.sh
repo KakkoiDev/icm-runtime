@@ -461,18 +461,64 @@ check_run() {
         done
 }
 
+# A run is "open" - a fresh init would silently orphan it - when it is incomplete
+# (at least one stage has no output yet) and has not been explicitly superseded.
+# Mirrors the completion idiom used by next/clean (a stage is done when its
+# output/ is non-empty). Cold path only (init), never the gate hot path.
+_run_is_open() {
+    _rio_dir=$1
+    [ -d "$_rio_dir" ] || return 1
+    if [ -f "$_rio_dir/telemetry/events.jsonl" ] \
+        && grep -q '"type":"run_superseded"' "$_rio_dir/telemetry/events.jsonl" 2>/dev/null; then
+        return 1
+    fi
+    for _rio_sd in "$_rio_dir"/[0-9]*/; do
+        [ -d "$_rio_sd" ] || continue
+        _rio_out="${_rio_sd}output"
+        if [ ! -d "$_rio_out" ] || is_empty_dir "$_rio_out"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # ---- init ----
 cmd_init() {
-    ws=""; caller=""
+    ws=""; caller=""; force=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --caller) caller="$2"; shift 2 ;;
+            --force) force=1; shift ;;
             *) ws="$1"; shift ;;
         esac
     done
     [ -n "$ws" ] || usage
     ws_dir=$(find_workspace "$ws")
     stages_dir="$ws_dir/stages"
+
+    # Open-run guard: a second init while a run is still open silently orphans it
+    # (the newer timestamp dir shadows the old one for every command - the
+    # 2026-07-02 incident). Refuse unless --force (supersede the old run) or
+    # --caller (nested runs are cross-workspace; the child never shadows a parent).
+    if [ -z "$caller" ]; then
+        _prev=$(latest_run "$ws")
+        if [ -n "$_prev" ] && _run_is_open ".icm/$ws/$_prev"; then
+            if [ "$force" -eq 0 ]; then
+                echo "init: an open run already exists for $ws: $_prev" >&2
+                echo "  resume it:    icm.sh next $ws" >&2
+                echo "  or supersede: icm.sh init $ws --force" >&2
+                exit 1
+            fi
+            # --force: tombstone the open run so it stops shadowing and its gates
+            # close; the marker also makes the supersede visible to audit.
+            _prev_ev=".icm/$ws/$_prev/telemetry/events.jsonl"
+            if [ -f "$_prev_ev" ]; then
+                printf '{"ts":"%s","type":"run_superseded","workspace":"%s","run_id":"%s"}\n' \
+                    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ws" "$_prev" >> "$_prev_ev"
+            fi
+            echo "init: superseded open run $_prev (--force)" >&2
+        fi
+    fi
 
     ts=$(date -u +%Y-%m-%d_%H-%M-%S)
     # Same-second collision guard: two runs created in the same second (e.g. a
