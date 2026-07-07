@@ -1627,10 +1627,11 @@ _seal_files() {
 }
 
 cmd_seal() {
-    ws=""
+    ws=""; force=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --cwd) cd "$2"; shift 2 ;;
+            --force) force=1; shift ;;
             *) ws="$1"; shift ;;
         esac
     done
@@ -1644,6 +1645,37 @@ cmd_seal() {
         exit 1
     fi
     run_dir=".icm/$ws/$latest"
+
+    # Seal integrity: a seal is the tamper-evidence capstone, so refuse to
+    # notarize a run that is incomplete or carries fabricated progress markers -
+    # the 2026-07-02 premature seal notarized 05/06 stage_dones that were
+    # estimated with an empty model. Refusals: (a) a declared stage with no
+    # stage-done/reify boundary; (b) a stage-done with an empty model; (c) a
+    # stage-done with estimated (non-transcript) counts. --force overrides and
+    # the seal line records "forced":true so the override is itself auditable.
+    _events="$run_dir/telemetry/events.jsonl"
+    if [ "$force" -eq 0 ]; then
+        _seal_refuse=""
+        for _sd in "$run_dir"/[0-9]*/; do
+            [ -d "$_sd" ] || continue
+            _sn=$(basename "$_sd")
+            if ! grep -Eq '"type":"(stage_done|reify)","stage":"'"$_sn"'"' "$_events" 2>/dev/null; then
+                _seal_refuse="$_seal_refuse\n  - stage $_sn has no stage-done (run incomplete)"
+            fi
+        done
+        if grep '"type":"stage_done"' "$_events" 2>/dev/null | grep -q '"model":""'; then
+            _seal_refuse="$_seal_refuse\n  - a stage-done has an empty model (fabricated marker)"
+        fi
+        if grep '"type":"stage_done"' "$_events" 2>/dev/null | grep -q '"counts":"estimated"'; then
+            _seal_refuse="$_seal_refuse\n  - a stage-done has estimated (non-transcript) token counts"
+        fi
+        if [ -n "$_seal_refuse" ]; then
+            printf 'seal: refusing to seal %s/%s:%b\n' "$ws" "$latest" "$_seal_refuse" >&2
+            echo "  resolve the transcript, or re-seal with --force (records forced:true)." >&2
+            exit 1
+        fi
+    fi
+
     entries=""
     for sf in $(_seal_files "$run_dir"); do
         h=$( (cd "$run_dir" && sha_file "$sf") | awk '{print $1}')
@@ -1657,9 +1689,15 @@ cmd_seal() {
         echo "seal: no evidence files in $run_dir" >&2
         exit 1
     fi
-    printf '{"ts":"%s","workspace":"%s","run_id":"%s","sealed":{%s}}\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ws" "$latest" "$entries" >> .icm-seals.log
-    echo "sealed $ws/$latest -> .icm-seals.log (commit this file)"
+    # "forced":true goes BEFORE "sealed" so verify-seal's `s/.*"sealed":{//;s/}}$//`
+    # parse is untouched (a trailing field would break the `}}$` anchor).
+    _forced_field=""
+    [ "$force" -eq 1 ] && _forced_field='"forced":true,'
+    printf '{"ts":"%s","workspace":"%s","run_id":"%s",%s"sealed":{%s}}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ws" "$latest" "$_forced_field" "$entries" >> .icm-seals.log
+    _forced_note=""
+    [ "$force" -eq 1 ] && _forced_note=" (forced)"
+    echo "sealed $ws/$latest -> .icm-seals.log (commit this file)$_forced_note"
 }
 
 # Verify one seal-log line. $1=line $2=workspace $3=run_id. Prints SEAL OK

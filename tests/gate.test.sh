@@ -1081,7 +1081,9 @@ else
 fi
 
 # ---- case 28: verify-seal --all across workspaces, skip pruned runs ----
-"$ICM" seal testns/builtin-ws >/dev/null 2>&1
+# --force: this run's stage-dones are estimated (no transcript in the suite), which
+# D3 refuses to seal without an explicit override.
+"$ICM" seal testns/builtin-ws --force >/dev/null 2>&1
 v_all=$("$ICM" verify-seal --all 2>&1); rc_all=$?
 if [ "$rc_all" -eq 1 ] \
     && printf '%s' "$v_all" | grep -q "SEAL OK testns/builtin-ws" \
@@ -1175,7 +1177,7 @@ else
 fi
 
 # 30g: caller is in the sealed set -> tampering it trips verify-seal
-"$ICM" seal testns/caller-child >/dev/null 2>&1
+"$ICM" seal testns/caller-child --force >/dev/null 2>&1  # minimal run, no transcript-backed stage-done (D3)
 sed 's#caller-parent#caller-EVIL#' "$cp_child/telemetry/run.json" > "$cp_child/telemetry/run.json.t" \
     && mv "$cp_child/telemetry/run.json.t" "$cp_child/telemetry/run.json"
 vout=$("$ICM" verify-seal testns/caller-child 2>&1); vrc=$?
@@ -1192,7 +1194,7 @@ printf '# 01-make\nproduce output\n' > "$WS_SEALOUT/stages/01-make.md"
 run_so=$("$ICM" init testns/seal-out-ws 2>/dev/null)
 mkdir -p "$run_so/01-make/output"
 printf 'original output\n' > "$run_so/01-make/output/result.md"
-"$ICM" seal testns/seal-out-ws >/dev/null 2>&1
+"$ICM" seal testns/seal-out-ws --force >/dev/null 2>&1  # minimal run, no transcript-backed stage-done (D3)
 so_line=$(grep '"workspace":"testns/seal-out-ws"' .icm-seals.log | tail -1)
 so_ok=$("$ICM" verify-seal testns/seal-out-ws 2>&1); so_rc_ok=$?
 # Tamper ONLY the output file -> verify-seal must trip on that path.
@@ -1605,6 +1607,59 @@ if [ "$d2rc" -eq 0 ] && [ -d "$d2" ] && [ "$d2" != "$d1" ]; then
     t_ok "52e init guard: a completed (all-output) run does not block a fresh init"
 else
     t_fail "52e init guard: completed run should not block init" "rc=$d2rc d1=$d1 d2=$d2"
+fi
+
+# ---- case 53: seal integrity refuses incomplete/fabricated runs (D3) ----
+# The 2026-07-02 premature seal notarized 05/06 stage_dones that were estimated
+# with an empty model. seal now refuses (a) a stage without a stage-done boundary,
+# (b) an empty-model stage-done, (c) an estimated (non-transcript) stage-done;
+# --force overrides and records "forced":true so the override is auditable.
+mkdir -p "$TMP/skills/testns/seal-int/stages"
+printf '# 01-a\nwork\n' > "$TMP/skills/testns/seal-int/stages/01-a.md"
+printf '# 02-b\nwork\n' > "$TMP/skills/testns/seal-int/stages/02-b.md"
+sleep 1
+si=$("$ICM" init testns/seal-int 2>/dev/null)
+printf 'x\n' > "$si/01-a/output/o.md"
+printf 'x\n' > "$si/02-b/output/o.md"
+si_ri=$(head -1 "$si/telemetry/events.jsonl")   # keep the real run_init header
+# (a) all output present but NO stage-done boundaries -> refuse (run incomplete)
+so=$("$ICM" seal testns/seal-int 2>&1); src=$?
+if [ "$src" -ne 0 ] && printf '%s' "$so" | grep -q "no stage-done"; then
+    t_ok "53 seal integrity: refuses when a stage has no stage-done boundary"
+else
+    t_fail "53 seal integrity: refuses missing stage-done" "rc=$src out=$so"
+fi
+# (b) both stages closed, but 01-a's stage-done has an empty model -> refuse
+{ printf '%s\n' "$si_ri"
+  printf '{"ts":"2026-01-01T00:00:00Z","type":"stage_done","stage":"01-a","model":"","tokens_in":1,"cache_creation":0,"cache_read":0,"tokens_out":1,"counts":"transcript","transcript_source":"none"}\n'
+  printf '{"ts":"2026-01-01T00:00:01Z","type":"stage_done","stage":"02-b","model":"m","tokens_in":1,"cache_creation":0,"cache_read":0,"tokens_out":1,"counts":"transcript","transcript_source":"none"}\n'
+} > "$si/telemetry/events.jsonl"
+so=$("$ICM" seal testns/seal-int 2>&1); src=$?
+if [ "$src" -ne 0 ] && printf '%s' "$so" | grep -q "empty model"; then
+    t_ok "53b seal integrity: refuses a stage-done with an empty model"
+else
+    t_fail "53b seal integrity: refuses empty-model stage-done" "rc=$src out=$so"
+fi
+# (c) both closed with real models, but 01-a's counts are estimated -> refuse
+{ printf '%s\n' "$si_ri"
+  printf '{"ts":"2026-01-01T00:00:00Z","type":"stage_done","stage":"01-a","model":"m","tokens_in":null,"cache_creation":null,"cache_read":null,"tokens_out":null,"counts":"estimated","transcript_source":"none"}\n'
+  printf '{"ts":"2026-01-01T00:00:01Z","type":"stage_done","stage":"02-b","model":"m","tokens_in":1,"cache_creation":0,"cache_read":0,"tokens_out":1,"counts":"transcript","transcript_source":"none"}\n'
+} > "$si/telemetry/events.jsonl"
+so=$("$ICM" seal testns/seal-int 2>&1); src=$?
+if [ "$src" -ne 0 ] && printf '%s' "$so" | grep -q "estimated"; then
+    t_ok "53c seal integrity: refuses an estimated (non-transcript) stage-done"
+else
+    t_fail "53c seal integrity: refuses estimated stage-done" "rc=$src out=$so"
+fi
+# (d) --force overrides, records forced:true, and verify-seal still passes
+sf=$("$ICM" seal testns/seal-int --force 2>&1); sfrc=$?
+si_line=$(grep '"workspace":"testns/seal-int"' .icm-seals.log | tail -1)
+vf=$("$ICM" verify-seal testns/seal-int 2>&1); vfrc=$?
+if [ "$sfrc" -eq 0 ] && printf '%s' "$si_line" | grep -q '"forced":true' \
+    && [ "$vfrc" -eq 0 ] && printf '%s' "$vf" | grep -q "SEAL OK"; then
+    t_ok "53d seal integrity: --force overrides, records forced:true, verify-seal OK"
+else
+    t_fail "53d seal integrity: --force overrides + forced:true + verify-seal OK" "rc=$sfrc line=$si_line vrc=$vfrc vf=$vf"
 fi
 
 echo ""
