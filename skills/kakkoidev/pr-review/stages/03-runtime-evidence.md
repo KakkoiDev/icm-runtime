@@ -20,11 +20,15 @@ It does not judge - that is stage 04. Do not flag findings here.
 | Link graph | ../02-links/output/link-graph.md | resolved tickets + the ACs they state |
 
 ## Process
-1. **Gather runtime facts (deterministic).** Run the frozen tool, writing into this
-   stage's `output/`:
+1. **Gather runtime facts (deterministic).** Run the frozen tool from THIS stage's
+   dir (it writes a cwd-relative `output/`), pinning detection to the sealed diff:
    ```bash
-   bash ~/.agents/skills/kakkoidev/pr-review/tools/gather-runtime-evidence <owner>/<repo> <pr#> output
+   cd <abs-run-dir>/03-runtime-evidence && \
+     bash ~/.agents/skills/kakkoidev/pr-review/tools/gather-runtime-evidence <owner>/<repo> <pr#> output ../01-context/output/pr.diff
    ```
+   The 4th arg pins detection to the diff sealed in stage 01, so this stage reads the
+   exact state under review, not live HEAD (a determinism leak the tool already solves;
+   the sibling gather-impact call below already pins the same diff).
    It records, for the changed mechanisms: workflow run history; a real recent instance
    of every conditional actor/event the diff depends on (e.g. a Dependabot PR timeline
    showing the bot applies labels as discrete ops); and the Actions-vs-Dependabot secret
@@ -58,8 +62,10 @@ It does not judge - that is stage 04. Do not flag findings here.
    chain fact for stage 04 to weigh - do not write it as a finding here.
 
 ## After Output (MANDATORY)
+Run from the repo root (`icm.sh` resolves `.icm` cwd-relative):
 ```bash
-bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/pr-review --stage 03-runtime-evidence
+cd <abs-repo-root> && \
+  bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/pr-review --stage 03-runtime-evidence
 ```
 
 ## Outputs

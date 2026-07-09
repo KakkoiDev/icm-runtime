@@ -35,13 +35,20 @@ in two columns.
    use `<br>` not `\n` inside labels; escape stray literal special characters that appear
    OUTSIDE code fences. Read `notion://docs/enhanced-markdown-spec` via `ReadMcpResourceTool`
    if unsure of a construct. Edit `output/page.md` in place. Do NOT alter meaning or phrasing.
-4. Bilingual layout: if the content pairs the same text in two languages, wrap each PROSE pair in
+4. Readability spacing (default, not an option to ask about): in PROSE paragraphs that pack
+   several distinct points, separate the logical segments with `<br><br>` (a double in-block
+   break). An ordinary newline would split the paragraph into separate blocks; `<br><br>` keeps
+   it ONE block with a blank line between segments, turning a dense wall of text into scannable
+   groups. Apply ONLY to multi-point prose paragraphs. Do NOT add breaks inside single-point or
+   short paragraphs, list items, `<table>` cells, code / ```mermaid fences, or headings. This is
+   layout only - never change wording, order, or meaning.
+5. Bilingual layout: if the content pairs the same text in two languages, wrap each PROSE pair in
    a two-column block - `<columns><column>` lang A `</column><column>` lang B `</column></columns>`,
    first language left, tab-indented children with REAL tabs. This is the default, not an option to
    ask about. Leave diagrams, ```mermaid fences, code blocks, and `<table>` blocks FULL-WIDTH
    (outside any column); leave bilingual diagram labels (`JA<br>EN`) inline. Skip this step entirely
    for monolingual content.
-5. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
+6. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
    "none = private workspace page") and the title; for update, the existing `page_id`; and the
    `audience` (who must be able to read it).
 

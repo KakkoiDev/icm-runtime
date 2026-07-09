@@ -17,10 +17,24 @@ cites. The gate blocks any fetch until the deterministic link set exists.
 1. Read `links.tsv`. Classify each URL: notion / slack / github / web / asset
    (badge/image/CI-status - record but do not fetch).
 2. Fetch the content of each non-asset link:
-   - **Notion** (`notion.so`, `notion.com`): `notion-fetch` (URL or id). From the
-     fetched page, extract its outbound links and fetch the requirement/law/spec
-     ones (depth 2) - this is the point of the skill.
+   - **Notion** (`notion.so`, `notion.com`): `notion-fetch` with
+     `include_discussions: true` ALWAYS - the load-bearing QA/QAFB comment (often
+     the entire reason the PR exists) is invisible to a plain fetch. Read the
+     "as of <ts>" header the MCP returns; if it predates the PR's `updatedAt`, note
+     the staleness in link-graph.md and treat mirrored tables (QA test-case tables)
+     as possibly missing post-cache rows. From the fetched page, extract its
+     outbound links and fetch the requirement/law/spec ones (depth 2) - this is the
+     point of the skill.
+     - **Attachments**: for a load-bearing attachment on a resolved ticket (a video
+       or image attached to the repro or a QAFB comment), attempt
+       `notion-download-attachment` when the tool is available; if unavailable or
+       non-textual, record "repro carried by attachment only - textual summary is N
+       words" so stage 04 weighs the evidence thinness explicitly.
    - **Slack**: `slack_search` to resolve channel + ts, then `slack_read_thread`.
+   - **Google** (`docs.google.com`, `drive.google.com`): attempt the Google
+     Workspace MCP (ToolSearch for `gws`; then `gws_api` / `gws_export`) to read the
+     doc/sheet BEFORE declaring it walled-off - QA test-case sheets live here and a
+     curl auth-wall is not the last word.
    - **Web**: `bash ~/.agents/skills/kakkoidev/pr-review/tools/fetch-web <url>`.
      If it prints `WALLED-OFF`, retry once with WebFetch. If still unreachable,
      mark it `WALLED-OFF`.
@@ -32,8 +46,10 @@ cites. The gate blocks any fetch until the deterministic link set exists.
    ticket or a cited requirement), so they know what context is missing.
 
 ## After Output (MANDATORY)
+Run from the repo root (`icm.sh` resolves `.icm` cwd-relative):
 ```bash
-bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/pr-review --stage 02-links
+cd <abs-repo-root> && \
+  bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/pr-review --stage 02-links
 ```
 
 ## Outputs
