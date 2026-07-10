@@ -84,5 +84,5 @@ Seal makes `REVIEW-<PR#>.md` tamper-evident; suggest committing `.icm-seals.log`
 - `docs/GUIDE-improving-pr-review.md` - how to improve this skill without over-fitting or prose bloat (classify by layer, freeze every miss as a fixture/contract).
 - `tools/gather-pr` - deterministic PR gather (gh + links + checklist + template). `tools/extract-checklist` - shared checkbox parser (frozen by `eval/checklist-extraction.test.sh`). `tools/fetch-web` - curl + auth-wall detect.
 - `tools/gather-impact` - deterministic changed-value dual of dead-code: for each user-visible value the diff removes, the tests/snapshots that still assert it (`impact.md`). Catches the class the review agent caught by hand and the skill missed (#24198).
-- `references/scars.md` - documented past failures, frozen into the run and used as a review lens in 03.
+- `references/scars.md` - generalized review lenses, frozen into the run and used as a review lens in 03.
 - `eval/structure.test.sh` - skill shape. `eval-heldout/` - output-contract floor (link coverage, report contract) for icm-improve.

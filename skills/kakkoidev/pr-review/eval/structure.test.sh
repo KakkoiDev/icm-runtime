@@ -41,6 +41,10 @@ grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/p
 # C-checklist: gather-pr extracts the PR-template checklist via the shared tool (no
 # inline drift), so the checklist-audit lesson stays frozen by eval/.
 grep -q 'extract-checklist' tools/gather-pr || { echo "FAIL: gather-pr must invoke extract-checklist"; exit 1; }
+# C-provenance: gather-pr writes prior-runs + seal deterministically (the detection is
+# a tool, not fragile stage prose - review 3 re-review had a cwd-trap false "fresh").
+grep -q 'prior-runs.tsv' tools/gather-pr || { echo "FAIL: gather-pr must write prior-runs.tsv (deterministic re-review detection)"; exit 1; }
+grep -q 'seal.tsv' tools/gather-pr || { echo "FAIL: gather-pr must write seal.tsv (reviewed-revision provenance)"; exit 1; }
 test -x eval/checklist-extraction.test.sh || { echo "FAIL: eval/checklist-extraction.test.sh missing or not executable"; exit 1; }
 test -f eval/fixtures/checklist/body.md || { echo "FAIL: checklist fixture body.md missing"; exit 1; }
 

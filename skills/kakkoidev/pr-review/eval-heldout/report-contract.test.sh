@@ -28,12 +28,34 @@ if [ -s "$checklist" ]; then
         || { echo "FAIL: checklist audit present but missing the required Bias-alarm self-check line"; exit 1; }
 fi
 
-# A re-review of the same PR (prior-runs.tsv non-empty) must DISCLOSE its reduced
-# independence - the report carries an Independence: line (SOBA-285 #24370 lesson).
-priors="$ICM_RUN_DIR/01-context/output/prior-runs.tsv"
-if [ -s "$priors" ]; then
+# Re-review independence - cross-checked against the ON-DISK prior reviews, NOT the
+# prior-runs.tsv file. A broken detection (empty prior-runs.tsv) must not pass as
+# "fresh": count sealed REVIEW-<PR#>.md in sibling runs directly (SOBA-285 #24370).
+pr=$(basename "$report" .md); pr=${pr#REVIEW-}
+runs_root=$(cd "$ICM_RUN_DIR/.." 2>/dev/null && pwd || echo "")
+prior_count=0
+if [ -n "$runs_root" ]; then
+    for rev in "$runs_root"/*/06-report/output/REVIEW-"$pr".md; do
+        [ -f "$rev" ] || continue
+        case "$rev" in "$ICM_RUN_DIR"/*) continue ;; esac
+        prior_count=$((prior_count + 1))
+    done
+fi
+if [ "$prior_count" -gt 0 ]; then
     grep -qiE 'independence' "$report" \
-        || { echo "FAIL: prior-runs.tsv non-empty (re-review) but the report has no Independence disclosure"; exit 1; }
+        || { echo "FAIL: $prior_count prior same-PR review(s) on disk but the report has no Independence disclosure"; exit 1; }
+    # A re-review must not claim to be fresh / have no prior.
+    if grep -iE 'independence' "$report" | grep -qiE 'fresh|no prior'; then
+        echo "FAIL: $prior_count prior same-PR review(s) on disk, but the report's Independence line claims fresh/no-prior"; exit 1
+    fi
+fi
+
+# Out-of-seal disclosure: if the local checkout diverged from the PR head, the report
+# must disclose the reviewed revision / out-of-seal status (SOBA-285 #24370, review 3).
+seal="$ICM_RUN_DIR/01-context/output/seal.tsv"
+if [ -f "$seal" ] && awk -F'\t' '$1=="diverged"{exit ($2=="yes")?0:1}' "$seal"; then
+    grep -qiE 'out-of-seal|reviewed revision|diverged|not the (pr|local) head|behind the reviewed' "$report" \
+        || { echo "FAIL: seal.tsv says diverged=yes but the report has no reviewed-revision / out-of-seal disclosure"; exit 1; }
 fi
 
 receipt=$(ls "$ICM_RUN_DIR"/06-report/output/report-receipt.md 2>/dev/null | head -1 || true)

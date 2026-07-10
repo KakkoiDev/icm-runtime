@@ -21,7 +21,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 TAB=$(printf '\t')
 
 gh pr view "$PR" --repo "$OR" --json \
-  number,title,state,isDraft,author,createdAt,updatedAt,body,labels,files,additions,deletions,commits,reviews,comments,closingIssuesReferences \
+  number,title,state,isDraft,author,createdAt,updatedAt,body,labels,files,additions,deletions,commits,reviews,comments,closingIssuesReferences,headRefOid \
   > "$TMP/pr.json" 2>"$TMP/err" || { echo "gather-pr: gh pr view failed:" >&2; cat "$TMP/err" >&2; exit 4; }
 
 gh api --paginate "repos/$OR/issues/$PR/timeline" > "$TMP/timeline.json" 2>/dev/null || echo '[]' > "$TMP/timeline.json"
@@ -108,9 +108,37 @@ for p in \
 done
 [ -s "$OUT/pr-template.md" ] || echo "(no PR template found at common paths; the PR body checklist is the only source)" > "$OUT/pr-template.md"
 
+# ---- prior-runs.tsv: sealed reviews of THIS SAME PR from earlier runs. Deterministic
+# and cwd-trap-free: computed from OUT (= <runs-root>/<ts>/01-context/output), not a
+# hand-run glob whose meaning depends on the caller's cwd. A non-empty list makes the
+# current run a re-review (04 blind-pass + reconcile; 06 Independence disclosure). ----
+: > "$OUT/prior-runs.tsv"
+CUR_RUN=$(cd "$OUT/../.." 2>/dev/null && pwd || echo "")
+RUNS_ROOT=$(cd "$OUT/../../.." 2>/dev/null && pwd || echo "")
+if [ -n "$RUNS_ROOT" ] && [ -d "$RUNS_ROOT" ]; then
+  for rev in "$RUNS_ROOT"/*/06-report/output/REVIEW-"$PR".md; do
+    [ -f "$rev" ] || continue
+    case "$rev" in "$CUR_RUN"/*) continue ;; esac
+    printf '%s\n' "$rev" >> "$OUT/prior-runs.tsv"
+  done
+fi
+
+# ---- seal.tsv: the reviewed-revision provenance. pr.diff is the PR head; if the local
+# working tree (what a reviewer might Read/grep) is a different commit, findings drawn
+# from it are OUT-OF-SEAL. Deterministic: PR head SHA (gh) vs local HEAD SHA (git). ----
+PR_HEAD=$(jq -r '.headRefOid // ""' "$TMP/pr.json" 2>/dev/null || echo "")
+LOCAL_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
+DIVERGED=no
+[ -n "$PR_HEAD" ] && [ -n "$LOCAL_HEAD" ] && [ "$PR_HEAD" != "$LOCAL_HEAD" ] && DIVERGED=yes
+{
+  printf 'pr_head_sha\t%s\n' "$PR_HEAD"
+  printf 'local_head_sha\t%s\n' "$LOCAL_HEAD"
+  printf 'diverged\t%s\n' "$DIVERGED"
+} > "$OUT/seal.tsv"
+
 # ---- pr.diff: the change under review, sealed with the context. Fatal on failure -
 # a review with no diff is worthless, so fail loud rather than degrade silently. ----
 gh pr diff "$PR" --repo "$OR" > "$OUT/pr.diff" 2>"$TMP/differr" \
   || { echo "gather-pr: gh pr diff failed:" >&2; cat "$TMP/differr" >&2; exit 5; }
 
-echo "gather-pr: $OUT/pr-context.md ($(wc -l < "$OUT/pr-context.md" | tr -d ' ') lines), $OUT/links.tsv ($(wc -l < "$OUT/links.tsv" | tr -d ' ') links), $OUT/checklist.tsv ($(wc -l < "$OUT/checklist.tsv" | tr -d ' ') items), $OUT/pr.diff ($(wc -l < "$OUT/pr.diff" | tr -d ' ') lines)"
+echo "gather-pr: $OUT/pr-context.md ($(wc -l < "$OUT/pr-context.md" | tr -d ' ') lines), $OUT/links.tsv ($(wc -l < "$OUT/links.tsv" | tr -d ' ') links), $OUT/checklist.tsv ($(wc -l < "$OUT/checklist.tsv" | tr -d ' ') items), $OUT/prior-runs.tsv ($(wc -l < "$OUT/prior-runs.tsv" | tr -d ' ') prior same-PR reviews), $OUT/seal.tsv (diverged=$(awk -F'\t' '$1=="diverged"{print $2}' "$OUT/seal.tsv")), $OUT/pr.diff ($(wc -l < "$OUT/pr.diff" | tr -d ' ') lines)"

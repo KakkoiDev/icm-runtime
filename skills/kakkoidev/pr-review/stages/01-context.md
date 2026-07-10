@@ -36,18 +36,17 @@ here: this stage is a single script call so the gathered context is reproducible
    the input to stage 04's checklist audit - the author's tick state is a *claim*,
    not evidence. If `checklist.tsv` is empty (no template / no checklist in this
    repo), record that fact; there is then nothing to audit and 04 says so explicitly.
-5. **Detect prior reviews of THIS SAME PR** (feeds 04's re-review independence rule).
-   From the repo root, record sealed reviews of this PR# from earlier runs - the
-   current run has not written its own `REVIEW-<PR#>.md` yet, so every match is a
-   prior run:
-   ```bash
-   ls -1 .icm/kakkoidev/pr-review/*/06-report/output/REVIEW-<PR#>.md 2>/dev/null \
-     > <abs-run-dir>/01-context/output/prior-runs.tsv || true
-   ```
-   If `prior-runs.tsv` is non-empty this is a **re-review**: 04 must form its findings
-   BLIND first and only then read a prior same-PR review to reconcile, and 06 discloses
-   it. If empty, this is a fresh review. (A prior review of a *different* PR is lineage,
-   handled separately in 04 - this list is same-PR only.)
+5. **Read the provenance `gather-pr` wrote** (deterministic - do NOT hand-run a glob;
+   the earlier prose version had a cwd trap that silently produced an empty file and a
+   false "fresh" on a real re-review):
+   - `output/prior-runs.tsv` - sealed reviews of THIS SAME PR# from earlier runs. If
+     non-empty, this is a **re-review**: 04 forms findings BLIND first, then reads a
+     prior same-PR review only to reconcile, and 06 discloses it. Empty = fresh. (A
+     prior review of a *different* PR is lineage, handled separately in 04.)
+   - `output/seal.tsv` - `pr_head_sha`, `local_head_sha`, `diverged`. The sealed
+     `pr.diff` IS the PR head; if `diverged=yes` the local working tree is a different
+     commit, so anything you Read/grep off disk may not be in the reviewed diff - that
+     is the input to 04's out-of-seal rule.
 
 **Run discipline (cwd + one model per run).** Two working directories coexist and
 mixing them is the most common operational failure: tools read/write a
@@ -75,5 +74,6 @@ cd <abs-repo-root> && \
 | Link set | output/links.tsv | One row per discovered URL: `<url>\t<source>` (PR-body, comment:<author>, review:<author>, commit). Deterministic and complete - every link in the PR's free text. |
 | Checklist | output/checklist.tsv | One row per PR-template checkbox in the body: `checked`/`unchecked` <TAB> item text. The tick state is the author's claim; stage 04 audits each item against the diff. Empty if the repo has no template checklist. |
 | PR template | output/pr-template.md | The repo's PR template (fetched from the common `.github/PULL_REQUEST_TEMPLATE.md` paths), so 04 can tell a mandatory item the body DROPPED from one that was genuinely absent. A placeholder line if no template exists. |
-| Prior runs | output/prior-runs.tsv | Paths to sealed `REVIEW-<PR#>.md` from earlier runs of THIS SAME PR (empty = fresh review). Non-empty makes this a re-review: 04 forms findings blind before reading a predecessor, 06 discloses independence. |
+| Prior runs | output/prior-runs.tsv | Written by `gather-pr` (deterministic, no cwd trap): paths to sealed `REVIEW-<PR#>.md` from earlier runs of THIS SAME PR (empty = fresh). Non-empty makes this a re-review: 04 forms findings blind before reading a predecessor, 06 discloses independence. |
+| Seal | output/seal.tsv | `pr_head_sha`, `local_head_sha`, `diverged` (yes/no). The reviewed-revision provenance: `pr.diff` is the PR head; `diverged=yes` means the local working tree is a different commit, so on-disk reads may be out-of-seal (04). |
 | Diff | output/pr.diff | `gh pr diff` output - the exact change under review, sealed with the context so the review stage reads a reproducible artifact, not an ad-hoc re-fetch. |
