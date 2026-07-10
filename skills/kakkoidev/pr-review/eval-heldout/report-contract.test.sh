@@ -28,6 +28,14 @@ if [ -s "$checklist" ]; then
         || { echo "FAIL: checklist audit present but missing the required Bias-alarm self-check line"; exit 1; }
 fi
 
+# A re-review of the same PR (prior-runs.tsv non-empty) must DISCLOSE its reduced
+# independence - the report carries an Independence: line (SOBA-285 #24370 lesson).
+priors="$ICM_RUN_DIR/01-context/output/prior-runs.tsv"
+if [ -s "$priors" ]; then
+    grep -qiE 'independence' "$report" \
+        || { echo "FAIL: prior-runs.tsv non-empty (re-review) but the report has no Independence disclosure"; exit 1; }
+fi
+
 receipt=$(ls "$ICM_RUN_DIR"/06-report/output/report-receipt.md 2>/dev/null | head -1 || true)
 [ -n "$receipt" ] && [ -f "$receipt" ] || { echo "FAIL: report-receipt.md not found"; exit 1; }
 last=$(grep -v '^[[:space:]]*$' "$receipt" | tail -1)

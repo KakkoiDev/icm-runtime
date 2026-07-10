@@ -36,6 +36,18 @@ here: this stage is a single script call so the gathered context is reproducible
    the input to stage 04's checklist audit - the author's tick state is a *claim*,
    not evidence. If `checklist.tsv` is empty (no template / no checklist in this
    repo), record that fact; there is then nothing to audit and 04 says so explicitly.
+5. **Detect prior reviews of THIS SAME PR** (feeds 04's re-review independence rule).
+   From the repo root, record sealed reviews of this PR# from earlier runs - the
+   current run has not written its own `REVIEW-<PR#>.md` yet, so every match is a
+   prior run:
+   ```bash
+   ls -1 .icm/kakkoidev/pr-review/*/06-report/output/REVIEW-<PR#>.md 2>/dev/null \
+     > <abs-run-dir>/01-context/output/prior-runs.tsv || true
+   ```
+   If `prior-runs.tsv` is non-empty this is a **re-review**: 04 must form its findings
+   BLIND first and only then read a prior same-PR review to reconcile, and 06 discloses
+   it. If empty, this is a fresh review. (A prior review of a *different* PR is lineage,
+   handled separately in 04 - this list is same-PR only.)
 
 **Run discipline (cwd + one model per run).** Two working directories coexist and
 mixing them is the most common operational failure: tools read/write a
@@ -63,4 +75,5 @@ cd <abs-repo-root> && \
 | Link set | output/links.tsv | One row per discovered URL: `<url>\t<source>` (PR-body, comment:<author>, review:<author>, commit). Deterministic and complete - every link in the PR's free text. |
 | Checklist | output/checklist.tsv | One row per PR-template checkbox in the body: `checked`/`unchecked` <TAB> item text. The tick state is the author's claim; stage 04 audits each item against the diff. Empty if the repo has no template checklist. |
 | PR template | output/pr-template.md | The repo's PR template (fetched from the common `.github/PULL_REQUEST_TEMPLATE.md` paths), so 04 can tell a mandatory item the body DROPPED from one that was genuinely absent. A placeholder line if no template exists. |
+| Prior runs | output/prior-runs.tsv | Paths to sealed `REVIEW-<PR#>.md` from earlier runs of THIS SAME PR (empty = fresh review). Non-empty makes this a re-review: 04 forms findings blind before reading a predecessor, 06 discloses independence. |
 | Diff | output/pr.diff | `gh pr diff` output - the exact change under review, sealed with the context so the review stage reads a reproducible artifact, not an ad-hoc re-fetch. |

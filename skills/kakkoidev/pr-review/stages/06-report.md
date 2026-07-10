@@ -14,12 +14,14 @@ exists, so the report always carries execution results. Then seal the run.
 | Checklist audit | ../04-review/output/checklist-audit.md | per-item verdicts (MET/GAP/N-A, verified/asserted) |
 | Verification | ../05-verify/output/verification.md | suite + mutation + live + adversarial + checklist-exercise verdicts |
 | PR context | ../01-context/output/pr-context.md | scope, title, PR number (the index) |
+| Prior runs | ../01-context/output/prior-runs.tsv | prior same-PR reviews - drives the Independence header line |
 | Link graph | ../02-links/output/link-graph.md | Sources to cite |
 
 ## Process
 1. Write `output/REVIEW-<PR#>.md` (`<PR#>` from pr-context) in this structure:
    - `**Verdict**: SHIP | SHIP WITH FIXES | BLOCK` + one-line rationale.
    - Scope (N files, +M/-L), PR title + link, specialists run.
+   - `Independence:` line from `../01-context/output/prior-runs.tsv` - `fresh` if empty, else `re-review (N prior same-PR runs; prior review read: yes/no)`. If a predecessor review was read, this run's findings are not fully independent of it - say so plainly so the reader weighs the second opinion accordingly.
    - `## 7-Point Validation` table: all 7 rows (Requirements traceability, Dead code, Scope, Security, Performance, Test coverage [from stage 05 mutation], Production readiness) with PASS/FAIL + note. Points 1-6 FAIL block SHIP.
    - `## PR-Template Checklist Audit` (when `checklist-audit.md` is non-empty): the per-item table from stage 04 folded with stage 05's exercise results - `item | mandated | author-tick | verdict (MET/GAP/N-A) | method (verified/asserted->now exercised) | basis`. Then the **Bias alarm** line (did gaps land only on the scannable items or a primed hint?). Any `GAP` here is a finding in Critical Issues at its severity; the author's tick state is reported as a claim, and the section states plainly that ticking the boxes is the human's to do - the audit gives them grounded evidence, it does not tick for them. If the repo has no template checklist, state that in one line.
    - `## Critical Issues` (CRITICAL/HIGH/MEDIUM): each with file:line, severity, category, found-by, blast-radius, description, fix, Regression spec, Mutation result, AND its **status** (`CONFIRMED` / `PLAUSIBLE` / `REFUTED` from stage 05) with the evidence (source citation or execution token) that settled it. A finding asserted CONFIRMED with no evidence token is a contract violation - carry the evidence or downgrade it. A load-bearing assumption that could not be executed is reported `UNVERIFIED: <why>`, never silently as confirmed.
