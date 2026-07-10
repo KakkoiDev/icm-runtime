@@ -1,6 +1,6 @@
 # Stage 05: Execution-backed verification
 
-<!-- ICM-TOOLS expect="(Bash|Task)" -->
+<!-- ICM-TOOLS expect="(Read|Bash|Task)" -->
 <!-- ICM-GATE tools="Write" run="test -s ../04-review/output/findings.md" -->
 
 Back the findings with execution: run the changed area's suite, mutation-test the
@@ -15,6 +15,7 @@ never modified. Never implement a fix, commit, push, or POST to any live service
 | Source | Location | Scope |
 |--------|----------|-------|
 | Findings | ../04-review/output/findings.md | what to back with execution + statuses to confirm/refute |
+| Checklist audit | ../04-review/output/checklist-audit.md | the checklist items marked `asserted` - the judgment claims this stage must exercise, not trust |
 | Runtime evidence | ../03-runtime-evidence/output/runtime-evidence.md | the execution oracle for no-test-oracle (CI/config/IaC) PRs |
 | Changed-value impact | ../03-runtime-evidence/output/impact.md | existing tests that assert a value the diff removes - an oracle you must not miss |
 | PR repo | the local checkout of `<owner>/<repo>`, if present | to run the suite |
@@ -32,6 +33,7 @@ never modified. Never implement a fix, commit, push, or POST to any live service
 3b. **Probe specs (for each CRITICAL/HIGH whose failure scenario is constructible with the repo's test harness).** In the bootstrapped worktree, write a disposable probe spec that exercises the failure, and run it against BOTH the PR head AND the reverted code (checkout the pre-PR state of the touched files). The two-direction result distinguishes a NEW regression (fails on head, passes on revert) from a PRE-EXISTING issue (fails on both). Probes NEVER ship to the PR branch; record each probe's fixture + assertion in verification.md as a ready-made regression spec. A CRITICAL confirmed by a two-direction probe is execution-proven, not merely source-confirmed - the strongest evidence this stage can produce (it is what flipped #24374 to BLOCK).
 4. **Live (read-only MCP)**: for any phantom-metric finding, confirm the metric/log exists (Datadog/Sentry read-only). A dashboard referencing a never-emitted metric is HIGH.
 5. **Adversarial per-finding verify (MANDATORY).** For each CRITICAL/HIGH finding from stage 04, run an INDEPENDENT pass that tries to REFUTE it against source/runtime-evidence (not to confirm it) - default to refuted if the evidence is not actually there. Resolve each to a final `CONFIRMED` / `PLAUSIBLE` / `REFUTED` + the evidence that settled it. For HIGH-stakes diffs (auth/secrets/CI-triggers/payment/migrations, or actor/event/environment-conditional behavior) use perspective-diverse verifiers (correctness / security / does-it-actually-execute) via parallel Task, not one. This is the second pass that makes a finding "done"; a finding that survives a genuine refutation attempt is real, one that collapses is dropped or downgraded with the reason recorded.
+6. **Exercise the `asserted` checklist items (MANDATORY when checklist-audit.md has any).** Every `asserted` MET from stage 04 is an unverified judgment until exercised here - promote it to `verified` only after you actually do the thing the item claims, or downgrade it to `GAP`. Never let a proxy stand in: "documentation sufficient / understandable without context" -> READ the changed/added doc content end to end (not the diffstat), and say whether a newcomer could act on it; "enough test coverage *for the risk*" -> inspect the tests that cover the changed logic and name which branches/edge-cases of the new code are and are NOT exercised (a count is not coverage); "observability / failures easily debugged" -> look at the actual error/log/output surface the change emits and state what a failure would show; "no secrets" -> grep the diff; "deps up-to-date" / "env-var config" -> diff the manifest / grep for `process.env`. Record each as `verified: <what you did + result>` or `GAP: <what the exercise showed>`. If exercising is impossible here (needs a running service, human judgment), mark it `UNVERIFIED: <why>` - never silently `verified`. Then re-run the stage-04 **bias alarm** against the exercised results: if the gaps still cluster only on the scannable items, look harder at the ones you passed.
 
 ## After Output (MANDATORY)
 ```bash
@@ -41,4 +43,4 @@ bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/pr-review --stage 
 ## Outputs
 | Artifact | Location | Format |
 |----------|----------|--------|
-| Verification | output/verification.md | Suite: `N passed, M failed, K skipped` via `<runner>` (or `no runner: static coverage only`); for no-oracle PRs, the runtime-evidence facts that back each mechanism finding (never "static only" as the whole verification); Mutation: per finding `caught` / `SURVIVED` (a SURVIVED fails 7-Point #6); Live: per metric `has-data` / `phantom` / `unverified`; Adversarial verify: per CRITICAL/HIGH a final `CONFIRMED` / `PLAUSIBLE` / `REFUTED` + the evidence that settled it. |
+| Verification | output/verification.md | Suite: `N passed, M failed, K skipped` via `<runner>` (or `no runner: static coverage only`); for no-oracle PRs, the runtime-evidence facts that back each mechanism finding (never "static only" as the whole verification); Mutation: per finding `caught` / `SURVIVED` (a SURVIVED fails 7-Point #6); Live: per metric `has-data` / `phantom` / `unverified`; Adversarial verify: per CRITICAL/HIGH a final `CONFIRMED` / `PLAUSIBLE` / `REFUTED` + the evidence that settled it; Checklist exercise: per `asserted` item from 04 a final `verified: <what you did>` / `GAP: <what it showed>` / `UNVERIFIED: <why>`, plus the re-run bias-alarm line. |

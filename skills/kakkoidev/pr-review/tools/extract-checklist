@@ -1,0 +1,17 @@
+#!/bin/sh
+# extract-checklist: read markdown (a PR body) on stdin, emit its task-list
+# checkboxes as `state <TAB> item` rows (state = checked | unchecked).
+#
+# Deterministic, offline, no deps. Factored out of gather-pr so the tool and the
+# eval fixture share ONE implementation - the checklist-audit lesson (PR #24370:
+# the review never reconciled the PR against its template checklist) is frozen by
+# eval/checklist-extraction.test.sh against this exact code, so a regression in the
+# parse is caught offline. Same body -> same rows.
+#
+# No `set -e`: a body with no checkboxes makes grep exit 1, which under -e would
+# abort; the pipeline's exit is sed's (0), and empty output is the correct result.
+TAB=$(printf '\t')
+
+grep -E '^[[:space:]]*[-*][[:space:]]+\[[ xX]\]' 2>/dev/null | sed -E \
+  -e 's/^[[:space:]]*[-*][[:space:]]+\[[xX]\][[:space:]]*/checked'"$TAB"'/' \
+  -e 's/^[[:space:]]*[-*][[:space:]]+\[[[:space:]]\][[:space:]]*/unchecked'"$TAB"'/'

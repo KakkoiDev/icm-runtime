@@ -32,12 +32,17 @@ grep -q 'gather-runtime-evidence' stages/03-runtime-evidence.md || { echo "FAIL:
 grep -q 'gather-impact' stages/03-runtime-evidence.md || { echo "FAIL: 03-runtime-evidence must invoke gather-impact (changed-value dual)"; exit 1; }
 
 # Deterministic tools present and executable.
-for t in tools/gather-pr tools/fetch-web tools/gather-runtime-evidence tools/gather-impact; do
+for t in tools/gather-pr tools/fetch-web tools/gather-runtime-evidence tools/gather-impact tools/extract-checklist; do
     test -x "$t" || { echo "FAIL: $t missing or not executable"; exit 1; }
 done
 
 # C0: gather-pr seals the diff (reproducible review artifact, not an ad-hoc re-fetch).
 grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/pr.diff (C0)"; exit 1; }
+# C-checklist: gather-pr extracts the PR-template checklist via the shared tool (no
+# inline drift), so the checklist-audit lesson stays frozen by eval/.
+grep -q 'extract-checklist' tools/gather-pr || { echo "FAIL: gather-pr must invoke extract-checklist"; exit 1; }
+test -x eval/checklist-extraction.test.sh || { echo "FAIL: eval/checklist-extraction.test.sh missing or not executable"; exit 1; }
+test -f eval/fixtures/checklist/body.md || { echo "FAIL: checklist fixture body.md missing"; exit 1; }
 
 # Scars lens frozen into the skill.
 test -s references/scars.md || { echo "FAIL: references/scars.md missing"; exit 1; }

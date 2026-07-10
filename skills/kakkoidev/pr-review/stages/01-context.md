@@ -20,12 +20,22 @@ here: this stage is a single script call so the gathered context is reproducible
    ```
    `<abs-run-dir>` is the absolute path `icm.sh init` printed on stdout.
    It writes `output/pr-context.md` (summary header, file buckets, action feed),
-   `output/links.tsv` (every URL in the PR's free text, with source), and
-   `output/pr.diff` (the change under review, sealed so the review is reproducible).
-2. Do NOT hand-edit either file. If the tool errors (auth, missing PR), report
-   the exact error to the user and stop - do not fabricate context.
+   `output/links.tsv` (every URL in the PR's free text, with source),
+   `output/checklist.tsv` (the PR-template mandatory checklist as instantiated in
+   the body, one row per box: `checked`/`unchecked` <TAB> item text),
+   `output/pr-template.md` (the repo's PR template, ground truth for which items
+   are mandatory), and `output/pr.diff` (the change under review, sealed so the
+   review is reproducible).
+2. Do NOT hand-edit any of these files. If the tool errors (auth, missing PR),
+   report the exact error to the user and stop - do not fabricate context.
 3. Read `output/pr-context.md` so you know the PR; note the bucket counts and any
    linked Notion/Slack/requirement URLs you will follow in stage 02.
+4. Read `output/checklist.tsv` and `output/pr-template.md`. Note how many items the
+   template mandates, which the body ticked vs left unchecked, and any template item
+   MISSING from the body (a deleted checklist line is a dodge, not a pass). This is
+   the input to stage 04's checklist audit - the author's tick state is a *claim*,
+   not evidence. If `checklist.tsv` is empty (no template / no checklist in this
+   repo), record that fact; there is then nothing to audit and 04 says so explicitly.
 
 **Run discipline (cwd + one model per run).** Two working directories coexist and
 mixing them is the most common operational failure: tools read/write a
@@ -51,4 +61,6 @@ cd <abs-repo-root> && \
 |----------|----------|--------|
 | PR context | output/pr-context.md | Summary (title, repo, #, state, author, dates, size, labels, linked issues); file buckets (prod/test/config/generated/lockfile/docs with paths); chronological action feed (ts, who, event, note) |
 | Link set | output/links.tsv | One row per discovered URL: `<url>\t<source>` (PR-body, comment:<author>, review:<author>, commit). Deterministic and complete - every link in the PR's free text. |
+| Checklist | output/checklist.tsv | One row per PR-template checkbox in the body: `checked`/`unchecked` <TAB> item text. The tick state is the author's claim; stage 04 audits each item against the diff. Empty if the repo has no template checklist. |
+| PR template | output/pr-template.md | The repo's PR template (fetched from the common `.github/PULL_REQUEST_TEMPLATE.md` paths), so 04 can tell a mandatory item the body DROPPED from one that was genuinely absent. A placeholder line if no template exists. |
 | Diff | output/pr.diff | `gh pr diff` output - the exact change under review, sealed with the context so the review stage reads a reproducible artifact, not an ad-hoc re-fetch. |

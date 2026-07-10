@@ -85,9 +85,32 @@ gh api --paginate "repos/$OR/issues/$PR/timeline" > "$TMP/timeline.json" 2>/dev/
       done
 done | sort -u > "$OUT/links.tsv"
 
+# ---- checklist.tsv: the PR template's mandatory checklist as instantiated in the
+# body, one row per box with its tick state. The tick is the AUTHOR's CLAIM, never
+# evidence - stage 04 must audit every item to a uniform bar. Columns: state <TAB> item ----
+jq -r '(.body // "")' "$TMP/pr.json" 2>/dev/null \
+  | "$(dirname "$0")/extract-checklist" > "$OUT/checklist.tsv" 2>/dev/null || true
+[ -f "$OUT/checklist.tsv" ] || : > "$OUT/checklist.tsv"
+
+# ---- pr-template.md: the repo's PR template (ground truth for the mandatory
+# checklist; a body can be edited to DROP items, so 04 compares body vs template).
+# Best-effort over the common template locations; raw content, no base64 decode. ----
+: > "$OUT/pr-template.md"
+for p in \
+  ".github/PULL_REQUEST_TEMPLATE.md" \
+  ".github/pull_request_template.md" \
+  "PULL_REQUEST_TEMPLATE.md" \
+  "docs/PULL_REQUEST_TEMPLATE.md" \
+  ".github/PULL_REQUEST_TEMPLATE/default.md"; do
+    if gh api "repos/$OR/contents/$p" -H "Accept: application/vnd.github.raw" > "$TMP/tmpl" 2>/dev/null && [ -s "$TMP/tmpl" ]; then
+      cp "$TMP/tmpl" "$OUT/pr-template.md"; break
+    fi
+done
+[ -s "$OUT/pr-template.md" ] || echo "(no PR template found at common paths; the PR body checklist is the only source)" > "$OUT/pr-template.md"
+
 # ---- pr.diff: the change under review, sealed with the context. Fatal on failure -
 # a review with no diff is worthless, so fail loud rather than degrade silently. ----
 gh pr diff "$PR" --repo "$OR" > "$OUT/pr.diff" 2>"$TMP/differr" \
   || { echo "gather-pr: gh pr diff failed:" >&2; cat "$TMP/differr" >&2; exit 5; }
 
-echo "gather-pr: $OUT/pr-context.md ($(wc -l < "$OUT/pr-context.md" | tr -d ' ') lines), $OUT/links.tsv ($(wc -l < "$OUT/links.tsv" | tr -d ' ') links), $OUT/pr.diff ($(wc -l < "$OUT/pr.diff" | tr -d ' ') lines)"
+echo "gather-pr: $OUT/pr-context.md ($(wc -l < "$OUT/pr-context.md" | tr -d ' ') lines), $OUT/links.tsv ($(wc -l < "$OUT/links.tsv" | tr -d ' ') links), $OUT/checklist.tsv ($(wc -l < "$OUT/checklist.tsv" | tr -d ' ') items), $OUT/pr.diff ($(wc -l < "$OUT/pr.diff" | tr -d ' ') lines)"

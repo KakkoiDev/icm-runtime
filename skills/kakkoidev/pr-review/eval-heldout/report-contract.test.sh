@@ -17,6 +17,17 @@ grep -qiE '\*\*?Verdict\*?\*?:[[:space:]]*(SHIP|SHIP WITH FIXES|BLOCK)' "$report
 grep -qiE '7[- ]?Point' "$report" \
     || { echo "FAIL: report missing the 7-Point validation section"; exit 1; }
 
+# When the PR carried a template checklist (01-context extracted rows), the report
+# MUST reconcile it - a code review that never audits the PR against its own
+# mandatory checklist is the miss this section closes.
+checklist="$ICM_RUN_DIR/01-context/output/checklist.tsv"
+if [ -s "$checklist" ]; then
+    grep -qiE 'checklist audit' "$report" \
+        || { echo "FAIL: checklist.tsv is non-empty but the report has no 'Checklist Audit' section"; exit 1; }
+    grep -qiE 'bias alarm' "$report" \
+        || { echo "FAIL: checklist audit present but missing the required Bias-alarm self-check line"; exit 1; }
+fi
+
 receipt=$(ls "$ICM_RUN_DIR"/06-report/output/report-receipt.md 2>/dev/null | head -1 || true)
 [ -n "$receipt" ] && [ -f "$receipt" ] || { echo "FAIL: report-receipt.md not found"; exit 1; }
 last=$(grep -v '^[[:space:]]*$' "$receipt" | tail -1)
