@@ -21,8 +21,12 @@ done
 # Grounding (03) precedes review (04): review gates on runtime-evidence, not the diff alone.
 grep -q 'ICM-GATE .*run="test -s ../01-context/output/links.tsv"' stages/02-links.md || { echo "FAIL: 02 gate must require 01 links.tsv"; exit 1; }
 grep -q 'ICM-GATE .*run="test -s ../02-links/output/link-graph.md"' stages/03-runtime-evidence.md || { echo "FAIL: 03 gate must require 02 link-graph.md"; exit 1; }
-grep -q 'ICM-GATE .*run="test -s ../03-runtime-evidence/output/runtime-evidence.md' stages/04-review.md || { echo "FAIL: 04 gate must require 03 runtime-evidence.md"; exit 1; }
-grep -q 'ICM-GATE .*impact.md' stages/04-review.md || { echo "FAIL: 04 gate must also require 03 impact.md (changed-value dual)"; exit 1; }
+grep -q 'ICM-GATE .*run="checks/review-precondition.sh"' stages/04-review.md || { echo "FAIL: 04 gate must run checks/review-precondition.sh"; exit 1; }
+# The checker subsumes the old inline 04 gate (03 grounding) and adds the diverged-state
+# review-target decision (SOBA-285 #24370, review 4).
+grep -q 'runtime-evidence.md' checks/review-precondition.sh || { echo "FAIL: review-precondition must still require 03 runtime-evidence.md"; exit 1; }
+grep -q 'impact.md' checks/review-precondition.sh || { echo "FAIL: review-precondition must still require 03 impact.md (changed-value dual)"; exit 1; }
+grep -q 'seal-decision' checks/review-precondition.sh || { echo "FAIL: review-precondition must enforce the seal-decision on divergence"; exit 1; }
 grep -q 'ICM-GATE .*run="test -s ../04-review/output/findings.md"' stages/05-verify.md || { echo "FAIL: 05 gate must require 04 findings.md"; exit 1; }
 grep -q 'ICM-GATE .*run="test -s ../05-verify/output/verification.md"' stages/06-report.md || { echo "FAIL: 06 gate must require 05 verification.md"; exit 1; }
 
@@ -45,8 +49,12 @@ grep -q 'extract-checklist' tools/gather-pr || { echo "FAIL: gather-pr must invo
 # a tool, not fragile stage prose - review 3 re-review had a cwd-trap false "fresh").
 grep -q 'prior-runs.tsv' tools/gather-pr || { echo "FAIL: gather-pr must write prior-runs.tsv (deterministic re-review detection)"; exit 1; }
 grep -q 'seal.tsv' tools/gather-pr || { echo "FAIL: gather-pr must write seal.tsv (reviewed-revision provenance)"; exit 1; }
+grep -q 'dirty' tools/gather-pr || { echo "FAIL: gather-pr seal must include a dirty-tree check (diverged catches uncommitted edits, not just SHAs)"; exit 1; }
 test -x eval/checklist-extraction.test.sh || { echo "FAIL: eval/checklist-extraction.test.sh missing or not executable"; exit 1; }
 test -f eval/fixtures/checklist/body.md || { echo "FAIL: checklist fixture body.md missing"; exit 1; }
+# C-diverged-gate: the diverged-state gate checker + its deterministic freeze.
+test -x checks/review-precondition.sh || { echo "FAIL: checks/review-precondition.sh missing or not executable"; exit 1; }
+test -x eval/review-precondition.test.sh || { echo "FAIL: eval/review-precondition.test.sh missing or not executable"; exit 1; }
 
 # Scars lens frozen into the skill.
 test -s references/scars.md || { echo "FAIL: references/scars.md missing"; exit 1; }

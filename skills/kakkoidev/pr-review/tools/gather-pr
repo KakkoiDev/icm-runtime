@@ -124,15 +124,20 @@ if [ -n "$RUNS_ROOT" ] && [ -d "$RUNS_ROOT" ]; then
 fi
 
 # ---- seal.tsv: the reviewed-revision provenance. pr.diff is the PR head; if the local
-# working tree (what a reviewer might Read/grep) is a different commit, findings drawn
-# from it are OUT-OF-SEAL. Deterministic: PR head SHA (gh) vs local HEAD SHA (git). ----
+# working tree (what a reviewer might Read/grep) is a different commit OR has uncommitted
+# edits, on-disk reads are OUT-OF-SEAL. Deterministic: PR head SHA (gh) vs local HEAD SHA
+# (git), plus a dirty-tree check so `diverged` catches uncommitted edits, not just SHAs. ----
 PR_HEAD=$(jq -r '.headRefOid // ""' "$TMP/pr.json" 2>/dev/null || echo "")
 LOCAL_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
+DIRTY=no
+[ -n "$(git status --porcelain 2>/dev/null)" ] && DIRTY=yes
 DIVERGED=no
 [ -n "$PR_HEAD" ] && [ -n "$LOCAL_HEAD" ] && [ "$PR_HEAD" != "$LOCAL_HEAD" ] && DIVERGED=yes
+[ "$DIRTY" = yes ] && DIVERGED=yes
 {
   printf 'pr_head_sha\t%s\n' "$PR_HEAD"
   printf 'local_head_sha\t%s\n' "$LOCAL_HEAD"
+  printf 'dirty\t%s\n' "$DIRTY"
   printf 'diverged\t%s\n' "$DIVERGED"
 } > "$OUT/seal.tsv"
 

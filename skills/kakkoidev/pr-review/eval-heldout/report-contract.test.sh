@@ -56,6 +56,17 @@ seal="$ICM_RUN_DIR/01-context/output/seal.tsv"
 if [ -f "$seal" ] && awk -F'\t' '$1=="diverged"{exit ($2=="yes")?0:1}' "$seal"; then
     grep -qiE 'out-of-seal|reviewed revision|diverged|not the (pr|local) head|behind the reviewed' "$report" \
         || { echo "FAIL: seal.tsv says diverged=yes but the report has no reviewed-revision / out-of-seal disclosure"; exit 1; }
+    # A diverged run must carry a recorded, consistent review-target decision: default
+    # sealed, or working-tree WITH human approval (never a silent local review).
+    dec="$ICM_RUN_DIR/01-context/output/seal-decision.tsv"
+    [ -f "$dec" ] || { echo "FAIL: seal.tsv diverged=yes but seal-decision.tsv is missing (01 must record the review target)"; exit 1; }
+    dtarget=$(awk -F'\t' '$1=="target"{print $2; exit}' "$dec")
+    dappr=$(awk -F'\t' '$1=="human_approved"{print $2; exit}' "$dec")
+    case "$dtarget" in
+        sealed) : ;;
+        working-tree) [ "$dappr" = yes ] || { echo "FAIL: seal-decision target=working-tree without human_approved=yes"; exit 1; } ;;
+        *) echo "FAIL: seal-decision.tsv target must be 'sealed' or 'working-tree' (got: '${dtarget:-<empty>}')"; exit 1 ;;
+    esac
 fi
 
 receipt=$(ls "$ICM_RUN_DIR"/06-report/output/report-receipt.md 2>/dev/null | head -1 || true)

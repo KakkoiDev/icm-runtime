@@ -43,10 +43,20 @@ here: this stage is a single script call so the gathered context is reproducible
      non-empty, this is a **re-review**: 04 forms findings BLIND first, then reads a
      prior same-PR review only to reconcile, and 06 discloses it. Empty = fresh. (A
      prior review of a *different* PR is lineage, handled separately in 04.)
-   - `output/seal.tsv` - `pr_head_sha`, `local_head_sha`, `diverged`. The sealed
-     `pr.diff` IS the PR head; if `diverged=yes` the local working tree is a different
-     commit, so anything you Read/grep off disk may not be in the reviewed diff - that
-     is the input to 04's out-of-seal rule.
+   - `output/seal.tsv` - `pr_head_sha`, `local_head_sha`, `dirty`, `diverged`. The
+     sealed `pr.diff` IS the PR head; `diverged=yes` (a different local commit OR a
+     dirty working tree) means on-disk reads may not be in the reviewed diff - the input
+     to 04's out-of-seal rule.
+   - **When `diverged=yes`, record the review-target decision in
+     `output/seal-decision.tsv` before proceeding** (04's gate `checks/review-precondition.sh`
+     blocks the review Write without it). Surface the divergence to the human
+     (`pr_head_sha` vs `local_head_sha`, N commits, dirty?) and write three rows:
+     `target` (`sealed` | `working-tree`), `human_approved` (`yes` | `no`), `note`.
+     **Default `target=sealed`**: review the actual PR - reproducible, and the
+     divergence is reported as one finding. `target=working-tree` (review the local code
+     instead) is allowed ONLY with the human's explicit `human_approved=yes`, and makes
+     the whole review non-reproducible/out-of-seal. Do not pick `working-tree` on your
+     own. If `diverged=no`, no decision file is needed.
 
 **Run discipline (cwd + one model per run).** Two working directories coexist and
 mixing them is the most common operational failure: tools read/write a
@@ -75,5 +85,6 @@ cd <abs-repo-root> && \
 | Checklist | output/checklist.tsv | One row per PR-template checkbox in the body: `checked`/`unchecked` <TAB> item text. The tick state is the author's claim; stage 04 audits each item against the diff. Empty if the repo has no template checklist. |
 | PR template | output/pr-template.md | The repo's PR template (fetched from the common `.github/PULL_REQUEST_TEMPLATE.md` paths), so 04 can tell a mandatory item the body DROPPED from one that was genuinely absent. A placeholder line if no template exists. |
 | Prior runs | output/prior-runs.tsv | Written by `gather-pr` (deterministic, no cwd trap): paths to sealed `REVIEW-<PR#>.md` from earlier runs of THIS SAME PR (empty = fresh). Non-empty makes this a re-review: 04 forms findings blind before reading a predecessor, 06 discloses independence. |
-| Seal | output/seal.tsv | `pr_head_sha`, `local_head_sha`, `diverged` (yes/no). The reviewed-revision provenance: `pr.diff` is the PR head; `diverged=yes` means the local working tree is a different commit, so on-disk reads may be out-of-seal (04). |
+| Seal | output/seal.tsv | `pr_head_sha`, `local_head_sha`, `dirty` (yes/no), `diverged` (yes/no). Reviewed-revision provenance: `pr.diff` is the PR head; `diverged=yes` (different local commit OR dirty tree) means on-disk reads may be out-of-seal (04). |
+| Seal decision | output/seal-decision.tsv | Written ONLY when `diverged=yes`: `target` (`sealed`/`working-tree`), `human_approved` (`yes`/`no`), `note`. Records which revision the review targets; 04's gate blocks the review Write without it (working-tree needs human_approved=yes). |
 | Diff | output/pr.diff | `gh pr diff` output - the exact change under review, sealed with the context so the review stage reads a reproducible artifact, not an ad-hoc re-fetch. |
