@@ -1,0 +1,3 @@
+{"path":"src/foo.ts","snippet":"const target = compute()","severity":"MEDIUM","body":"anchored to NEW-FILE line 12 (not diff-body offset 3)"}
+{"path":"src/bar.ts","snippet":"export const baz = 2","severity":"LOW","body":"new file, line 2"}
+{"path":"src/foo.ts","snippet":"this line is nowhere in the diff","severity":"LOW","body":"must land in unanchored.tsv, never posted to a guessed line"}

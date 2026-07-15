@@ -1,6 +1,6 @@
 # Stage 06: Assemble report and seal
 
-<!-- ICM-TOOLS expect="(Write)" -->
+<!-- ICM-TOOLS expect="(Write|Bash)" -->
 <!-- ICM-GATE tools="Write" run="test -s ../05-verify/output/verification.md" -->
 
 Assemble the final review report in the ported `REVIEW.md` contract and a receipt
@@ -30,7 +30,42 @@ exists, so the report always carries execution results. Then seal the run.
    - `## Findings by Category`, `## Verification` (suite/mutation/live/adversarial verdicts), `## Recommendations` (LOW).
    - `## Sources`: one clickable `[label](url)` per resolved link from the link graph; note any `walled-off` requirement the review could not verify against.
    - A trailing `REGRESSION-SPEC-JSON` HTML comment block (per CRITICAL/HIGH: finding, file, seam, assertion, fails_on_revert).
-2. Write `output/report-receipt.md`: the report path, its line/finding counts, and a final line that is EXACTLY `VERIFIED: PASS` (report complete: verdict + 7-point + the PR-Template Checklist Audit section present whenever `../01-context/output/checklist.tsv` is non-empty + every CRITICAL/HIGH has file:line + Regression spec + a status with evidence) or `VERIFIED: FAIL` (with what is missing - a non-empty checklist.tsv with no audit section in the report is a FAIL).
+2. **Post the findings inline on the PR as a PENDING draft review (automatic; NEVER submitted).**
+   The report is the record; this puts each finding on the exact line it is about, as a draft a
+   human then submits. Determinism split: the line anchoring + payload is a tool; the POST is a
+   gated pending-only write (never a submit).
+   a. Write `output/review-comments.ndjson` - one JSON object per finding to post inline:
+      `{"path","snippet","severity","body"}`. **`snippet` MUST be copied verbatim from an ADDED
+      line of `../01-context/output/pr.diff` for that file** - quote the code; the tool resolves
+      it to the real RIGHT-side line. Do NOT hand-compute line numbers (a diff-offset vs source
+      line mixup is the exact miss this design removes). `body` = severity + the one-line problem
+      + the fix. Also write `output/review-summary.md` (verdict + one line per finding) for the
+      review body.
+   b. Build the anchored payload (deterministic - validates every anchor against the sealed diff):
+      ```bash
+      bash ~/.agents/skills/kakkoidev/pr-review/tools/build-review-comments \
+        ../01-context/output/pr.diff output/review-comments.ndjson output
+      ```
+      Then READ `output/unanchored.tsv`: any row there did NOT anchor (snippet absent or
+      ambiguous in the diff). Fix its `snippet` and rebuild, or SURFACE it to the user - never
+      leave a finding silently unposted.
+   c. Post as a PENDING review (create-or-append, NEVER submit):
+      ```bash
+      bash ~/.agents/skills/kakkoidev/pr-review/tools/post-review <owner>/<repo> <PR#> \
+        output/review-comments.json --body-file output/review-summary.md
+      ```
+      `post-review` creates a draft review, or appends to a pending review the human already
+      started (no 422, no clobber), and passes NO `event` so nothing is published until a human
+      submits in the GitHub UI. If it fails (no write scope / offline), record the error and
+      continue - the sealed report is the primary artifact, posting is a convenience.
+3. Write `output/report-receipt.md`: the report path, its line/finding counts, the inline-post
+   result (`created`/`appended`/`skipped`/`failed` + anchored/unanchored counts), and a final line
+   that is EXACTLY `VERIFIED: PASS` (report complete: verdict + 7-point + the PR-Template Checklist
+   Audit section present whenever `../01-context/output/checklist.tsv` is non-empty + every
+   CRITICAL/HIGH has file:line + Regression spec + a status with evidence) or `VERIFIED: FAIL`
+   (with what is missing - a non-empty checklist.tsv with no audit section in the report is a FAIL).
+   The inline-post outcome is recorded but does NOT gate the verdict (a post failure is not a
+   report failure).
 
 ## After Output (MANDATORY)
 ```bash
@@ -42,4 +77,8 @@ bash ~/.agents/skills/icm/runtime/icm.sh seal kakkoidev/pr-review
 | Artifact | Location | Format |
 |----------|----------|--------|
 | Review report | output/REVIEW-<PR#>.md | Verdict + rationale; 7-Point table (7 rows); PR-Template Checklist Audit table + Bias-alarm line (when a template checklist exists); Critical Issues (file:line, severity, blast-radius, fix, Regression, Mutation, status CONFIRMED/PLAUSIBLE/REFUTED + evidence); Findings by Category; Verification; Recommendations; Sources (clickable, walled-off noted); REGRESSION-SPEC-JSON block |
-| Report receipt | output/report-receipt.md | Report path + counts; final line exactly `VERIFIED: PASS` / `VERIFIED: FAIL` |
+| Inline-comment source | output/review-comments.ndjson | One JSON per finding to post inline: `{path, snippet (verbatim from an added pr.diff line), severity, body}`. Model-authored; the anchor is a quoted snippet, never a hand-computed line. |
+| Review summary | output/review-summary.md | Verdict + one line per finding; used as the pending review's body on create. |
+| Anchored payload | output/review-comments.json | Deterministic `tools/build-review-comments` output: JSON array of `{path, line, side:RIGHT, body}`, each line resolved from its snippet against `pr.diff`. |
+| Unanchored | output/unanchored.tsv | `path<TAB>reason<TAB>snippet` for every comment that did NOT anchor (snippet absent/ambiguous). Must be surfaced or fixed - never a silent drop. |
+| Report receipt | output/report-receipt.md | Report path + counts + inline-post result (created/appended/skipped/failed, anchored/unanchored); final line exactly `VERIFIED: PASS` / `VERIFIED: FAIL` |

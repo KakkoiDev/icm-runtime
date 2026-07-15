@@ -36,9 +36,20 @@ grep -q 'gather-runtime-evidence' stages/03-runtime-evidence.md || { echo "FAIL:
 grep -q 'gather-impact' stages/03-runtime-evidence.md || { echo "FAIL: 03-runtime-evidence must invoke gather-impact (changed-value dual)"; exit 1; }
 
 # Deterministic tools present and executable.
-for t in tools/gather-pr tools/fetch-web tools/gather-runtime-evidence tools/gather-impact tools/extract-checklist; do
+for t in tools/gather-pr tools/fetch-web tools/gather-runtime-evidence tools/gather-impact tools/extract-checklist tools/build-review-comments tools/post-review; do
     test -x "$t" || { echo "FAIL: $t missing or not executable"; exit 1; }
 done
+
+# C-inline-review: 06 posts findings inline as a PENDING review, anchored deterministically
+# and NEVER submitted. The line anchoring is a tool (snippet -> real RIGHT-side line, so a
+# diff-offset vs source-line mixup cannot mis-post); the POST is pending-only.
+grep -q 'build-review-comments' stages/06-report.md || { echo "FAIL: 06-report must invoke build-review-comments"; exit 1; }
+grep -q 'post-review' stages/06-report.md || { echo "FAIL: 06-report must invoke post-review"; exit 1; }
+grep -q 'NEVER SUBMITS' tools/post-review || { echo "FAIL: post-review must carry the NEVER-SUBMITS invariant"; exit 1; }
+if grep -q 'submitPullRequestReview' tools/post-review; then echo "FAIL: post-review must never submit a review"; exit 1; fi
+test -x eval/build-review-comments.test.sh || { echo "FAIL: eval/build-review-comments.test.sh missing or not executable"; exit 1; }
+test -f eval/fixtures/review-comments/pr.diff || { echo "FAIL: review-comments fixture pr.diff missing"; exit 1; }
+test -f eval/fixtures/review-comments/comments.ndjson || { echo "FAIL: review-comments fixture comments.ndjson missing"; exit 1; }
 
 # C0: gather-pr seals the diff (reproducible review artifact, not an ad-hoc re-fetch).
 grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/pr.diff (C0)"; exit 1; }

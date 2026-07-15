@@ -33,6 +33,12 @@ gathering that was optional and silent, and links that were never followed.
 - A web link is fetched deterministically via `tools/fetch-web` (curl); if curl
   can't reach it, WebFetch is tried; if it is still unreachable (auth wall) it is
   recorded as `WALLED-OFF` and **surfaced to the user** - never silently dropped.
+- The inline PR review (06) splits the same way: the line **anchoring is
+  deterministic** (`tools/build-review-comments` resolves a quoted snippet to its
+  real RIGHT-side line, so a diff-offset vs source-line mixup cannot mis-post; an
+  unresolved snippet lands in `unanchored.tsv`, never a guessed line). The **POST is a
+  gated, pending-only write** (`tools/post-review`, create-or-append, passes no
+  `event`) - it drafts a review a human submits; it never publishes on its own.
 
 ## Pipeline
 
@@ -43,7 +49,7 @@ gathering that was optional and silent, and links that were never followed.
 | 03-runtime-evidence | how the mechanism executes: run history + a real actor/event instance + secret stores (deterministic); the changed-value impact sweep (tests that still assert a value the diff removes - the dual of dead-code, deterministic); per-AC execution-chain trace | `runtime-evidence.md`, `impact.md`, `ac-execution-trace.md` |
 | 04-review | ported review dimensions + 7-point + scars check + PR-template checklist audit (uniform bar, verified/asserted, bias alarm), findings tagged CONFIRMED/PLAUSIBLE/REFUTED | `findings.md`, `checklist-audit.md` |
 | 05-verify | suite + mutation-in-worktree + read-only MCP + mandatory adversarial per-finding verify (no-oracle PRs backed by runtime-evidence, never "static only") | `verification.md` |
-| 06-report | assemble + seal the report | `REVIEW-<PR#>.md`, `report-receipt.md` |
+| 06-report | assemble + seal the report, then post findings inline as a PENDING PR review (deterministic snippet->line anchoring; create-or-append; never submitted) | `REVIEW-<PR#>.md`, `review-comments.ndjson`, `review-comments.json`, `unanchored.tsv`, `report-receipt.md` |
 
 ## Invocation
 

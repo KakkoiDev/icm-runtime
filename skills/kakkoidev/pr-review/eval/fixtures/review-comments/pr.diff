@@ -1,0 +1,18 @@
+diff --git a/src/foo.ts b/src/foo.ts
+index 1111111..2222222 100644
+--- a/src/foo.ts
++++ b/src/foo.ts
+@@ -10,3 +10,5 @@ export function foo() {
+   const a = 1
+   const b = 2
++  const target = compute()
++  return target
+   const c = 3
+diff --git a/src/bar.ts b/src/bar.ts
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/src/bar.ts
+@@ -0,0 +1,2 @@
++export const bar = 1
++export const baz = 2

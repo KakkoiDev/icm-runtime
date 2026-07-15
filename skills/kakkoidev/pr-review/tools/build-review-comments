@@ -1,0 +1,99 @@
+#!/bin/sh
+# build-review-comments: turn review findings into GitHub review-comment payloads with
+# line anchors VALIDATED against the sealed diff. Deterministic: no model, no network.
+#
+# Usage: build-review-comments <pr.diff> <comments.ndjson> <out-dir>
+# Input <comments.ndjson>: one JSON object per line:
+#   {"path": "<repo-rel path>", "snippet": "<substring of the target diff line>",
+#    "severity": "<CRITICAL|HIGH|MEDIUM|LOW>", "body": "<markdown comment body>"}
+#   `snippet` is copied verbatim from an ADDED (or context) line of pr.diff - the model
+#   quotes the code, this tool finds the line, so a wrong line number is impossible.
+# Writes:
+#   <out-dir>/review-comments.json  - JSON array of {path,line,side:RIGHT,body} (anchored)
+#   <out-dir>/unanchored.tsv        - path<TAB>reason<TAB>snippet for every comment that
+#                                     could NOT be anchored (0 or >1 diff-line matches).
+#                                     NEVER silently dropped - a comment with no unique
+#                                     home is surfaced, not posted to a guessed line.
+# stderr: a one-line summary "anchored=N unanchored=M".
+#
+# Why snippet-anchoring: line numbers in a review draft are ambiguous (source line vs
+# diff offset) and the classic miss is a comment posted to the wrong line. Resolving a
+# quoted substring to its RIGHT-side new-file line is reproducible and self-correcting.
+# Parses under bash 3.2 / POSIX sh (awk + jq).
+set -eu
+
+DIFF=${1:-}; NDJSON=${2:-}; OUT=${3:-}
+[ -n "$DIFF" ] && [ -n "$NDJSON" ] && [ -n "$OUT" ] \
+  || { echo "usage: build-review-comments <pr.diff> <comments.ndjson> <out-dir>" >&2; exit 2; }
+[ -f "$DIFF" ] || { echo "build-review-comments: diff not found: $DIFF" >&2; exit 2; }
+[ -f "$NDJSON" ] || { echo "build-review-comments: comments ndjson not found: $NDJSON" >&2; exit 2; }
+command -v jq >/dev/null 2>&1 || { echo "build-review-comments: jq not found" >&2; exit 3; }
+mkdir -p "$OUT"
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+TAB=$(printf '\t')
+
+# ---- 1. diffmap.tsv: path<TAB>new_line<TAB>content, one row per RIGHT-side line ----
+# (added and context lines both carry a new-file line number and are commentable.)
+awk '
+  /^diff --git / { path=""; inhunk=0; next }
+  /^--- /        { next }
+  /^\+\+\+ /     {
+      p=$0; sub(/^\+\+\+ [ab]\//,"",p); sub(/\+\+\+ /,"",p); sub(/\t.*$/,"",p)
+      if (p=="/dev/null") path=""; else path=p
+      inhunk=0; next
+  }
+  /^@@ / {
+      m=$0; sub(/^@@ -[0-9,]+ \+/,"",m); sub(/[ ,].*$/,"",m)
+      newline=m+0; inhunk=1; next
+  }
+  {
+      if (!inhunk || path=="") next
+      c=substr($0,1,1); rest=substr($0,2)
+      if (c=="+")      { print path "\t" newline "\t" rest; newline++ }
+      else if (c==" ") { print path "\t" newline "\t" rest; newline++ }
+      else if (c=="-") { }
+      else if (c=="\\"){ }
+      else             { inhunk=0 }
+  }
+' "$DIFF" > "$TMP/diffmap.tsv"
+
+# ---- 2. resolve each comment by snippet -> unique RIGHT-side line ----
+: > "$TMP/resolved.ndjson"
+: > "$OUT/unanchored.tsv"
+anchored=0; unanchored=0
+
+# Read ndjson records compactly (one JSON per line), skip blanks.
+while IFS= read -r rec; do
+  [ -n "$rec" ] || continue
+  path=$(printf '%s' "$rec" | jq -r '.path // empty')
+  snip=$(printf '%s' "$rec" | jq -r '.snippet // empty')
+  if [ -z "$path" ] || [ -z "$snip" ]; then
+    printf '%s\t%s\t%s\n' "${path:-?}" "missing path/snippet" "$snip" >> "$OUT/unanchored.tsv"
+    unanchored=$((unanchored+1)); continue
+  fi
+  # matching lines: same path AND content contains the snippet (content = fields 3..NF).
+  matchlines=$(awk -F"$TAB" -v p="$path" -v s="$snip" '
+    $1==p {
+      content=$3; for (i=4;i<=NF;i++) content=content "\t" $i
+      if (index(content, s) > 0) print $2
+    }' "$TMP/diffmap.tsv")
+  n=$(printf '%s\n' "$matchlines" | grep -c '[0-9]' || true)
+  if [ "$n" -eq 1 ]; then
+    line=$(printf '%s\n' "$matchlines" | grep '[0-9]' | head -1)
+    printf '%s' "$rec" | jq -c --argjson ln "$line" \
+      '{path: .path, line: $ln, side: "RIGHT", body: .body}' >> "$TMP/resolved.ndjson"
+    anchored=$((anchored+1))
+  elif [ "$n" -eq 0 ]; then
+    printf '%s\t%s\t%s\n' "$path" "snippet not found in diff (RIGHT side)" "$snip" >> "$OUT/unanchored.tsv"
+    unanchored=$((unanchored+1))
+  else
+    printf '%s\t%s (%s matches)\t%s\n' "$path" "snippet ambiguous" "$n" "$snip" >> "$OUT/unanchored.tsv"
+    unanchored=$((unanchored+1))
+  fi
+done < "$NDJSON"
+
+# ---- 3. assemble the JSON array ----
+jq -s '.' "$TMP/resolved.ndjson" > "$OUT/review-comments.json"
+
+echo "build-review-comments: anchored=$anchored unanchored=$unanchored -> $OUT/review-comments.json" >&2

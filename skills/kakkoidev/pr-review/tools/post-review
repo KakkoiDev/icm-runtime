@@ -1,0 +1,109 @@
+#!/bin/sh
+# post-review: post anchored review comments to a GitHub PR as a PENDING review.
+#
+# Usage: post-review <owner/repo> <pr#> <review-comments.json> [--dry-run] [--body-file <f>]
+#
+# INVARIANT - NEVER SUBMITS. This tool only ever creates or appends to a PENDING
+# (draft) review. It passes no `event`, so nothing is published and the PR author is
+# not notified until a human clicks Submit in the GitHub UI. There is no code path here
+# that submits/approves/requests-changes - that decision stays with the human.
+#
+# Behaviour:
+#   - 0 comments in the payload -> no-op (exit 0).
+#   - No existing pending review by the current user -> CREATE one (REST, no event) with
+#     all comments, and the summary --body-file if given.
+#   - An existing pending review by the current user -> APPEND each comment to it
+#     (GraphQL addPullRequestReviewThread), so it never 422s on "one pending review per
+#     user", and never clobbers a review the human already started.
+#   - Dedup: a comment whose (path + first 80 chars of body) already exists on the
+#     pending review is skipped, so re-running a stage does not double-post.
+#   - --dry-run: report the create-vs-append decision and per-comment action; write nothing.
+#
+# Read-only inputs otherwise. Requires gh (authenticated) + jq.
+set -eu
+
+OR=${1:-}; PR=${2:-}; PAYLOAD=${3:-}
+[ -n "$OR" ] && [ -n "$PR" ] && [ -n "$PAYLOAD" ] \
+  || { echo "usage: post-review <owner/repo> <pr#> <review-comments.json> [--dry-run] [--body-file <f>]" >&2; exit 2; }
+shift 3 || true
+DRY=0; BODYFILE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY=1 ;;
+    --body-file) shift; BODYFILE=${1:-} ;;
+    *) echo "post-review: unknown arg: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+[ -f "$PAYLOAD" ] || { echo "post-review: payload not found: $PAYLOAD" >&2; exit 2; }
+command -v gh >/dev/null 2>&1 || { echo "post-review: gh not found" >&2; exit 3; }
+command -v jq >/dev/null 2>&1 || { echo "post-review: jq not found" >&2; exit 3; }
+
+N=$(jq 'length' "$PAYLOAD")
+if [ "$N" -eq 0 ]; then echo "post-review: 0 comments in payload - nothing to post" >&2; exit 0; fi
+
+ME=$(gh api user --jq '.login' 2>/dev/null) || { echo "post-review: gh api user failed (not authenticated?)" >&2; exit 4; }
+
+# Existing PENDING review by the current user (id + node_id), if any.
+REVIEWS=$(gh api "repos/$OR/pulls/$PR/reviews" --paginate 2>/dev/null || echo '[]')
+PID=$(printf '%s' "$REVIEWS"   | jq -r --arg me "$ME" 'map(select(.state=="PENDING" and .user.login==$me))[0].id // empty')
+PNODE=$(printf '%s' "$REVIEWS" | jq -r --arg me "$ME" 'map(select(.state=="PENDING" and .user.login==$me))[0].node_id // empty')
+
+# Dedup set from the existing pending review's comments: "path\t<body first 80>".
+SEEN=$(mktemp); trap 'rm -f "$SEEN"' EXIT
+if [ -n "$PID" ]; then
+  gh api "repos/$OR/pulls/$PR/reviews/$PID/comments" --paginate 2>/dev/null \
+    | jq -r '.[] | .path + "\t" + (.body[0:80])' > "$SEEN" 2>/dev/null || true
+fi
+
+if [ -n "$PID" ]; then MODE="append (pending review $PID)"; else MODE="create new pending review"; fi
+echo "post-review: user=$ME mode=$MODE payload=$N comments dry_run=$DRY" >&2
+
+# Partition payload into to-post (not already present) vs skipped (dedup).
+TOPOST=$(mktemp); trap 'rm -f "$SEEN" "$TOPOST"' EXIT
+skipped=0
+i=0
+while [ "$i" -lt "$N" ]; do
+  rec=$(jq -c ".[$i]" "$PAYLOAD")
+  key=$(printf '%s' "$rec" | jq -r '.path + "\t" + (.body[0:80])')
+  if [ -s "$SEEN" ] && grep -Fxq "$key" "$SEEN"; then
+    skipped=$((skipped+1))
+  else
+    printf '%s\n' "$rec" >> "$TOPOST"
+  fi
+  i=$((i+1))
+done
+POST_N=$(grep -c '.' "$TOPOST" 2>/dev/null || echo 0)
+echo "post-review: to-post=$POST_N skipped(dedup)=$skipped" >&2
+
+if [ "$DRY" -eq 1 ]; then
+  echo "--- DRY RUN: would $MODE with these comments ---" >&2
+  jq -r '"  " + .path + ":" + (.line|tostring) + "  " + (.body[0:60])' "$TOPOST" >&2 || true
+  exit 0
+fi
+if [ "$POST_N" -eq 0 ]; then echo "post-review: nothing new to post (all deduped)" >&2; exit 0; fi
+
+if [ -z "$PID" ]; then
+  # CREATE a pending review (no event) with all to-post comments.
+  HEAD=$(gh api "repos/$OR/pulls/$PR" --jq '.head.sha' 2>/dev/null)
+  BODY=""; [ -n "$BODYFILE" ] && [ -f "$BODYFILE" ] && BODY=$(cat "$BODYFILE")
+  jq -n --arg cid "$HEAD" --arg body "$BODY" --slurpfile cs "$TOPOST" \
+    '{commit_id: $cid, body: $body, comments: ($cs | map({path,line,side,body}))}' > "$TOPOST.req"
+  RID=$(gh api "repos/$OR/pulls/$PR/reviews" --method POST --input "$TOPOST.req" --jq '.id' 2>&1) \
+    && echo "post-review: created PENDING review id=$RID (not submitted)" >&2 \
+    || { echo "post-review: create failed: $RID" >&2; exit 5; }
+else
+  # APPEND each to-post comment to the existing pending review (GraphQL, no submit).
+  Q='mutation($rid:ID!,$path:String!,$line:Int!,$body:String!){addPullRequestReviewThread(input:{pullRequestReviewId:$rid,path:$path,line:$line,side:RIGHT,body:$body}){thread{id}}}'
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    p=$(printf '%s' "$rec" | jq -r '.path')
+    l=$(printf '%s' "$rec" | jq -r '.line')
+    b=$(printf '%s' "$rec" | jq -r '.body')
+    tid=$(gh api graphql -f query="$Q" -f rid="$PNODE" -f path="$p" -F line="$l" -f body="$b" \
+      --jq '.data.addPullRequestReviewThread.thread.id' 2>&1) \
+      && echo "post-review: appended $p:$l -> $tid" >&2 \
+      || { echo "post-review: append failed for $p:$l: $tid" >&2; }
+  done < "$TOPOST"
+  echo "post-review: appended to PENDING review $PID (not submitted)" >&2
+fi
