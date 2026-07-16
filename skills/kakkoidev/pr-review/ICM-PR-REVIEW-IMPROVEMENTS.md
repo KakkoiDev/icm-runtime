@@ -318,3 +318,88 @@ fewer inline comments than it has findings and writes no `Findings coverage:` li
 held-out check FAILS (verified against the #24618 run dir: `receipt has no 'Findings
 coverage:' line`). The synthetic-fixture pass confirms the check bites the dropped-finding,
 over-claim, and missing-reason shapes and passes a complete run.
+
+---
+
+## 8. Follow-up: value gate - noise vs completeness (#24618 round 2, 2026-07-16)
+
+### The case study
+
+Same PR as section 7, second failure mode. The run's history, per its own receipt:
+
+1. Initial pending review (4709947910): only **F2 - a noisy finding -** was anchored inline.
+   F1, the REAL finding (org-wide `auditLogSMS` removal), and F3 were body-only. The signal
+   never reached the diff; the noise did.
+2. Reposted with all 3 anchored (the section-7 completeness fix, frozen as `d9d3308`'s
+   "one inline comment PER FINDING" rule). The human submitted; reviewer Ahmed replied:
+   F2/F3 were true but "unnecessary ... I could have spent the remaining time doing other
+   work" (F2 a pre-existing pattern out of this PR's scope, F3 a test-nag on a zero-test
+   area), and F1 was legit but too verbose - "an engineer would have provided the same
+   comment ... in a very more concise manner".
+
+So NEITHER state ever posted just the signal. `d9d3308` fixed completeness and broke
+precision: it took LOW findings stage 04 explicitly routes to Recommendations ("LOW (style
+only -> Recommendations, not blockers). No nits.") and forced them onto the PR.
+
+### Root cause (an axis confusion, not a truth failure)
+
+The tempting fix - "verify each claim one last time" - does nothing here: F2 and F3 were
+TRUE, and stage 05's adversarial pass would CONFIRM them. There are two orthogonal axes:
+
+- **Truth** (is the finding real?) - already handled: CONFIRMED / PLAUSIBLE / REFUTED.
+- **Value** (does it earn the author's time on this PR?) - nothing checked it.
+
+The observed "re-articulating each finding one last time improves the output" effect is the
+value judgment surfacing ("this is pre-existing / out of scope / wouldn't change the merge
+decision"), not a truth re-check. And the mechanical trigger was a paired-rule tension: a
+completeness rule ("never drop a finding") and a precision rule ("don't post noise")
+optimized independently regress each other.
+
+### The change
+
+- **[prose] stages/04-review.md** - every finding carries a machine-parseable `Value:` line:
+  `introduced-by-diff= in-scope= merge-decision= floor=pass|fail -> proposed:
+  inline|report-only(<reason>)|dropped(<reason>)`. The objective floor: introduced BY THIS
+  DIFF AND (CRITICAL/HIGH, or a correctness/security/data-loss bug, or otherwise
+  merge-decision-changing). Asymmetric guardrail: demote only for explicit reasons
+  (pre-existing / out-of-scope / style / LOW-not-merge-changing), NEVER a diff-introduced
+  correctness/security/data finding; ties resolve to POST.
+- **[prose] stages/05-verify.md** - new step 7, the per-finding value/judgment pass
+  (deliberately separate from the truth pass in step 5): re-articulate each finding from
+  scratch in one plain sentence, answer the gate questions (would a senior engineer bother?
+  does it change the merge decision? introduced by this diff? in scope? sayable in one
+  sentence?), resolve a final `Disposition: F<n> final: ...` line. A floor-passer failing
+  only the one-sentence test is DISTILLED, not demoted.
+- **[prose] stages/06-report.md** - the walk-back of `d9d3308`: only `inline`-disposition
+  findings get ndjson rows; `report-only`/`dropped` render in the report's Recommendations
+  with their reasons and stay out of review-summary.md (the summary reaches the PR on
+  submit). Inline bodies are ONE concise engineer-natural sentence + optional one-line fix;
+  the report carries the detail. The coverage ledger stays complete - the receipt accounts
+  for every finding as `inline | body-only(r) | report-only(r) | dropped(r)`.
+- **[structural] eval-heldout/inline-comment-coverage.test.sh** - now enforces BOTH
+  directions: a `floor=fail` finding must not be `inline`/`body-only` (precision), a
+  `floor=pass` finding must not be `report-only` (anti-over-filter), findings without
+  `Value:` lines fail outright, and runs with findings but an empty ndjson are no longer
+  exempt (an all-demoted run must still reconcile).
+- **[structural] eval/inline-coverage-selftest.test.sh** - synthetic #24618-shaped fixture
+  (3 findings, only F1 floor=pass, 1 inline comment) must pass; 6 mutations (noise posted,
+  signal suppressed, missing reason, gate skipped, unaccounted finding, over-claim) must
+  each fail. eval/structure.test.sh pins the stage prose mandates.
+
+### Regression fixture
+
+Fails-on-revert, verified against the real #24618 run dir: the `d9d3308` held-out check
+says `ok: inline-comment coverage (3 anchored, all findings accounted for)` on the exact
+artifacts that produced the incident; the new check rejects them (`no 'Value: ...
+floor=pass|fail' lines - the value gate was skipped`). Target shape on re-review: F1
+inline in one concise sentence, F2 report-only(pre-existing), F3 report-only or dropped,
+net 1 inline comment.
+
+### Rejected alternatives
+
+- **A final per-finding truth re-check** - confirms F2/F3 (they are true) and changes
+  nothing; wrong axis.
+- **Dropping low-value findings entirely** - violates the section-7 ledger; report-only is
+  a recorded destination, so whoever runs the tool on their own PR still sees everything.
+- **A hard character cap on inline bodies** - would mangle code snippets; the one-sentence
+  rule is prose plus a soft (warn-only) length/bullet check.

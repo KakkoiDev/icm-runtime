@@ -46,3 +46,8 @@ actively check, not a box to tick.
 
 ## Review independence
 - On a re-review of the SAME PR, do a blind pass first (from the diff and runtime evidence only); read any prior review afterward and only to reconcile, re-deriving each verdict against source. A prior run's findings list is anchoring, not a second opinion. Disclose reduced independence.
+
+## Completeness vs precision (paired rules)
+- A completeness rule ("never drop a finding") and a precision rule ("don't post noise") are in tension; optimizing either alone regresses the other. The ledger must account for every item, but "accounted for" includes report-only and dropped(reason) - not only posted.
+- Truth and value are orthogonal axes. A TRUE finding can still waste the author's time (pre-existing pattern the diff merely makes reachable, out-of-scope suggestion, test-nag on a zero-test area); no truth re-check catches that. Ask separately: would a senior engineer bother writing this comment on this PR, and does it change the merge decision?
+- The filter is asymmetric: demote only for explicit reasons; never demote a diff-introduced correctness/security/data finding; ties resolve to POST. A comment that fails only on verbosity is distilled to one engineer-natural sentence, not demoted.
