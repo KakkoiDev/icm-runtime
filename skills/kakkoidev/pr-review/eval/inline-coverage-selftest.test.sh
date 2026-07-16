@@ -16,8 +16,22 @@ trap 'rm -rf "$tmp"' EXIT
 # rows), findings.md body (via stdin).
 mkrun() {
     d="$tmp/$1"; cov="$2"; n="$3"
-    mkdir -p "$d/04-review/output" "$d/06-report/output"
+    mkdir -p "$d/04-review/output" "$d/05-verify/output" "$d/06-report/output"
     cat > "$d/04-review/output/findings.md"
+    # Derive stage-05 artifacts consistent with the coverage line (mutations overwrite
+    # these after mkrun): Disposition lines (body-only posts, so its disposition is
+    # inline) and an all-consistent value-claims.tsv.
+    : > "$d/05-verify/output/verification.md"
+    : > "$d/05-verify/output/value-claims.tsv"
+    printf '%s\n' "$cov" | grep -oE 'F[0-9]+:(inline|body-only|report-only|dropped)' | while IFS=: read -r fid disp; do
+        [ "$disp" = body-only ] && disp=inline
+        if [ "$disp" = inline ]; then
+            printf 'Disposition: %s final: inline - derived\n' "$fid" >> "$d/05-verify/output/verification.md"
+        else
+            printf 'Disposition: %s final: %s(derived) - derived\n' "$fid" "$disp" >> "$d/05-verify/output/verification.md"
+        fi
+        printf '%s\tintroduced-by-diff=yes\tconsistent\ta.ts\n' "$fid" >> "$d/05-verify/output/value-claims.tsv"
+    done
     i=0
     : > "$d/06-report/output/review-comments.ndjson"
     printf '[' > "$d/06-report/output/review-comments.json"
@@ -77,4 +91,18 @@ expect fail unaccounted "$d" "a finding missing from the coverage line must fail
 d=$(findings_ok | mkrun overclaim 'F1:inline F2:report-only(pre-existing) F3:dropped(vacuous)' 0)
 expect fail overclaim "$d" "claimed :inline with an empty payload must fail"
 
-echo "ok: inline-coverage self-test (1 pass shape, 6 mutations bitten)"
+# Self-graded floor unchecked: value-claims.tsv missing or carrying a SUSPECT.
+d=$(findings_ok | mkrun unchecked 'F1:inline F2:report-only(pre-existing) F3:dropped(vacuous)' 1)
+rm "$d/05-verify/output/value-claims.tsv"
+expect fail unchecked "$d" "missing value-claims.tsv must fail"
+
+d=$(findings_ok | mkrun suspect 'F1:inline F2:report-only(pre-existing) F3:dropped(vacuous)' 1)
+printf 'F1\tintroduced-by-diff=yes\tSUSPECT(no cited file is touched by the diff)\tx.ts\n' > "$d/05-verify/output/value-claims.tsv"
+expect fail suspect "$d" "an unresolved SUSPECT value claim must fail"
+
+# 06 overrules 05: stage-05 disposition says report-only, receipt posts it inline.
+d=$(findings_ok | mkrun overruled 'F1:inline F2:report-only(pre-existing) F3:dropped(vacuous)' 1)
+printf 'Disposition: F1 final: report-only(chatty) - derived\nDisposition: F2 final: report-only(pre-existing) - derived\nDisposition: F3 final: dropped(vacuous) - derived\n' > "$d/05-verify/output/verification.md"
+expect fail overruled "$d" "a receipt token contradicting the stage-05 disposition must fail"
+
+echo "ok: inline-coverage self-test (1 pass shape, 9 mutations bitten)"

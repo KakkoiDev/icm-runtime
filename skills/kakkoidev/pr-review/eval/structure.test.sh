@@ -76,6 +76,11 @@ grep -q 'report-only' stages/06-report.md || { echo "FAIL: 06-report must suppor
 grep -qiE 'inline.-disposition' stages/06-report.md || { echo "FAIL: 06-report must post ndjson rows only for inline-disposition findings"; exit 1; }
 grep -qiE 'ONE concise sentence' stages/06-report.md || { echo "FAIL: 06-report must mandate one-concise-sentence inline bodies (Ahmed's verbosity feedback)"; exit 1; }
 test -x eval/inline-coverage-selftest.test.sh || { echo "FAIL: eval/inline-coverage-selftest.test.sh missing or not executable (proves the coverage check bites both directions)"; exit 1; }
+# The floor is model-graded; 05 must cross-check the introduced-by-diff claims against
+# the diff deterministically (a self-graded gate is prose, not enforcement).
+test -x tools/check-value-claims || { echo "FAIL: tools/check-value-claims missing or not executable"; exit 1; }
+grep -q 'check-value-claims' stages/05-verify.md || { echo "FAIL: 05-verify must run check-value-claims (self-graded floor cross-check)"; exit 1; }
+test -x eval/check-value-claims.test.sh || { echo "FAIL: eval/check-value-claims.test.sh missing or not executable"; exit 1; }
 
 # C0: gather-pr seals the diff (reproducible review artifact, not an ad-hoc re-fetch).
 grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/pr.diff (C0)"; exit 1; }

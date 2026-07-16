@@ -1,0 +1,68 @@
+#!/bin/sh
+# check-value-claims <findings.md> <pr.diff>
+#
+# Deterministic cross-check of the value gate's self-graded claims (#24618 hardening).
+# The floor (introduced-by-diff, floor=pass) is model-written; the same model that wants
+# to post a finding can label it floor=pass. This tool checks the one part of the claim
+# an artifact can refute: a finding claiming introduced-by-diff=yes AND floor=pass (i.e.
+# one that will post inline) must cite at least one file path the diff actually touches.
+# It cannot catch semantic lies (a pre-existing pattern cited alongside a changed file
+# still passes) - it catches the lazy ones (no cited file in the diff, no file cited).
+#
+# Emits TSV to stdout: F<n> <TAB> claim <TAB> verdict <TAB> detail
+# verdict: consistent | exempt(introduced-by-diff=no) | exempt(floor=fail) | SUSPECT(<why>)
+# Exit 0 always: stage 05 resolves SUSPECT rows (ground the claim in a changed file, or
+# flip it to =no and demote); the held-out check fails a run whose final value-claims.tsv
+# still carries a SUSPECT.
+set -eu
+
+[ $# -eq 2 ] || { echo "usage: check-value-claims <findings.md> <pr.diff>" >&2; exit 2; }
+findings=$1; diff=$2
+[ -f "$findings" ] || { echo "check-value-claims: $findings not found" >&2; exit 2; }
+[ -f "$diff" ] || { echo "check-value-claims: $diff not found" >&2; exit 2; }
+
+dfiles=$(mktemp); trap 'rm -f "$dfiles"' EXIT
+sed -nE -e 's|^\+\+\+ b/||p' -e 's|^--- a/||p' "$diff" | grep -v '^/dev/null$' | sort -u > "$dfiles" || true
+
+awk '
+function ends(s, suf) { return length(s) >= length(suf) && substr(s, length(s) - length(suf) + 1) == suf }
+NR == FNR { df[$0] = 1; next }
+{
+    line = $0
+    while (match(line, /F[0-9]+/)) {
+        id = substr(line, RSTART, RLENGTH)
+        if (!(id in seen)) { seen[id] = 1; order[++k] = id }
+        cur = id
+        line = substr(line, RSTART + RLENGTH)
+    }
+    if (cur == "") next
+    if ($0 ~ /introduced-by-diff=yes/) claim[cur] = "yes"
+    else if ($0 ~ /introduced-by-diff=no/) claim[cur] = "no"
+    if ($0 ~ /floor=pass/) floor[cur] = "pass"
+    else if ($0 ~ /floor=fail/) floor[cur] = "fail"
+    rest = $0
+    while (match(rest, /([A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+/)) {
+        paths[cur] = paths[cur] " " substr(rest, RSTART, RLENGTH)
+        rest = substr(rest, RSTART + RLENGTH)
+    }
+}
+END {
+    for (i = 1; i <= k; i++) {
+        id = order[i]
+        c = (id in claim) ? claim[id] : "missing"
+        f = (id in floor) ? floor[id] : "missing"
+        if (c == "missing" || f == "missing") { printf "%s\t%s\tSUSPECT(no Value line)\t-\n", id, c; continue }
+        if (c == "no")     { printf "%s\tintroduced-by-diff=no\texempt(introduced-by-diff=no)\t-\n", id; continue }
+        if (f == "fail")   { printf "%s\tintroduced-by-diff=yes\texempt(floor=fail)\t-\n", id; continue }
+        n = split(substr(paths[id], 2), arr, " ")
+        hit = ""
+        for (j = 1; j <= n && hit == ""; j++) {
+            p = arr[j]; sub(/:[0-9].*$/, "", p)
+            for (d in df) if (d == p || ends(d, "/" p) || ends(p, "/" d)) { hit = p; break }
+        }
+        if (hit != "")      printf "%s\tintroduced-by-diff=yes\tconsistent\t%s\n", id, hit
+        else if (n == 0)    printf "%s\tintroduced-by-diff=yes\tSUSPECT(no file path cited in the finding block)\t-\n", id
+        else                printf "%s\tintroduced-by-diff=yes\tSUSPECT(no cited file is touched by the diff)\t%s\n", id, arr[1]
+    }
+}
+' "$dfiles" "$findings"

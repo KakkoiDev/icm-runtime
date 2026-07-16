@@ -40,6 +40,13 @@ never modified. Never implement a fix, commit, push, or POST to any live service
    ```
    A finding posts `inline` only if it clears stage 04's objective floor AND this judgment gate. **Asymmetry (guardrail):** demote only for the explicit reasons (`pre-existing`, `out-of-scope`, `style`, `LOW-not-merge-changing`); NEVER demote a diff-introduced correctness/security/data-loss finding; ties resolve to `inline` - when in doubt, POST. A floor-passing finding that fails only the one-sentence test is DISTILLED into one sentence, not demoted. `dropped` is only for findings the re-articulation showed to be wrong/vacuous, always with the reason. Every `F<n>` in findings.md gets exactly one Disposition line - report-only is a recorded destination, not a silent drop.
 
+   **Cross-check the self-graded claims (deterministic).** The floor is written by the same pass that wants to post the finding - do not let it grade itself unchecked. Run:
+   ```bash
+   bash ~/.agents/skills/kakkoidev/pr-review/tools/check-value-claims \
+     ../04-review/output/findings.md ../01-context/output/pr.diff > output/value-claims.tsv
+   ```
+   Every `SUSPECT` row MUST be resolved before this stage completes: either ground the `introduced-by-diff=yes` claim by citing the actual changed file in the finding block (then re-run the tool), or concede the claim is wrong - flip it to `=no` in findings.md and demote the disposition accordingly. A final `value-claims.tsv` still carrying a SUSPECT fails the held-out check. (The tool catches lazy claims - no cited file in the diff; it cannot catch a pre-existing pattern cited next to a changed file, so the judgment questions above still apply.)
+
 ## After Output (MANDATORY)
 ```bash
 bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/pr-review --stage 05-verify
@@ -49,3 +56,4 @@ bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/pr-review --stage 
 | Artifact | Location | Format |
 |----------|----------|--------|
 | Verification | output/verification.md | Suite: `N passed, M failed, K skipped` via `<runner>` (or `no runner: static coverage only`); for no-oracle PRs, the runtime-evidence facts that back each mechanism finding (never "static only" as the whole verification); Mutation: per finding `caught` / `SURVIVED` (a SURVIVED fails 7-Point #6); Live: per metric `has-data` / `phantom` / `unverified`; Adversarial verify: per CRITICAL/HIGH a final `CONFIRMED` / `PLAUSIBLE` / `REFUTED` + the evidence that settled it; Checklist exercise: per `asserted` item from 04 a final `verified: <what you did>` / `GAP: <what it showed>` / `UNVERIFIED: <why>`, plus the re-run bias-alarm line; Dispositions: one `Disposition: F<n> final: inline\|report-only(<reason>)\|dropped(<reason>) - <justification>` line per finding in findings.md (the value/judgment pass verdicts stage 06 posts from). |
+| Value-claim check | output/value-claims.tsv | `tools/check-value-claims` output: per finding `F<n> \| claim \| verdict (consistent/exempt/SUSPECT) \| detail`. No SUSPECT rows may remain - each is grounded (cite the changed file) or conceded (claim flipped, disposition demoted) and the tool re-run. |

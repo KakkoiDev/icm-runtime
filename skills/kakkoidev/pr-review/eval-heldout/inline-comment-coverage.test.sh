@@ -93,7 +93,35 @@ if [ -n "$fids" ]; then
     done
 fi
 
-# 5. Soft concision check (warn only - the rule is prose: one concise engineer-natural
+# 5. The self-graded floor was cross-checked: value-claims.tsv exists and carries no
+#    unresolved SUSPECT (a floor=pass claim no diff-touched file grounds).
+if [ -n "$fids" ]; then
+    vc="$ICM_RUN_DIR/05-verify/output/value-claims.tsv"
+    [ -f "$vc" ] \
+        || { echo "FAIL: 05-verify/output/value-claims.tsv missing - check-value-claims was not run (self-graded floor unchecked)"; exit 1; }
+    if grep -q 'SUSPECT' "$vc"; then
+        echo "FAIL: value-claims.tsv carries an unresolved SUSPECT row: $(grep 'SUSPECT' "$vc" | head -1)"; exit 1
+    fi
+fi
+
+# 6. Receipt tokens match stage 05's final Disposition lines (when verification.md is
+#    present): disposition inline may land inline or body-only; report-only and dropped
+#    must land exactly as decided - 06 may not overrule 05 in either direction.
+ver="$ICM_RUN_DIR/05-verify/output/verification.md"
+if [ -f "$ver" ] && grep -qE 'Disposition: F[0-9]+ final:' "$ver"; then
+    for id in $fids; do
+        fdisp=$(grep -oE "Disposition: $id final: (inline|report-only|dropped)" "$ver" | head -1 | awk '{print $4}' || true)
+        [ -n "$fdisp" ] || { echo "FAIL: finding $id has no 'Disposition: $id final:' line in verification.md"; exit 1; }
+        tok=$(printf '%s' "$cov" | grep -oE "$id:(inline|body-only|report-only|dropped)" | head -1)
+        disp=${tok#"$id":}
+        case "$fdisp:$disp" in
+            inline:inline|inline:body-only|report-only:report-only|dropped:dropped) : ;;
+            *) echo "FAIL: $id stage-05 disposition '$fdisp' but receipt token '$disp' - 06 overruled 05"; exit 1 ;;
+        esac
+    done
+fi
+
+# 7. Soft concision check (warn only - the rule is prose: one concise engineer-natural
 #    sentence; a hard cap would mangle code snippets).
 if [ -s "$ndjson" ]; then
     long=$(jq -r 'select((.body | length) > 400) | .body[0:40]' "$ndjson" 2>/dev/null || true)
