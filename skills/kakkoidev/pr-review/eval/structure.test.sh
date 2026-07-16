@@ -51,6 +51,16 @@ test -x eval/build-review-comments.test.sh || { echo "FAIL: eval/build-review-co
 test -f eval/fixtures/review-comments/pr.diff || { echo "FAIL: review-comments fixture pr.diff missing"; exit 1; }
 test -f eval/fixtures/review-comments/comments.ndjson || { echo "FAIL: review-comments fixture comments.ndjson missing"; exit 1; }
 
+# C-inline-coverage (SOBA-103 #24618): 06 posts ONE inline comment per finding - a deletion-only
+# finding anchors to the adjacent context line, a PR-wide finding to a representative line - and the
+# receipt carries a `Findings coverage:` line accounting for every finding by id. The freeze that a
+# review can no longer silently post 1 of 3 findings and drop the rest to the report body.
+grep -qiE 'per finding' stages/06-report.md || { echo "FAIL: 06-report must mandate one inline comment per finding (#24618)"; exit 1; }
+grep -qiE 'context line' stages/06-report.md || { echo "FAIL: 06-report must state anchors resolve context lines too (so deletion findings anchor to the adjacent context line)"; exit 1; }
+grep -q 'Findings coverage:' stages/06-report.md || { echo "FAIL: 06-report must require the receipt 'Findings coverage:' reconciliation line"; exit 1; }
+grep -qE 'F<n>' stages/04-review.md || { echo "FAIL: 04-review must mandate stable F<n> finding ids (used by the coverage line + freeze)"; exit 1; }
+test -x eval-heldout/inline-comment-coverage.test.sh || { echo "FAIL: eval-heldout/inline-comment-coverage.test.sh missing or not executable (the #24618 coverage freeze)"; exit 1; }
+
 # C0: gather-pr seals the diff (reproducible review artifact, not an ad-hoc re-fetch).
 grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/pr.diff (C0)"; exit 1; }
 # C-checklist: gather-pr extracts the PR-template checklist via the shared tool (no

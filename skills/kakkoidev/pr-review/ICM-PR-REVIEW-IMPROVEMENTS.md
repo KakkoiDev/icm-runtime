@@ -267,3 +267,54 @@ failure.
 3. C3 (held-out execution-evidence check) - locks the gain so icm-improve cannot regress it.
 4. C5 (mandatory verify) and renumber stages.
 5. L1, L2, L3 (prose lenses) - a single reviewed pass; let icm-improve tune wording after.
+
+---
+
+## 7. Follow-up: inline-comment coverage (SOBA-103 #24618, 2026-07-16)
+
+### The case study
+
+A live run on `meetsmore/meetsone` PR #24618 produced three findings (F1 scope, F2
+robustness, F3 test-coverage) and a correct SHIP-WITH-FIXES report. But the inline PENDING
+draft carried only **1** comment. F1 was a pure DELETION (the PR removed `auditLogSMS`, so
+there was no `+` line to quote) and F3 was PR-wide (no single line), so both got quietly
+demoted to the report body. Nothing in the run signalled that 2 of 3 findings never reached
+the diff. The human noticed ("I'm only seeing 1").
+
+### Root cause (prose, not tooling)
+
+`build-review-comments` and `post-review` worked correctly. Stage 06 step 2a said the
+snippet must come "verbatim from an ADDED line" - narrower than the tool, which actually
+anchors ADDED **or context** lines (the awk keeps `c==" "` context lines). With no recipe
+for a deletion-only or PR-wide finding, the agent rationalized body-only. And nothing
+reconciled `findings.md` against the posted set, so the drop was silent.
+
+### The change
+
+- **[prose] stages/06-report.md** - step 2 now carries a "one inline comment PER FINDING"
+  coverage rule with explicit recipes: a deletion-only finding anchors to the nearest
+  **context** line adjacent to the removed code; a PR-wide finding anchors to a
+  representative changed line with a `(PR-wide)` body prefix; only a finding with no
+  reachable line stays body-only, and then the receipt must record the reason. The snippet
+  rule is corrected to "ADDED or CONTEXT line". A reconcile step requires every finding to
+  be anchored, unanchored, or body-only-with-reason before posting.
+- **[prose] stages/06-report.md** - step 3 receipt gains a mandatory `Findings coverage:`
+  line: `F<n>:inline | F<n>:unanchored | F<n>:body-only(<reason>)`, with the `:inline`
+  count equal to the anchored payload length, and completeness gates `VERIFIED: PASS`.
+- **[prose] stages/04-review.md** - each finding carries a stable `F<n>` id, reused across
+  report, draft, and receipt, so coverage is checkable.
+- **[structural] eval-heldout/inline-comment-coverage.test.sh** - held out from the LLM
+  grader. When an ndjson was authored, asserts the receipt's `Findings coverage:` line
+  exists, its `:inline` count == `review-comments.json` length, every `body-only` has a
+  reason, and every `F<n>` in `findings.md` appears on the line. Locks the gain.
+- **[structural] eval/structure.test.sh** - asserts 06 mandates per-finding coverage +
+  context-line anchoring + the receipt line, 04 mandates `F<n>` ids, and the held-out
+  file exists.
+
+### Regression fixture
+
+Fails-on-revert: with the old prose, a run with a deletion-only or PR-wide finding posts
+fewer inline comments than it has findings and writes no `Findings coverage:` line, so the
+held-out check FAILS (verified against the #24618 run dir: `receipt has no 'Findings
+coverage:' line`). The synthetic-fixture pass confirms the check bites the dropped-finding,
+over-claim, and missing-reason shapes and passes a complete run.
