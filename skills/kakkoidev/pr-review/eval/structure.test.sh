@@ -61,6 +61,22 @@ grep -q 'Findings coverage:' stages/06-report.md || { echo "FAIL: 06-report must
 grep -qE 'F<n>' stages/04-review.md || { echo "FAIL: 04-review must mandate stable F<n> finding ids (used by the coverage line + freeze)"; exit 1; }
 test -x eval-heldout/inline-comment-coverage.test.sh || { echo "FAIL: eval-heldout/inline-comment-coverage.test.sh missing or not executable (the #24618 coverage freeze)"; exit 1; }
 
+# C-value-gate (SOBA-103 #24618 round 2): completeness alone regressed precision - forcing
+# every finding inline posted true-but-noisy comments (pre-existing / out-of-scope / test-nag)
+# that wasted the reviewer's time. Findings now carry a VALUE axis orthogonal to truth:
+# 04 records the objective floor per finding, 05 runs the per-finding judgment pass to a final
+# disposition, 06 posts inline ONLY the inline-disposition findings (report-only/dropped stay
+# in the report, accounted for on the coverage line), and inline bodies are one concise sentence.
+grep -q 'introduced-by-diff' stages/04-review.md || { echo "FAIL: 04-review must record the introduced-by-diff value field (#24618 round 2)"; exit 1; }
+grep -q 'floor=' stages/04-review.md || { echo "FAIL: 04-review must record the objective floor (floor=pass|fail) per finding"; exit 1; }
+grep -q 'NEVER demote' stages/04-review.md || { echo "FAIL: 04-review must state the asymmetric guardrail (never demote a diff-introduced correctness/security/data finding)"; exit 1; }
+grep -q 'Disposition:' stages/05-verify.md || { echo "FAIL: 05-verify must resolve a final Disposition per finding (the value/judgment pass)"; exit 1; }
+grep -qiE 'senior engineer' stages/05-verify.md || { echo "FAIL: 05-verify must carry the judgment-gate questions (would a senior engineer bother?)"; exit 1; }
+grep -q 'report-only' stages/06-report.md || { echo "FAIL: 06-report must support the report-only disposition (low-value findings stay off the PR)"; exit 1; }
+grep -qiE 'inline.-disposition' stages/06-report.md || { echo "FAIL: 06-report must post ndjson rows only for inline-disposition findings"; exit 1; }
+grep -qiE 'ONE concise sentence' stages/06-report.md || { echo "FAIL: 06-report must mandate one-concise-sentence inline bodies (Ahmed's verbosity feedback)"; exit 1; }
+test -x eval/inline-coverage-selftest.test.sh || { echo "FAIL: eval/inline-coverage-selftest.test.sh missing or not executable (proves the coverage check bites both directions)"; exit 1; }
+
 # C0: gather-pr seals the diff (reproducible review artifact, not an ad-hoc re-fetch).
 grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/pr.diff (C0)"; exit 1; }
 # C-checklist: gather-pr extracts the PR-template checklist via the shared tool (no

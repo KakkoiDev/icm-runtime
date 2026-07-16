@@ -1,13 +1,19 @@
 #!/bin/sh
 # Output-contract regression check, held out from the LLM grader.
 #
-# The miss this freezes (SOBA-103 #24618, 2026-07-16): a review produced 3 findings
-# (F1/F2/F3) but posted only 1 inline comment - the deletion-only finding (F1) and the
-# PR-wide finding (F3) were quietly demoted to the report body, and nothing signalled
-# that 2 of 3 findings never made it onto the diff. 06-report now mandates one inline
-# comment PER FINDING (deletion -> adjacent context line; PR-wide -> representative line)
-# and a `Findings coverage:` receipt line that accounts for every finding by id. This
-# check enforces that contract against the produced run via $ICM_RUN_DIR. Exit 0 = pass.
+# Two misses frozen here, both from SOBA-103 #24618 (2026-07-16) - completeness AND
+# precision, a paired contract:
+# - Round 1 (completeness): 3 findings, but only 1 inline comment - the REAL finding (a
+#   deletion-only one) and the PR-wide one were quietly demoted to the report body. The
+#   coverage line + completeness assertions stop the silent drop.
+# - Round 2 (precision): after the round-1 fix forced EVERY finding inline, the reviewer
+#   (Ahmed) pushed back: 2 of 3 posted comments were TRUE but not worth his time
+#   (pre-existing / out-of-scope / test-nag). Findings now carry a Value line with an
+#   objective floor (floor=pass|fail); only floor-passing findings may post inline, and
+#   floor-passing findings MUST post (or be dropped-with-reason) - the filter may not
+#   suppress a diff-introduced defect.
+# Dispositions: F<n>:inline | F<n>:body-only(<reason>) | F<n>:report-only(<reason>) |
+# F<n>:dropped(<reason>). Enforced against the produced run via $ICM_RUN_DIR. Exit 0 = pass.
 set -eu
 
 [ -n "${ICM_RUN_DIR:-}" ] || { echo "FAIL: ICM_RUN_DIR not set"; exit 1; }
@@ -19,41 +25,81 @@ json="$out/review-comments.json"
 receipt="$out/report-receipt.md"
 findings="$ICM_RUN_DIR/04-review/output/findings.md"
 
-# Only applies when inline posting was in play: an ndjson with >=1 authored row.
-if [ ! -s "$ndjson" ] || ! grep -q '[^[:space:]]' "$ndjson"; then
-    echo "ok: no authored inline comments (review-comments.ndjson empty/absent) - nothing to reconcile"
+fids=""
+[ -f "$findings" ] && fids=$(grep -oE 'F[0-9]+' "$findings" | sort -u || true)
+
+# Applies when the run produced findings OR authored inline comments. A run with
+# findings but an empty ndjson is NOT exempt - an over-aggressive filter that demotes
+# everything to report-only must still reconcile against the coverage line.
+if [ -z "$fids" ] && { [ ! -s "$ndjson" ] || ! grep -q '[^[:space:]]' "$ndjson"; }; then
+    echo "ok: no findings and no authored inline comments - nothing to reconcile"
     exit 0
 fi
 
-# 1. The receipt must carry the findings->comment reconciliation line.
+# 1. The receipt must carry the findings->disposition reconciliation line.
 [ -f "$receipt" ] || { echo "FAIL: report-receipt.md missing"; exit 1; }
 cov=$(grep -iE 'Findings coverage:' "$receipt" | head -1 || true)
 [ -n "$cov" ] \
     || { echo "FAIL: receipt has no 'Findings coverage:' line (inline-comment coverage freeze, #24618)"; exit 1; }
 
 # 2. Claimed inline count == comments actually anchored in review-comments.json.
-[ -s "$json" ] || { echo "FAIL: review-comments.ndjson has rows but review-comments.json is missing/empty (build-review-comments not run)"; exit 1; }
-json_len=$(jq 'length' "$json" 2>/dev/null || echo -1)
 inline_claimed=$(printf '%s' "$cov" | grep -oE 'F[0-9]+:inline' | wc -l | tr -d ' ')
+json_len=0
+if [ -s "$json" ]; then
+    json_len=$(jq 'length' "$json" 2>/dev/null || echo -1)
+elif [ "$inline_claimed" != 0 ]; then
+    echo "FAIL: coverage claims $inline_claimed inline comment(s) but review-comments.json is missing/empty (build-review-comments not run)"; exit 1
+fi
 [ "$inline_claimed" = "$json_len" ] \
     || { echo "FAIL: coverage claims $inline_claimed inline comment(s) but review-comments.json has $json_len (a dropped/over-claimed finding)"; exit 1; }
 
-# 3. Every body-only disposition must carry a non-empty reason: F<n>:body-only(<reason>).
-bo_total=$(printf '%s' "$cov" | grep -oE 'F[0-9]+:body-only' | wc -l | tr -d ' ')
-bo_reason=$(printf '%s' "$cov" | grep -oE 'F[0-9]+:body-only\([^)]+\)' | wc -l | tr -d ' ')
-[ "$bo_total" = "$bo_reason" ] \
-    || { echo "FAIL: a 'body-only' disposition is missing its (reason) - $bo_total body-only, $bo_reason with a reason"; exit 1; }
+# 3. Per-finding disposition tokens: every F<n> in findings.md appears on the coverage
+#    line with a well-formed token; body-only/report-only/dropped carry a non-empty reason.
+for id in $fids; do
+    tok=$(printf '%s' "$cov" | grep -oE "$id:(inline|body-only\([^)]+\)|report-only\([^)]+\)|dropped\([^)]+\))" | head -1 || true)
+    if [ -z "$tok" ]; then
+        if printf '%s' "$cov" | grep -qE "$id:"; then
+            echo "FAIL: $id has a malformed disposition token (allowed: inline | body-only(<reason>) | report-only(<reason>) | dropped(<reason>), reason non-empty)"; exit 1
+        fi
+        echo "FAIL: finding $id in findings.md absent from the coverage line"; exit 1
+    fi
+done
 
-# 4. Completeness: every finding id in findings.md is accounted for on the coverage line.
-if [ -f "$findings" ]; then
-    fids=$(grep -oE 'F[0-9]+' "$findings" | sort -u || true)
-    cids=$(printf '%s' "$cov" | grep -oE 'F[0-9]+' | sort -u || true)
-    missing=""
+# 4. The value gate ran: every finding carries a Value line with floor=pass|fail (#24618
+#    round 2). A findings.md without them means the noise gate was skipped entirely.
+if [ -n "$fids" ]; then
+    pairs=$(awk '
+        { while (match($0, /F[0-9]+/)) { cur = substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH) } }
+        /floor=(pass|fail)/ { if (cur != "") { f = ($0 ~ /floor=pass/) ? "pass" : "fail"; print cur, f } }
+    ' "$findings" | sort -u)
+    [ -n "$pairs" ] \
+        || { echo "FAIL: findings.md has findings but no 'Value: ... floor=pass|fail' lines (the value gate was skipped, #24618)"; exit 1; }
     for id in $fids; do
-        printf '%s\n' "$cids" | grep -qx "$id" || missing="$missing $id"
+        floor=$(printf '%s\n' "$pairs" | awk -v id="$id" '$1==id{print $2; exit}')
+        [ -n "$floor" ] || { echo "FAIL: finding $id has no Value line with floor=pass|fail"; exit 1; }
+        tok=$(printf '%s' "$cov" | grep -oE "$id:(inline|body-only|report-only|dropped)" | head -1)
+        disp=${tok#"$id":}
+        # Precision: a floor-failing finding (pre-existing / out-of-scope / not
+        # merge-changing) must never reach the PR.
+        if [ "$floor" = fail ] && { [ "$disp" = inline ] || [ "$disp" = body-only ]; }; then
+            echo "FAIL: $id has floor=fail but disposition '$disp' - a low-value finding was posted to the PR (precision, #24618 round 2)"; exit 1
+        fi
+        # Anti-over-filtering: a floor-passing finding (diff-introduced, merge-relevant)
+        # must post (or be dropped with a reason as wrong/vacuous) - never demoted to
+        # report-only.
+        if [ "$floor" = pass ] && [ "$disp" = report-only ]; then
+            echo "FAIL: $id has floor=pass but disposition 'report-only' - a diff-introduced merge-relevant finding was suppressed (the filter over-corrected)"; exit 1
+        fi
     done
-    [ -z "$missing" ] \
-        || { echo "FAIL: finding(s) in findings.md absent from the coverage line:$missing"; exit 1; }
 fi
 
-echo "ok: inline-comment coverage ($json_len anchored, all findings accounted for)"
+# 5. Soft concision check (warn only - the rule is prose: one concise engineer-natural
+#    sentence; a hard cap would mangle code snippets).
+if [ -s "$ndjson" ]; then
+    long=$(jq -r 'select((.body | length) > 400) | .body[0:40]' "$ndjson" 2>/dev/null || true)
+    [ -z "$long" ] || echo "warn: inline body >400 chars (concision rule says one sentence): $long..."
+    bullets=$(jq -r 'select(.body | test("\\n[-*] ")) | .body[0:40]' "$ndjson" 2>/dev/null || true)
+    [ -z "$bullets" ] || echo "warn: inline body contains a bullet list (no bullet essays inline): $bullets..."
+fi
+
+echo "ok: inline-comment coverage ($json_len anchored; every finding gated + accounted for)"
