@@ -86,9 +86,23 @@ bash ~/.agents/skills/icm/runtime/icm.sh seal kakkoidev/pr-review
 ```
 Seal makes `REVIEW-<PR#>.md` tamper-evident; suggest committing `.icm-seals.log`.
 
+## Feedback pass (after the author responds)
+
+The run ends at a pending draft; precision is only measurable once the author/reviewer
+replies. Days later (or when asked "how did the review land?"), run:
+```
+bash tools/gather-review-feedback <owner>/<repo> <PR#>
+```
+It emits one TSV row per posted `**F<n>` comment and per reply. Classify each finding
+(`accepted` / `rejected(<reason>)` / `disputed` / `ignored`) and append the rows to
+`references/calibration.md`. A finding shape rejected twice becomes a floor demotion
+reason or a scar - this is the loop that keeps the value gate calibrated by ground
+truth instead of one incident (#24618).
+
 ## Reference
 - `docs/GUIDE-improving-pr-review.md` - how to improve this skill without over-fitting or prose bloat (classify by layer, freeze every miss as a fixture/contract).
 - `tools/gather-pr` - deterministic PR gather (gh + links + checklist + template). `tools/extract-checklist` - shared checkbox parser (frozen by `eval/checklist-extraction.test.sh`). `tools/fetch-web` - curl + auth-wall detect.
 - `tools/gather-impact` - deterministic changed-value dual of dead-code: for each user-visible value the diff removes, the tests/snapshots that still assert it (`impact.md`). Catches the class the review agent caught by hand and the skill missed (#24198).
-- `references/scars.md` - generalized review lenses, frozen into the run and used as a review lens in 03.
-- `eval/structure.test.sh` - skill shape. `eval-heldout/` - output-contract floor (link coverage, report contract) for icm-improve.
+- `tools/check-value-claims` - deterministic cross-check of the self-graded value floor (an inline-bound `introduced-by-diff=yes` must cite a diff-touched file; frozen by `eval/check-value-claims.test.sh`). `tools/gather-review-feedback` - post-submit thread harvest feeding `references/calibration.md`.
+- `references/scars.md` - generalized review lenses, frozen into the run and used as a review lens in 03. `references/calibration.md` - per-finding ground-truth outcomes (accepted/rejected) driving gate calibration.
+- `eval/structure.test.sh` - skill shape. `eval-heldout/` - output-contract floor (link coverage, report contract, inline-comment coverage + value gate) for icm-improve.

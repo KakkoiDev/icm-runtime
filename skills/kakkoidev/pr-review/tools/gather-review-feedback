@@ -1,0 +1,35 @@
+#!/bin/sh
+# gather-review-feedback <owner>/<repo> <PR#>
+#
+# Deterministic harvest of the reviewer/author responses to a posted review (#24618
+# hardening: precision was unmeasured - the run posts, the human submits, the author
+# replies, and nothing fed those replies back). Fetches every review comment on the PR,
+# keeps the threads rooted at comments this skill posted (body leads with **F<n> - the
+# id convention from stage 06), and emits one TSV row per posted comment and per reply:
+#
+#   F<n> <TAB> root_comment_id <TAB> posted|reply <TAB> author <TAB> created_at <TAB> body
+#
+# Classification (accepted / rejected / ignored) is judgment, not this tool's job:
+# a human or model reads the rows and appends the verdicts to references/calibration.md
+# (recurring rejections of a finding shape -> a new scar / gate reason).
+set -eu
+
+[ $# -eq 2 ] || { echo "usage: gather-review-feedback <owner>/<repo> <PR#>" >&2; exit 2; }
+repo=$1; pr=$2
+
+printf 'finding\troot_id\tevent\tauthor\tdate\tbody\n'
+gh api "repos/$repo/pulls/$pr/comments" --paginate | jq -sr '
+  add // []
+  | map({id, irt: .in_reply_to_id, u: .user.login, d: .created_at,
+         b: (.body | gsub("[\r\n\t]+"; " ") | .[0:400])})
+  | . as $all
+  | [ .[] | select(.irt == null) | select(.b | test("\\*\\*F[0-9]+")) ]
+  | map(
+      . as $r
+      | ($r.b | capture("\\*\\*(?<f>F[0-9]+)").f) as $fid
+      | [ "\($fid)\t\($r.id)\tposted\t\($r.u)\t\($r.d)\t\($r.b)" ]
+        + [ $all[] | select(.irt == $r.id)
+            | "\($fid)\t\($r.id)\treply\t\(.u)\t\(.d)\t\(.b)" ]
+    )
+  | flatten | .[]
+'

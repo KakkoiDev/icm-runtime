@@ -81,6 +81,11 @@ test -x eval/inline-coverage-selftest.test.sh || { echo "FAIL: eval/inline-cover
 test -x tools/check-value-claims || { echo "FAIL: tools/check-value-claims missing or not executable"; exit 1; }
 grep -q 'check-value-claims' stages/05-verify.md || { echo "FAIL: 05-verify must run check-value-claims (self-graded floor cross-check)"; exit 1; }
 test -x eval/check-value-claims.test.sh || { echo "FAIL: eval/check-value-claims.test.sh missing or not executable"; exit 1; }
+# The feedback loop: posted-comment outcomes are harvested and logged, so gate precision
+# is measured against ground truth instead of tuned per incident.
+test -x tools/gather-review-feedback || { echo "FAIL: tools/gather-review-feedback missing or not executable"; exit 1; }
+test -s references/calibration.md || { echo "FAIL: references/calibration.md missing (the value-gate ground-truth log)"; exit 1; }
+grep -q 'gather-review-feedback' SKILL.md || { echo "FAIL: SKILL.md must document the feedback pass"; exit 1; }
 
 # C0: gather-pr seals the diff (reproducible review artifact, not an ad-hoc re-fetch).
 grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/pr.diff (C0)"; exit 1; }
