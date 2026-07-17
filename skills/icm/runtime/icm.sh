@@ -600,6 +600,21 @@ cmd_init() {
         done
     ) > "$run_dir/.manifest"
 
+    # Skill provenance: which revision of the skill this run executes. DERIVED
+    # (git SHA + dirty flag), never hand-maintained - a declared version number
+    # rots on the first forgotten bump; a SHA cannot. dirty=yes means the skill
+    # dir carries uncommitted/untracked edits: the frozen copies in the run dir
+    # (.manifest) are then the only ground truth for what ran - the SHA alone
+    # would lie. Works through the ~/.agents symlink (git -C follows it); a
+    # non-git skill install records "unknown" and the .manifest remains the
+    # content fingerprint.
+    skill_sha=$(git -C "$ws_dir" rev-parse --short HEAD 2>/dev/null || echo unknown)
+    skill_dirty=no
+    if [ "$skill_sha" != unknown ] && [ -n "$(git -C "$ws_dir" status --porcelain -- . 2>/dev/null)" ]; then
+        skill_dirty=yes
+    fi
+    echo "skill: $ws @ $skill_sha (dirty: $skill_dirty)" >&2
+
     # Write run metadata with stage list
     _stage_names=""
     for _sf in "$stages_dir"/*.md; do
@@ -626,7 +641,9 @@ cmd_init() {
   "run_id": "$ts",
   "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "stages": [$_stage_names],
-  "cwd": "$PWD"$_caller_field
+  "cwd": "$PWD",
+  "skill_ref": "$skill_sha",
+  "skill_dirty": "$skill_dirty"$_caller_field
 }
 ICM_RUN_EOF
 
@@ -635,8 +652,8 @@ ICM_RUN_EOF
     # stage_done and reify events. tool_call/gate stay per-project (hot path) and
     # are projected into the run view at read time.
     if [ -n "$caller" ]; then _ri_caller="\"$caller\""; else _ri_caller="null"; fi
-    printf '{"ts":"%s","type":"run_init","workspace":"%s","run_id":"%s","stages":[%s],"cwd":"%s","caller":%s}\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ws" "$ts" "$_stage_names" "$PWD" "$_ri_caller" \
+    printf '{"ts":"%s","type":"run_init","workspace":"%s","run_id":"%s","stages":[%s],"cwd":"%s","skill_ref":"%s","skill_dirty":"%s","caller":%s}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ws" "$ts" "$_stage_names" "$PWD" "$skill_sha" "$skill_dirty" "$_ri_caller" \
         > "$run_dir/telemetry/events.jsonl"
 
     echo "$run_dir"
