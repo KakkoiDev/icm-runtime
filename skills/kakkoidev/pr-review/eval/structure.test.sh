@@ -86,6 +86,10 @@ test -x eval/check-value-claims.test.sh || { echo "FAIL: eval/check-value-claims
 test -x tools/gather-review-feedback || { echo "FAIL: tools/gather-review-feedback missing or not executable"; exit 1; }
 test -s references/calibration.md || { echo "FAIL: references/calibration.md missing (the value-gate ground-truth log)"; exit 1; }
 grep -q 'gather-review-feedback' SKILL.md || { echo "FAIL: SKILL.md must document the feedback pass"; exit 1; }
+# The reviewer's explicit ask: the draft is a starting point - the human reads each
+# comment, rewrites it in their own words (or deletes it), THEN submits.
+grep -qiE 'Human handoff:' stages/06-report.md || { echo "FAIL: 06-report must end with the Human handoff line (read/rewrite/submit - the #24618 reviewer's ask)"; exit 1; }
+grep -qiE 'own words' stages/06-report.md || { echo "FAIL: 06-report handoff must tell the human to rewrite comments in their own words"; exit 1; }
 
 # C0: gather-pr seals the diff (reproducible review artifact, not an ad-hoc re-fetch).
 grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/pr.diff (C0)"; exit 1; }

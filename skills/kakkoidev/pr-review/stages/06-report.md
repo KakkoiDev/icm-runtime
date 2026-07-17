@@ -94,9 +94,19 @@ exists, so the report always carries execution results. Then seal the run.
       started (no 422, no clobber), and passes NO `event` so nothing is published until a human
       submits in the GitHub UI. If it fails (no write scope / offline), record the error and
       continue - the sealed report is the primary artifact, posting is a convenience.
+   d. **Human handoff (the reviewer's explicit ask, #24618).** The draft is a starting point,
+      not a finished review: the reviewer asked the human to "at least read the comments ...
+      to filter the unnecessary comments and to make the necessary comments yourself instead
+      of providing the agent's output." So end the run by telling the human, verbatim in your
+      final message AND as the receipt's `Human handoff:` line: *"Draft review is PENDING -
+      before submitting, read each comment on the diff, rewrite it in your own words (or
+      delete it), then submit. Days later, run `tools/gather-review-feedback` and log the
+      outcomes in references/calibration.md."* Owning the words is what makes it the human's
+      review; the tool only drafts.
 3. Write `output/report-receipt.md`: the report path, its line/finding counts, the inline-post
-   result (`created`/`appended`/`skipped`/`failed` + anchored/unanchored counts), a **`Findings
-   coverage:`** line that accounts for EVERY finding by id and disposition - one space-separated
+   result (`created`/`appended`/`skipped`/`failed` + anchored/unanchored counts), a **`Human
+   handoff:`** line (step 2d - read, rewrite in your own words, then submit; harvest feedback
+   later), a **`Findings coverage:`** line that accounts for EVERY finding by id and disposition - one space-separated
    token per finding in the form `F<n>:inline` | `F<n>:body-only(<reason>)` |
    `F<n>:report-only(<reason>)` | `F<n>:dropped(<reason>)`
    (e.g. `Findings coverage: F1:inline F2:report-only(pre-existing pattern, out of scope)
@@ -127,4 +137,4 @@ bash ~/.agents/skills/icm/runtime/icm.sh seal kakkoidev/pr-review
 | Review summary | output/review-summary.md | Verdict + one line per POSTED finding (`inline`/`body-only` only - `report-only`/`dropped` stay out; the body reaches the PR on submit); used as the pending review's body on create. |
 | Anchored payload | output/review-comments.json | Deterministic `tools/build-review-comments` output: JSON array of `{path, line, side:RIGHT, body}`, each line resolved from its snippet against `pr.diff`. |
 | Unanchored | output/unanchored.tsv | `path<TAB>reason<TAB>snippet` for every comment that did NOT anchor (snippet absent/ambiguous). Must be surfaced or fixed - never a silent drop. |
-| Report receipt | output/report-receipt.md | Report path + counts + inline-post result (created/appended/skipped/failed, anchored/unanchored); a `Findings coverage:` line accounting for every finding by id (`F<n>:inline` / `F<n>:body-only(<reason>)` / `F<n>:report-only(<reason>)` / `F<n>:dropped(<reason>)`, `:inline` count == comments in review-comments.json, tokens match stage-05 dispositions); final line exactly `VERIFIED: PASS` / `VERIFIED: FAIL` |
+| Report receipt | output/report-receipt.md | Report path + counts + inline-post result (created/appended/skipped/failed, anchored/unanchored); a `Human handoff:` line (read each draft comment, rewrite in your own words or delete, then submit; harvest outcomes later via gather-review-feedback); a `Findings coverage:` line accounting for every finding by id (`F<n>:inline` / `F<n>:body-only(<reason>)` / `F<n>:report-only(<reason>)` / `F<n>:dropped(<reason>)`, `:inline` count == comments in review-comments.json, tokens match stage-05 dispositions); final line exactly `VERIFIED: PASS` / `VERIFIED: FAIL` |

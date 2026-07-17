@@ -71,6 +71,21 @@ fi
 
 receipt=$(ls "$ICM_RUN_DIR"/06-report/output/report-receipt.md 2>/dev/null | head -1 || true)
 [ -n "$receipt" ] && [ -f "$receipt" ] || { echo "FAIL: report-receipt.md not found"; exit 1; }
+
+# Report-only/dropped findings must be VISIBLE in the report (the value gate keeps them
+# off the PR, never out of sight - #24618 round 2), and a run that posted a draft must
+# hand off to the human (read, rewrite in your own words, submit - the reviewer's ask).
+cov=$(grep -iE 'Findings coverage:' "$receipt" | head -1 || true)
+if [ -n "$cov" ]; then
+    for id in $(printf '%s' "$cov" | grep -oE 'F[0-9]+:(report-only|dropped)' | cut -d: -f1); do
+        grep -q "$id" "$report" \
+            || { echo "FAIL: $id is report-only/dropped on the coverage line but never appears in the report (silently invisible)"; exit 1; }
+    done
+    if printf '%s' "$cov" | grep -qE 'F[0-9]+:inline'; then
+        grep -qiE 'Human handoff:' "$receipt" \
+            || { echo "FAIL: inline comments were drafted but the receipt has no 'Human handoff:' line (read/rewrite/submit)"; exit 1; }
+    fi
+fi
 last=$(grep -v '^[[:space:]]*$' "$receipt" | tail -1)
 case "$last" in
     "VERIFIED: PASS"|"VERIFIED: FAIL") echo "ok: report + receipt verdict ($last)" ;;
