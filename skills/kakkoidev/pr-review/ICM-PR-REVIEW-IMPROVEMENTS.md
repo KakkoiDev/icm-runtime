@@ -403,3 +403,60 @@ net 1 inline comment.
   a recorded destination, so whoever runs the tool on their own PR still sees everything.
 - **A hard character cap on inline bodies** - would mangle code snippets; the one-sentence
   rule is prose plus a soft (warn-only) length/bullet check.
+
+---
+
+## 9. Hardening the value gate (2026-07-17, self-review of section 8)
+
+Section 8 shipped with four weaknesses, found by reviewing the fix as adversarially as
+the fix reviews PRs. Each frozen the same way (prose + tool/check + fixture).
+
+### 9a. The floor would have demoted F1 - the finding the reviewer wanted
+
+The shipped floor (CRITICAL/HIGH, correctness/security/data-loss, or
+must-fix-before-merge) contradicted its own calibration target: F1 is LOW/scope/"confirm
+intentional" - an honest run labels it `merge-decision=no floor=fail` -> report-only.
+Fixed in stage 04: "changes the merge decision" explicitly includes a **scope surprise
+needing the author's confirmation** - the diff demonstrably does more than the PR states
+(an unconfirmed surprise merges blind, so it is merge-relevant even at LOW).
+
+### 9b. The floor was self-graded
+
+The same pass that wants to post a finding writes its `floor=pass`. Nothing cross-checked
+`introduced-by-diff=yes` against the artifact that can refute it.
+**tools/check-value-claims** (deterministic, frozen by `eval/check-value-claims.test.sh`):
+an inline-bound claim must cite at least one file the diff touches; lazy claims come back
+`SUSPECT`. Stage 05 runs it into `value-claims.tsv` and must resolve every SUSPECT -
+ground the claim or concede and demote. The held-out check fails a run with a missing
+value-claims.tsv, an unresolved SUSPECT, or a receipt token that overrules stage 05's
+Disposition line. Known limit, stated in the tool: it catches the lazy lie (no touched
+file cited), not the semantic one (a pre-existing pattern cited next to a changed file) -
+the judgment gate still owns that.
+
+### 9c. Precision was unmeasured - tuned per incident, not per ground truth
+
+Nothing harvested the author/reviewer responses to posted comments.
+**tools/gather-review-feedback** (gh + jq, deterministic) emits one TSV row per posted
+`**F<n>` comment and per reply; outcomes are classified into
+**references/calibration.md** (accepted / rejected(reason) / disputed / ignored), seeded
+with #24618's three verdicts and verified against the live threads. A finding shape
+rejected twice becomes a floor demotion reason or a scar. Precision per PR =
+accepted / posted - now a number, not an anecdote.
+
+### 9d. The reviewer's literal ask was unimplemented
+
+Ahmed asked the human to read the AI's comments and make the necessary ones themselves.
+Stage 06 step 2d: the run ends by telling the human - in the final message and the
+receipt's `Human handoff:` line - to read each draft comment, rewrite it in their own
+words (or delete it), then submit. The report-contract held-out check fails a receipt
+that drafts inline comments without the handoff line, and fails a report in which a
+report-only/dropped finding never appears (off the PR, never out of sight). Verified
+fails-on-revert against the #24618 run dir.
+
+### Rejected alternatives (this round)
+
+- **A hard grep-detectable concision cap** - stays warn-only + the `## Outputs` rubric
+  (the LLM grader's contract); a char cap mangles code snippets.
+- **Auto-classifying feedback outcomes in the tool** - accepted/rejected is judgment;
+  the tool stays a deterministic harvest, the classification stays human/model-mediated
+  and lands in calibration.md where it is reviewable.
