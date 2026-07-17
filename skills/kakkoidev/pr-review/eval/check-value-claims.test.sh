@@ -66,4 +66,42 @@ EOF
 out=$("$tool" "$tmp/findings2.md" "$tmp/pr.diff")
 case "$(verdict F1)" in consistent) : ;; *) echo "FAIL: suffix path match expected consistent (got: $(verdict F1))"; exit 1 ;; esac
 
-echo "ok: check-value-claims (grounded/ungrounded/exempt verdicts)"
+# Block attribution: a mid-prose mention of another finding's id must not steal the
+# Value line or the claim (the cross-reference bug: "same root cause as F1" flipped
+# F1's claim to F2's and left F2 unparsed).
+cat > "$tmp/findings3.md" <<'EOF'
+## F1 - HIGH - correctness
+Broken at web/src/pages/balance/index.page.tsx:2.
+Value: introduced-by-diff=yes in-scope=yes merge-decision=yes floor=pass -> proposed: inline
+## F2 - LOW - robustness
+Same root cause as F1 above, but in untouched code.
+Value: introduced-by-diff=no in-scope=no merge-decision=no floor=fail -> proposed: report-only(pre-existing)
+EOF
+out=$("$tool" "$tmp/findings3.md" "$tmp/pr.diff")
+case "$(verdict F1)" in consistent) : ;; *) echo "FAIL: F1's claim was stolen by a cross-reference (got: $(verdict F1))"; exit 1 ;; esac
+case "$(verdict F2)" in "exempt(introduced-by-diff=no)") : ;; *) echo "FAIL: F2 expected exempt despite citing F1 mid-prose (got: $(verdict F2))"; exit 1 ;; esac
+
+# A root-level file citation (no directory) still grounds the claim.
+cat > "$tmp/root.diff" <<'EOF'
+--- a/package.json
++++ b/package.json
+@@ -1 +1 @@
+-x
++y
+EOF
+cat > "$tmp/findings4.md" <<'EOF'
+## F1 - HIGH - supply-chain
+The new dep pin in package.json is wrong.
+Value: introduced-by-diff=yes in-scope=yes merge-decision=yes floor=pass -> proposed: inline
+EOF
+out=$("$tool" "$tmp/findings4.md" "$tmp/root.diff")
+case "$(verdict F1)" in consistent) : ;; *) echo "FAIL: root-level file citation expected consistent (got: $(verdict F1))"; exit 1 ;; esac
+
+# An empty/malformed diff is refused loudly (exit 2), never an empty - and therefore
+# SUSPECT-free - report.
+: > "$tmp/empty.diff"
+if "$tool" "$tmp/findings2.md" "$tmp/empty.diff" 2>/dev/null; then
+    echo "FAIL: empty diff must exit non-zero, not emit an empty report"; exit 1
+fi
+
+echo "ok: check-value-claims (grounded/ungrounded/exempt/attribution/root-file/empty-diff verdicts)"

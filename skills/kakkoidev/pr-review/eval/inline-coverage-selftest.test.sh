@@ -105,4 +105,14 @@ d=$(findings_ok | mkrun overruled 'F1:inline F2:report-only(pre-existing) F3:dro
 printf 'Disposition: F1 final: report-only(chatty) - derived\nDisposition: F2 final: report-only(pre-existing) - derived\nDisposition: F3 final: dropped(vacuous) - derived\n' > "$d/05-verify/output/verification.md"
 expect fail overruled "$d" "a receipt token contradicting the stage-05 disposition must fail"
 
-echo "ok: inline-coverage self-test (1 pass shape, 9 mutations bitten)"
+# A mid-prose mention of a foreign id (a scar citation) must NOT mint a phantom finding
+# that false-fails coverage completeness on a legit run.
+d=$({ findings_ok; printf 'Recurs the #24618 F9 pattern documented in scars.\n'; } | mkrun phantom 'F1:inline F2:report-only(pre-existing pattern, out of scope) F3:dropped(vacuous)' 1)
+expect pass phantom "$d" "a prose-mentioned F9 must not become a required finding"
+
+# An empty value-claims.tsv (cross-check produced nothing) is a bypass, not a pass.
+d=$(findings_ok | mkrun emptytsv 'F1:inline F2:report-only(pre-existing) F3:dropped(vacuous)' 1)
+: > "$d/05-verify/output/value-claims.tsv"
+expect fail emptytsv "$d" "an empty value-claims.tsv must fail (per-finding rows required)"
+
+echo "ok: inline-coverage self-test (2 pass shapes, 10 mutations bitten)"

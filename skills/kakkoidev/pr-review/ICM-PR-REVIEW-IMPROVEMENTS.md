@@ -460,3 +460,40 @@ fails-on-revert against the #24618 run dir.
 - **Auto-classifying feedback outcomes in the tool** - accepted/rejected is judgment;
   the tool stays a deterministic harvest, the classification stays human/model-mediated
   and lands in calibration.md where it is reviewable.
+
+### 9e. Shell-lens hardening (adversarial self-review of 9a-9d's own code)
+
+A multi-lens adversarial review of the branch was attempted; the org token limit killed
+3 of 4 finder lenses and every verifier, so ONLY the shell-correctness lens ran and its
+9 findings were verified by hand, inline (8 real). Coverage is therefore PARTIAL -
+contract-consistency, gaming, and incident-fidelity lenses have not run; re-run them
+when budget allows. The 8 fixes, each frozen in an eval self-test:
+
+- **check-value-claims block attribution**: any `F<n>` anywhere in a line set the current
+  block, so a cross-reference ("same root cause as F1") stole the NEXT Value line -
+  flipping F1's claim and leaving F2 unparsed. Parsers (tool + held-out check) now key
+  ONLY on line-leading ids, and stage 04 mandates the block-header format explicitly.
+  The same rule kills phantom ids: a prose mention ("the #24618 F9 pattern") no longer
+  mints a finding that false-fails coverage completeness.
+- **check-value-claims empty diff**: an empty/malformed pr.diff made awk's NR==FNR
+  misfire (first file empty), silently emitting ZERO rows - and an empty tsv was
+  SUSPECT-free, so the bypass passed. The tool now refuses an empty diff (exit 2) and
+  the held-out check requires a value-claims row PER finding.
+- **check-value-claims path regex**: required dir/file.ext, so a root-level citation
+  (package.json) could never ground a claim. Now slashed-path (extension optional) or
+  bare file-with-extension both ground; trailing punctuation stripped.
+- **report-contract prefix collision**: `grep -q F1` was satisfied by F10, so a
+  report-only F1 could be silently invisible while F10 was discussed. Id matches now
+  require a non-digit boundary.
+- **report-contract handoff scope**: the Human-handoff line was required only for
+  `:inline` tokens; a body-only-only draft (still reaches the PR via the review body)
+  was exempt. Now inline OR body-only triggers it.
+- **gather-review-feedback silent failure**: a gh failure inside the pipeline exited 0
+  (no POSIX pipefail) and a header-only harvest read as "no comments". The fetch now
+  happens before the header, with an explicit failure exit.
+- **coverage-check applicability guard**: exempted runs with an empty ndjson even if
+  review-comments.json carried anchored comments; json is now part of the guard.
+
+Meta-lesson: the value gate's own enforcement code needed the same adversarial pass the
+gate applies to PRs - and the one lens that ran found 8 real defects. The remaining
+three lenses are open follow-up, recorded here so partial coverage cannot read as full.

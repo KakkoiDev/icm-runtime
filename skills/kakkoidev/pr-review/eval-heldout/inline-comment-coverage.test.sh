@@ -25,13 +25,17 @@ json="$out/review-comments.json"
 receipt="$out/report-receipt.md"
 findings="$ICM_RUN_DIR/04-review/output/findings.md"
 
+# Finding ids are harvested only from block-header lines (the id leads the line, after
+# markup) - a prose mention ("recurs the #24618 F9 pattern") must not mint a phantom
+# finding that then false-fails the coverage completeness assertion.
 fids=""
-[ -f "$findings" ] && fids=$(grep -oE 'F[0-9]+' "$findings" | sort -u || true)
+[ -f "$findings" ] && fids=$(grep -oE '^[^[:alnum:]]*F[0-9]+' "$findings" | grep -oE 'F[0-9]+' | sort -u || true)
 
-# Applies when the run produced findings OR authored inline comments. A run with
-# findings but an empty ndjson is NOT exempt - an over-aggressive filter that demotes
-# everything to report-only must still reconcile against the coverage line.
-if [ -z "$fids" ] && { [ ! -s "$ndjson" ] || ! grep -q '[^[:space:]]' "$ndjson"; }; then
+# Applies when the run produced findings OR authored/anchored inline comments. A run
+# with findings but an empty ndjson is NOT exempt - an over-aggressive filter that
+# demotes everything to report-only must still reconcile against the coverage line;
+# nor is an anchored payload with no ndjson source.
+if [ -z "$fids" ] && { [ ! -s "$ndjson" ] || ! grep -q '[^[:space:]]' "$ndjson"; } && [ ! -s "$json" ]; then
     echo "ok: no findings and no authored inline comments - nothing to reconcile"
     exit 0
 fi
@@ -69,8 +73,8 @@ done
 #    round 2). A findings.md without them means the noise gate was skipped entirely.
 if [ -n "$fids" ]; then
     pairs=$(awk '
-        { while (match($0, /F[0-9]+/)) { cur = substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH) } }
-        /floor=(pass|fail)/ { if (cur != "") { f = ($0 ~ /floor=pass/) ? "pass" : "fail"; print cur, f } }
+        /^[^[:alnum:]]*F[0-9]+/ { if (match($0, /F[0-9]+/)) cur = substr($0, RSTART, RLENGTH) }
+        /Value:.*floor=(pass|fail)/ { if (cur != "") { f = ($0 ~ /floor=pass/) ? "pass" : "fail"; print cur, f } }
     ' "$findings" | sort -u)
     [ -n "$pairs" ] \
         || { echo "FAIL: findings.md has findings but no 'Value: ... floor=pass|fail' lines (the value gate was skipped, #24618)"; exit 1; }
@@ -102,6 +106,12 @@ if [ -n "$fids" ]; then
     if grep -q 'SUSPECT' "$vc"; then
         echo "FAIL: value-claims.tsv carries an unresolved SUSPECT row: $(grep 'SUSPECT' "$vc" | head -1)"; exit 1
     fi
+    # An empty (or per-finding incomplete) tsv is a bypass, not a pass: the tool refuses
+    # empty diffs loudly, so every finding must have exactly one verdict row.
+    for id in $fids; do
+        awk -F'\t' -v id="$id" '$1==id{found=1} END{exit !found}' "$vc" \
+            || { echo "FAIL: finding $id has no row in value-claims.tsv (cross-check incomplete)"; exit 1; }
+    done
 fi
 
 # 6. Receipt tokens match stage 05's final Disposition lines (when verification.md is

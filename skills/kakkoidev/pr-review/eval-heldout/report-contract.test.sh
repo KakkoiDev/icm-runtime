@@ -78,12 +78,14 @@ receipt=$(ls "$ICM_RUN_DIR"/06-report/output/report-receipt.md 2>/dev/null | hea
 cov=$(grep -iE 'Findings coverage:' "$receipt" | head -1 || true)
 if [ -n "$cov" ]; then
     for id in $(printf '%s' "$cov" | grep -oE 'F[0-9]+:(report-only|dropped)' | cut -d: -f1); do
-        grep -q "$id" "$report" \
+        # $id must be followed by a non-digit (F1 must not be satisfied by F10).
+        grep -qE "$id([^0-9]|\$)" "$report" \
             || { echo "FAIL: $id is report-only/dropped on the coverage line but never appears in the report (silently invisible)"; exit 1; }
     done
-    if printf '%s' "$cov" | grep -qE 'F[0-9]+:inline'; then
+    # body-only findings reach the PR via the review body, so they need the handoff too.
+    if printf '%s' "$cov" | grep -qE 'F[0-9]+:(inline|body-only)'; then
         grep -qiE 'Human handoff:' "$receipt" \
-            || { echo "FAIL: inline comments were drafted but the receipt has no 'Human handoff:' line (read/rewrite/submit)"; exit 1; }
+            || { echo "FAIL: comments were drafted (inline/body-only) but the receipt has no 'Human handoff:' line (read/rewrite/submit)"; exit 1; }
     fi
 fi
 last=$(grep -v '^[[:space:]]*$' "$receipt" | tail -1)

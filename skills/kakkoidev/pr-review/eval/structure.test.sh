@@ -90,6 +90,10 @@ grep -q 'gather-review-feedback' SKILL.md || { echo "FAIL: SKILL.md must documen
 # comment, rewrites it in their own words (or deletes it), THEN submits.
 grep -qiE 'Human handoff:' stages/06-report.md || { echo "FAIL: 06-report must end with the Human handoff line (read/rewrite/submit - the #24618 reviewer's ask)"; exit 1; }
 grep -qiE 'own words' stages/06-report.md || { echo "FAIL: 06-report handoff must tell the human to rewrite comments in their own words"; exit 1; }
+# Shell-lens hardening: the parsers key on line-leading finding ids (04 mandates the
+# block-header format), and both held-out additions carry a self-test.
+grep -q 'leads with its id' stages/04-review.md || { echo "FAIL: 04-review must mandate the line-leading finding-id block header (parser contract)"; exit 1; }
+test -x eval/report-contract-selftest.test.sh || { echo "FAIL: eval/report-contract-selftest.test.sh missing or not executable"; exit 1; }
 
 # C0: gather-pr seals the diff (reproducible review artifact, not an ad-hoc re-fetch).
 grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/pr.diff (C0)"; exit 1; }

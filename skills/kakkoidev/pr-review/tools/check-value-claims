@@ -9,11 +9,17 @@
 # It cannot catch semantic lies (a pre-existing pattern cited alongside a changed file
 # still passes) - it catches the lazy ones (no cited file in the diff, no file cited).
 #
+# Parsing contract (mirrors stage 04): a finding BLOCK starts at a line whose first
+# alphanumeric content is its id (`## F1 ...`, `**F2 ...`, `| F3 |`, `F4:`); an id
+# mentioned mid-prose ("same root cause as F1") never starts or steals a block. The
+# `Value:` line and any cited file paths attach to the current block.
+#
 # Emits TSV to stdout: F<n> <TAB> claim <TAB> verdict <TAB> detail
 # verdict: consistent | exempt(introduced-by-diff=no) | exempt(floor=fail) | SUSPECT(<why>)
-# Exit 0 always: stage 05 resolves SUSPECT rows (ground the claim in a changed file, or
-# flip it to =no and demote); the held-out check fails a run whose final value-claims.tsv
-# still carries a SUSPECT.
+# Exit 0 on a produced report (stage 05 resolves SUSPECT rows: ground the claim in a
+# changed file, or flip it to =no and demote); exit 2 on unusable input - including a
+# diff with no parseable file paths, which is refused loudly rather than emitting an
+# empty (and therefore SUSPECT-free) report.
 set -eu
 
 [ $# -eq 2 ] || { echo "usage: check-value-claims <findings.md> <pr.diff>" >&2; exit 2; }
@@ -23,25 +29,29 @@ findings=$1; diff=$2
 
 dfiles=$(mktemp); trap 'rm -f "$dfiles"' EXIT
 sed -nE -e 's|^\+\+\+ b/||p' -e 's|^--- a/||p' "$diff" | grep -v '^/dev/null$' | sort -u > "$dfiles" || true
+[ -s "$dfiles" ] \
+    || { echo "check-value-claims: no file paths found in $diff (empty or malformed diff) - refusing to emit an empty report" >&2; exit 2; }
 
 awk '
 function ends(s, suf) { return length(s) >= length(suf) && substr(s, length(s) - length(suf) + 1) == suf }
 NR == FNR { df[$0] = 1; next }
 {
-    line = $0
-    while (match(line, /F[0-9]+/)) {
-        id = substr(line, RSTART, RLENGTH)
+    # A block starts only where the id leads the line (after markup); prose mentions
+    # of another F<n> must not steal attribution of the Value line or cited paths.
+    if ($0 ~ /^[^[:alnum:]]*F[0-9]+/ && match($0, /F[0-9]+/)) {
+        id = substr($0, RSTART, RLENGTH)
         if (!(id in seen)) { seen[id] = 1; order[++k] = id }
         cur = id
-        line = substr(line, RSTART + RLENGTH)
     }
     if (cur == "") next
-    if ($0 ~ /introduced-by-diff=yes/) claim[cur] = "yes"
-    else if ($0 ~ /introduced-by-diff=no/) claim[cur] = "no"
-    if ($0 ~ /floor=pass/) floor[cur] = "pass"
-    else if ($0 ~ /floor=fail/) floor[cur] = "fail"
+    if ($0 ~ /Value:/) {
+        if ($0 ~ /introduced-by-diff=yes/) claim[cur] = "yes"
+        else if ($0 ~ /introduced-by-diff=no/) claim[cur] = "no"
+        if ($0 ~ /floor=pass/) floor[cur] = "pass"
+        else if ($0 ~ /floor=fail/) floor[cur] = "fail"
+    }
     rest = $0
-    while (match(rest, /([A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+/)) {
+    while (match(rest, /(([A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_-]+\.[A-Za-z0-9]+)/)) {
         paths[cur] = paths[cur] " " substr(rest, RSTART, RLENGTH)
         rest = substr(rest, RSTART + RLENGTH)
     }
@@ -57,7 +67,7 @@ END {
         n = split(substr(paths[id], 2), arr, " ")
         hit = ""
         for (j = 1; j <= n && hit == ""; j++) {
-            p = arr[j]; sub(/:[0-9].*$/, "", p)
+            p = arr[j]; sub(/:[0-9].*$/, "", p); sub(/[.,;:]+$/, "", p)
             for (d in df) if (d == p || ends(d, "/" p) || ends(p, "/" d)) { hit = p; break }
         }
         if (hit != "")      printf "%s\tintroduced-by-diff=yes\tconsistent\t%s\n", id, hit
