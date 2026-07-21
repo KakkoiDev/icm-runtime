@@ -38,6 +38,12 @@ it first (or use a drafting skill), then call this.
 ## Notion authoring rules (read before any write)
 - Read the `notion://docs/enhanced-markdown-spec` MCP resource via `ReadMcpResourceTool`
   BEFORE writing. Do not guess Notion-flavored markdown syntax.
+- Provenance callout: every page published through this skill is AI-authored, so the FIRST block
+  is a callout with the robot icon stating AI authorship + human review -
+  `<callout icon="🤖" color="gray_bg">` + `この資料はAIが生成し、人間がレビューしています。` +
+  `This document was AI-generated and reviewed by a human.` + `</callout>` (match the doc's
+  language(s); one line if monolingual). Prepend on CREATE; on UPDATE add only if absent - never
+  duplicate, never stamp a page not authored through this skill. Details in stage 01-render step 6.
 - Tables use `<table>/<tr>/<td>`, NEVER pipe tables. Cells hold rich text only - use
   `**bold**`, not HTML tags.
 - Mermaid goes in a ```mermaid code fence. Keep node labels quote-free where possible; if a
@@ -46,7 +52,12 @@ it first (or use a drafting skill), then call this.
   START node. `style`/color lines may not render in every Notion build - do not rely on them.
 - Bilingual content (same text paired in two languages) ALWAYS uses a two-column layout for the
   paired PROSE: `<columns><column>` language A `</column><column>` language B `</column></columns>`,
-  first language left. This is the default for bilingual docs, not an option to offer. Diagrams,
+  first language left. This is the default for bilingual docs, not an option to offer. Wrap EACH
+  pair in its OWN `<columns>` block - Notion anchors columns at the TOP of each block, so one block
+  batching all of language A left and all of language B right drifts out of alignment as soon as two
+  paired items differ in length; a block per pair re-anchors alignment at every row. For labeled
+  points (Issue / Cause / Impact ...), one block per point with a bold `**label**:` lead-in in both
+  columns. Prefer per-pair `<columns>` over a two-column `<table>` for paired prose. Diagrams,
   code fences, and tables stay FULL-WIDTH - never nest them in a column (mermaid in a half-width
   column renders cramped and can fail to parse). Bilingual diagram labels (`JA<br>EN` inside a
   node) stay inline as-is. Monolingual content: no columns. Column children are tab-indented; pass

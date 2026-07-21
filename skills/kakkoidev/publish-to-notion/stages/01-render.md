@@ -42,13 +42,33 @@ in two columns.
    groups. Apply ONLY to multi-point prose paragraphs. Do NOT add breaks inside single-point or
    short paragraphs, list items, `<table>` cells, code / ```mermaid fences, or headings. This is
    layout only - never change wording, order, or meaning.
-5. Bilingual layout: if the content pairs the same text in two languages, wrap each PROSE pair in
-   a two-column block - `<columns><column>` lang A `</column><column>` lang B `</column></columns>`,
-   first language left, tab-indented children with REAL tabs. This is the default, not an option to
+5. Bilingual layout: if the content pairs the same text in two languages, wrap EACH pair in its
+   OWN `<columns>` block - `<columns><column>` lang A `</column><column>` lang B `</column></columns>`,
+   first language left, tab-indented children with REAL tabs. One block per pair is what keeps the
+   two languages aligned: Notion anchors columns at the TOP of each `<columns>` block, so a single
+   block that batches all of lang A into the left column and all of lang B into the right drifts out
+   of alignment the moment two paired items differ in length. A separate block per pair re-anchors
+   alignment at every row. For a report that is a set of labeled points (e.g. Issue / Cause /
+   Impact), give each point its own block with a bold `**label**:` lead-in in both columns. Prefer
+   per-pair `<columns>` over a two-column `<table>` for paired prose - the table aligns too, but
+   columns are the native bilingual layout and read cleaner. This is the default, not an option to
    ask about. Leave diagrams, ```mermaid fences, code blocks, and `<table>` blocks FULL-WIDTH
    (outside any column); leave bilingual diagram labels (`JA<br>EN`) inline. Skip this step entirely
    for monolingual content.
-6. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
+6. Provenance callout (default, not an option to ask about): every page published through this
+   skill is AI-authored, so stamp it. Make the FIRST block of `output/page.md` a callout with the
+   robot icon and a gray background declaring AI authorship + human review:
+   ```
+   <callout icon="🤖" color="gray_bg">
+   	この資料はAIが生成し、人間がレビューしています。
+   	This document was AI-generated and reviewed by a human.
+   </callout>
+   ```
+   Match the document's language(s): a bilingual doc gets both lines (the doc's first language
+   first); a monolingual doc gets only the matching line. On CREATE, prepend it as the first block.
+   On UPDATE, fetch the page first and add it ONLY if no such callout already exists at the top -
+   never duplicate it, and never add it to a page that was not authored through this skill.
+7. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
    "none = private workspace page") and the title; for update, the existing `page_id`; and the
    `audience` (who must be able to read it).
 
