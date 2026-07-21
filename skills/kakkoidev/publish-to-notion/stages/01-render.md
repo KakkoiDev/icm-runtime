@@ -34,7 +34,10 @@ in two columns.
    mermaid node labels containing special characters (e.g. parentheses) in double quotes and
    use `<br>` not `\n` inside labels; escape stray literal special characters that appear
    OUTSIDE code fences. Read `notion://docs/enhanced-markdown-spec` via `ReadMcpResourceTool`
-   if unsure of a construct. Edit `output/page.md` in place. Do NOT alter meaning or phrasing.
+   if unsure of a construct. Also style inline code tokens: any variable/field/function/type name,
+   keyword, or literal that appears in prose (e.g. `expenseLineId`, `undefined`) gets backticks;
+   leave display labels and feature names (経費, 予実比較) plain. Edit `output/page.md` in place. Do
+   NOT alter meaning or phrasing.
 4. Readability spacing (default, not an option to ask about): in PROSE paragraphs that pack
    several distinct points, separate the logical segments with `<br><br>` (a double in-block
    break). An ordinary newline would split the paragraph into separate blocks; `<br><br>` keeps

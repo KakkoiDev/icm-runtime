@@ -38,6 +38,10 @@ it first (or use a drafting skill), then call this.
 ## Notion authoring rules (read before any write)
 - Read the `notion://docs/enhanced-markdown-spec` MCP resource via `ReadMcpResourceTool`
   BEFORE writing. Do not guess Notion-flavored markdown syntax.
+- Inline code tokens: any variable/field/function/type name, keyword, or literal that appears in
+  prose gets backticks (`expenseLineId`, `undefined`, `calcBalanceSummary`), matching how it reads
+  in code. Leave display labels and feature names plain (e.g. 経費, 粗利, 予実比較) - they are UI
+  terms, not identifiers.
 - Cross-references + code examples: hyperlink EVERY page/ticket/document/PR/spec the content names -
   internal Notion pages AND external references (Figma, GitHub, Slack, spec sites) - via
   `[text](url)`; keep the literal reference (e.g. `SOBA-306`) as the anchor rather than a
