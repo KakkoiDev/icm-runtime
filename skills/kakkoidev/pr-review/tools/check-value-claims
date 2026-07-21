@@ -12,7 +12,13 @@
 # Parsing contract (mirrors stage 04): a finding BLOCK starts at a line whose first
 # alphanumeric content is its id (`## F1 ...`, `**F2 ...`, `| F3 |`, `F4:`); an id
 # mentioned mid-prose ("same root cause as F1") never starts or steals a block. The
-# `Value:` line and any cited file paths attach to the current block.
+# `Value:` line and any cited file paths attach to the current block. Conflicting
+# Value lines in one block (pass AND fail, or yes AND no) are SUSPECT, not resolved.
+# floor=pass with introduced-by-diff=no is SUSPECT: the floor's first conjunct IS
+# introduced-by-diff, so that combination is a malformed (gate-bypassing) label.
+#
+# Diff paths come from ---/+++ headers AND `diff --git` / `rename from|to` / `Binary
+# files` lines, so rename-only and binary-only PRs still produce a report.
 #
 # Emits TSV to stdout: F<n> <TAB> claim <TAB> verdict <TAB> detail
 # verdict: consistent | exempt(introduced-by-diff=no) | exempt(floor=fail) | SUSPECT(<why>)
@@ -28,7 +34,14 @@ findings=$1; diff=$2
 [ -f "$diff" ] || { echo "check-value-claims: $diff not found" >&2; exit 2; }
 
 dfiles=$(mktemp); trap 'rm -f "$dfiles"' EXIT
-sed -nE -e 's|^\+\+\+ b/||p' -e 's|^--- a/||p' "$diff" | grep -v '^/dev/null$' | sort -u > "$dfiles" || true
+{
+    sed -nE -e 's|^\+\+\+ b/||p' -e 's|^--- a/||p' "$diff"
+    sed -nE 's|^diff --git a/(.*) b/.*|\1|p' "$diff"
+    sed -nE 's|^diff --git a/.* b/(.*)|\1|p' "$diff"
+    sed -nE -e 's|^rename from ||p' -e 's|^rename to ||p' "$diff"
+    sed -nE 's|^Binary files a/(.*) and b/.* differ|\1|p' "$diff"
+    sed -nE 's|^Binary files a/.* and b/(.*) differ|\1|p' "$diff"
+} | grep -v '^/dev/null$' | sort -u > "$dfiles" || true
 [ -s "$dfiles" ] \
     || { echo "check-value-claims: no file paths found in $diff (empty or malformed diff) - refusing to emit an empty report" >&2; exit 2; }
 
@@ -45,13 +58,19 @@ NR == FNR { df[$0] = 1; next }
     }
     if (cur == "") next
     if ($0 ~ /Value:/) {
-        if ($0 ~ /introduced-by-diff=yes/) claim[cur] = "yes"
-        else if ($0 ~ /introduced-by-diff=no/) claim[cur] = "no"
-        if ($0 ~ /floor=pass/) floor[cur] = "pass"
-        else if ($0 ~ /floor=fail/) floor[cur] = "fail"
+        c = ""; f = ""
+        if ($0 ~ /introduced-by-diff=yes/) c = "yes"
+        else if ($0 ~ /introduced-by-diff=no/) c = "no"
+        if ($0 ~ /floor=pass/) f = "pass"
+        else if ($0 ~ /floor=fail/) f = "fail"
+        # Conflicting re-labels in one block are flagged, never silently resolved.
+        if (c != "") { if ((cur in claim) && claim[cur] != c) conflict[cur] = 1; claim[cur] = c }
+        if (f != "") { if ((cur in floor) && floor[cur] != f) conflict[cur] = 1; floor[cur] = f }
     }
     rest = $0
-    while (match(rest, /(([A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_-]+\.[A-Za-z0-9]+)/)) {
+    # Path shapes: dir/file (extension optional, [bracketed] Next.js-style segments
+    # and @scoped segments allowed) or a bare file with an extension.
+    while (match(rest, /(([][@A-Za-z0-9_.-]+\/)+[][@A-Za-z0-9_.-]+|[A-Za-z0-9_-]+\.[A-Za-z0-9]+)/)) {
         paths[cur] = paths[cur] " " substr(rest, RSTART, RLENGTH)
         rest = substr(rest, RSTART + RLENGTH)
     }
@@ -61,14 +80,25 @@ END {
         id = order[i]
         c = (id in claim) ? claim[id] : "missing"
         f = (id in floor) ? floor[id] : "missing"
+        if (id in conflict) { printf "%s\t%s\tSUSPECT(conflicting Value lines in one block)\t-\n", id, c; continue }
         if (c == "missing" || f == "missing") { printf "%s\t%s\tSUSPECT(no Value line)\t-\n", id, c; continue }
+        # floor=pass REQUIRES introduced-by-diff=yes (the floor is a conjunction);
+        # =no + pass is a malformed label that would otherwise dodge the grounding
+        # requirement below via the =no exemption.
+        if (c == "no" && f == "pass") { printf "%s\tintroduced-by-diff=no\tSUSPECT(floor=pass requires introduced-by-diff=yes)\t-\n", id; continue }
         if (c == "no")     { printf "%s\tintroduced-by-diff=no\texempt(introduced-by-diff=no)\t-\n", id; continue }
         if (f == "fail")   { printf "%s\tintroduced-by-diff=yes\texempt(floor=fail)\t-\n", id; continue }
         n = split(substr(paths[id], 2), arr, " ")
         hit = ""
         for (j = 1; j <= n && hit == ""; j++) {
             p = arr[j]; sub(/:[0-9].*$/, "", p); sub(/[.,;:]+$/, "", p)
-            for (d in df) if (d == p || ends(d, "/" p) || ends(p, "/" d)) { hit = p; break }
+            for (d in df) {
+                # Equality; diff path ending in the cited suffix; or the cited path
+                # ending in the diff path ONLY when the diff path itself is nested -
+                # a root-level diff file (no "/") must not ground any deeper cited
+                # path that merely shares its basename.
+                if (d == p || ends(d, "/" p) || (index(d, "/") && ends(p, "/" d))) { hit = p; break }
+            }
         }
         if (hit != "")      printf "%s\tintroduced-by-diff=yes\tconsistent\t%s\n", id, hit
         else if (n == 0)    printf "%s\tintroduced-by-diff=yes\tSUSPECT(no file path cited in the finding block)\t-\n", id

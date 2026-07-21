@@ -104,4 +104,67 @@ if "$tool" "$tmp/findings2.md" "$tmp/empty.diff" 2>/dev/null; then
     echo "FAIL: empty diff must exit non-zero, not emit an empty report"; exit 1
 fi
 
-echo "ok: check-value-claims (grounded/ungrounded/exempt/attribution/root-file/empty-diff verdicts)"
+# floor=pass with introduced-by-diff=no is a malformed (gate-bypassing) label, not an
+# exemption - the floor's first conjunct IS introduced-by-diff (gaming lens).
+cat > "$tmp/findings5.md" <<'EOF'
+## F1 - HIGH - correctness
+No file cited on purpose.
+Value: introduced-by-diff=no in-scope=yes merge-decision=yes floor=pass -> proposed: inline
+EOF
+out=$("$tool" "$tmp/findings5.md" "$tmp/pr.diff")
+case "$(verdict F1)" in "SUSPECT(floor=pass requires introduced-by-diff=yes)") : ;; *) echo "FAIL: no+pass combo expected SUSPECT (got: $(verdict F1))"; exit 1 ;; esac
+
+# Conflicting Value lines in one block are SUSPECT, never silently resolved
+# (last-wins here vs fail-beats-pass elsewhere was a cross-layer disagreement).
+cat > "$tmp/findings6.md" <<'EOF'
+## F1 - HIGH - correctness
+At apps/web/src/components/ShareDialog/hooks.ts:1.
+Value: introduced-by-diff=yes in-scope=yes merge-decision=yes floor=pass -> proposed: inline
+Value: introduced-by-diff=yes in-scope=yes merge-decision=no floor=fail -> proposed: report-only(rethought)
+EOF
+out=$("$tool" "$tmp/findings6.md" "$tmp/pr.diff")
+case "$(verdict F1)" in "SUSPECT(conflicting Value lines in one block)") : ;; *) echo "FAIL: conflicting Value lines expected SUSPECT (got: $(verdict F1))"; exit 1 ;; esac
+
+# A root-level diff file must not ground a DEEPER cited path sharing its basename
+# (suffix-collision, gaming lens); the root citation itself still grounds.
+cat > "$tmp/findings7.md" <<'EOF'
+## F1 - HIGH - supply-chain
+Cites some/untouched/dir/package.json only.
+Value: introduced-by-diff=yes in-scope=yes merge-decision=yes floor=pass -> proposed: inline
+EOF
+out=$("$tool" "$tmp/findings7.md" "$tmp/root.diff")
+case "$(verdict F1)" in SUSPECT*) : ;; *) echo "FAIL: deeper path vs root diff file expected SUSPECT (got: $(verdict F1))"; exit 1 ;; esac
+
+# Bracketed (Next.js) path segments parse - the #24618 repo's real shape.
+cat > "$tmp/bracket.diff" <<'EOF'
+--- a/apps/web/src/pages/shared/[tenant]/jobs/[jobId]/balance/actual/index.page.tsx
++++ b/apps/web/src/pages/shared/[tenant]/jobs/[jobId]/balance/actual/index.page.tsx
+@@ -1 +1,2 @@
+ context
++documentId={balanceId}
+EOF
+cat > "$tmp/findings8.md" <<'EOF'
+## F1 - HIGH - correctness
+Broken at apps/web/src/pages/shared/[tenant]/jobs/[jobId]/balance/actual/index.page.tsx:16.
+Value: introduced-by-diff=yes in-scope=yes merge-decision=yes floor=pass -> proposed: inline
+EOF
+out=$("$tool" "$tmp/findings8.md" "$tmp/bracket.diff")
+case "$(verdict F1)" in consistent) : ;; *) echo "FAIL: bracketed path expected consistent (got: $(verdict F1))"; exit 1 ;; esac
+
+# Rename-only and binary-only diffs still produce a report (paths from rename/Binary
+# lines), so stage 05 always has a compliant way to write value-claims.tsv.
+cat > "$tmp/rename.diff" <<'EOF'
+diff --git a/src/old-name.ts b/src/new-name.ts
+similarity index 100%
+rename from src/old-name.ts
+rename to src/new-name.ts
+EOF
+cat > "$tmp/findings9.md" <<'EOF'
+## F1 - LOW - scope
+The rename of src/new-name.ts breaks importers.
+Value: introduced-by-diff=yes in-scope=yes merge-decision=yes floor=pass -> proposed: inline
+EOF
+out=$("$tool" "$tmp/findings9.md" "$tmp/rename.diff") || { echo "FAIL: rename-only diff must not be refused"; exit 1; }
+case "$(verdict F1)" in consistent) : ;; *) echo "FAIL: rename-target citation expected consistent (got: $(verdict F1))"; exit 1 ;; esac
+
+echo "ok: check-value-claims (grounded/ungrounded/exempt/attribution/root-file/empty-diff/combo/conflict/collision/bracket/rename verdicts)"
