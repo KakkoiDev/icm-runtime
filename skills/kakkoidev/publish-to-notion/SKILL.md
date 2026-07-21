@@ -44,7 +44,9 @@ it first (or use a drafting skill), then call this.
   `<mention-page>` chip when the id itself matters. A named reference left as bare text is a defect.
   When the content explains code behavior, embed the relevant snippet VERBATIM in a fenced code
   block with a `file:line` caption so a reader (or Claude Code) can trace it; code blocks stay
-  full-width. Details in stage 01-render step 7.
+  full-width. To caption a full-width block (code/table/diagram) bilingually, put the neutral label
+  (`file:line`/path) on its own full-width line, then the JA/EN explanation in a per-pair
+  `<columns>` block above the block - never `JA / EN` on one line. Details in stage 01-render step 7.
 - Provenance callout: every page published through this skill is AI-authored, so the FIRST block
   is a callout with the robot icon stating AI authorship + human review -
   `<callout icon="🤖" color="gray_bg">` + `この資料はAIが生成し、人間がレビューしています。` +

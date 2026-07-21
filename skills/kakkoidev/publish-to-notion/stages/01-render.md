@@ -79,10 +79,15 @@ in two columns.
      text is a defect; if you do not have the URL, ask for it or flag it - never silently ship a
      bare mention.
    - Code examples: when the content explains how code behaves, include the relevant snippet in a
-     fenced code block (```lang) with a `file:line` caption line above it, so the reader - or an
-     agent like Claude Code - can jump straight to the source. Quote code VERBATIM (re-read the
-     file; never paraphrase or reconstruct from memory). Code blocks stay FULL-WIDTH - never inside
-     a `<columns>` or `<table>` cell.
+     fenced code block (```lang) with a `file:line` caption above it, so the reader - or an agent
+     like Claude Code - can jump straight to the source. Quote code VERBATIM (re-read the file;
+     never paraphrase or reconstruct from memory). Code blocks stay FULL-WIDTH - never inside a
+     `<columns>` or `<table>` cell.
+   - Captioning a FULL-WIDTH block bilingually (code, table, diagram): never cram `JA / EN` onto one
+     line. Put the language-neutral label (a `file:line`, path, or figure number) on its own
+     full-width line, then the bilingual explanation in its OWN per-pair `<columns>` block (JA left,
+     EN right, real tabs), then the full-width block. The caption reads side by side; the block it
+     labels stays full-width.
 8. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
    "none = private workspace page") and the title; for update, the existing `page_id`; and the
    `audience` (who must be able to read it).
