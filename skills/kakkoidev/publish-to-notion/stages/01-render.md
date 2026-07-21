@@ -68,7 +68,22 @@ in two columns.
    first); a monolingual doc gets only the matching line. On CREATE, prepend it as the first block.
    On UPDATE, fetch the page first and add it ONLY if no such callout already exists at the top -
    never duplicate it, and never add it to a page that was not authored through this skill.
-7. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
+7. Cross-references and code examples (add what the source is missing - do not just pass content
+   through):
+   - Links: hyperlink EVERY page, ticket, document, PR, or spec the content names - not only
+     internal Notion pages but EXTERNAL references too (Figma, GitHub, Slack, requirement/spec
+     sites). Internal Notion page: `[reference text](notion-url)`, keeping the anchor the reader
+     expects (e.g. keep the literal ticket id `SOBA-306` as the link text, not the page's long
+     title - a bare `<mention-page>` chip swaps the visible text for the title, so prefer a text
+     link when the id itself matters). External: `[label](url)`. A named reference left as plain
+     text is a defect; if you do not have the URL, ask for it or flag it - never silently ship a
+     bare mention.
+   - Code examples: when the content explains how code behaves, include the relevant snippet in a
+     fenced code block (```lang) with a `file:line` caption line above it, so the reader - or an
+     agent like Claude Code - can jump straight to the source. Quote code VERBATIM (re-read the
+     file; never paraphrase or reconstruct from memory). Code blocks stay FULL-WIDTH - never inside
+     a `<columns>` or `<table>` cell.
+8. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
    "none = private workspace page") and the title; for update, the existing `page_id`; and the
    `audience` (who must be able to read it).
 

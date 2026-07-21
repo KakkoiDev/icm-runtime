@@ -38,6 +38,13 @@ it first (or use a drafting skill), then call this.
 ## Notion authoring rules (read before any write)
 - Read the `notion://docs/enhanced-markdown-spec` MCP resource via `ReadMcpResourceTool`
   BEFORE writing. Do not guess Notion-flavored markdown syntax.
+- Cross-references + code examples: hyperlink EVERY page/ticket/document/PR/spec the content names -
+  internal Notion pages AND external references (Figma, GitHub, Slack, spec sites) - via
+  `[text](url)`; keep the literal reference (e.g. `SOBA-306`) as the anchor rather than a
+  `<mention-page>` chip when the id itself matters. A named reference left as bare text is a defect.
+  When the content explains code behavior, embed the relevant snippet VERBATIM in a fenced code
+  block with a `file:line` caption so a reader (or Claude Code) can trace it; code blocks stay
+  full-width. Details in stage 01-render step 7.
 - Provenance callout: every page published through this skill is AI-authored, so the FIRST block
   is a callout with the robot icon stating AI authorship + human review -
   `<callout icon="🤖" color="gray_bg">` + `この資料はAIが生成し、人間がレビューしています。` +
