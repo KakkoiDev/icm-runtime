@@ -1,0 +1,45 @@
+#!/bin/sh
+# gather-schema-facts: deterministic ground truth for lens L5 (implementation
+# mismatch). For each named entity, pull its real `model <Entity> { ... }` block
+# out of the target repo's *.prisma schema files. No model judgment - grep/awk only.
+#
+# Usage: gather-schema-facts <repo-root> <entity1> [entity2 ...]
+set -eu
+
+repo_root=${1:?"usage: gather-schema-facts <repo-root> <entity> [entity ...]"}
+shift
+[ $# -ge 1 ] || { echo "usage: gather-schema-facts <repo-root> <entity> [entity ...]" >&2; exit 2; }
+
+echo "# Schema facts"
+echo
+
+schema_files=$(find "$repo_root" -type f -name "*.prisma" -not -path "*/node_modules/*" 2>/dev/null || true)
+
+if [ -z "$schema_files" ]; then
+    echo "no *.prisma files found under $repo_root"
+    exit 0
+fi
+
+for entity in "$@"; do
+    echo "## $entity"
+    found=0
+    for f in $schema_files; do
+        block=$(awk -v ent="$entity" '
+            $0 ~ "^model[ \t]+" ent "[ \t]*\\{" { inblock = 1 }
+            inblock { print }
+            inblock && /^}/ { exit }
+        ' "$f")
+        if [ -n "$block" ]; then
+            echo "(from $f)"
+            echo '```prisma'
+            printf '%s\n' "$block"
+            echo '```'
+            found=1
+            break
+        fi
+    done
+    if [ "$found" -eq 0 ]; then
+        echo "not found: no \`model $entity\` block in any *.prisma file under $repo_root"
+    fi
+    echo
+done

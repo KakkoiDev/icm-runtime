@@ -1,0 +1,151 @@
+#!/bin/sh
+# score-coverage: deterministic scorer. Matches stage 02's findings.md against the
+# frozen references/answer-key.tsv - no model judgment, so the number is
+# reproducible and is the real signal icm-improve (or a human) tracks phase over
+# phase.
+#
+# Matching is PER-BLOCK ONLY (each finding's own `## F<n> ...` block, never the
+# whole file at once). Earlier versions grepped primary/secondary against the
+# WHOLE concatenated file - which meant a primary term in one unrelated finding
+# and a secondary term in a totally different finding could combine into a false
+# "hit" neither finding actually supports on its own. Per-block matching requires
+# both terms to appear in the SAME finding, closing that class of false positive,
+# and gives a real F<n> <-> T<id> ledger as a side effect instead of a bare count.
+#
+# TSV parsing is done entirely in awk with an explicit FS="\t": shell `read` with
+# IFS=tab silently COLLAPSES consecutive tabs (POSIX classes tab as "IFS
+# whitespace" regardless of what IFS is set to), which drops empty fields and
+# shifts every field after it - awk's explicit single-char FS does not have this
+# behavior, so every TSV read below goes through `score.awk`, never shell `read`.
+#
+# Usage: score-coverage <findings.md> <answer-key.tsv>
+set -eu
+
+findings=${1:?"usage: score-coverage <findings.md> <answer-key.tsv>"}
+keyfile=${2:?"usage: score-coverage <findings.md> <answer-key.tsv>"}
+
+[ -f "$findings" ] || { echo "FAIL: findings file not found: $findings" >&2; exit 1; }
+[ -f "$keyfile" ] || { echo "FAIL: answer-key file not found: $keyfile" >&2; exit 1; }
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+# --- split findings.md into per-finding blocks (## F<n> ... next ## F<n>) ---
+awk -v dir="$workdir" '
+    /^## F[0-9]+/ { n++; file = dir "/block-" n ".txt" }
+    n > 0 { print > file }
+' "$findings"
+
+total=$(($(wc -l < "$keyfile") - 1))
+[ "$total" -ge 0 ] || total=0
+
+score_awk='
+    BEGIN {
+        FS = "\t"
+        while ((getline line < keyfile) > 0) {
+            if (++rownum == 1) continue          # skip header
+            split(line, f, "\t")
+            i++
+            id[i] = f[1]; lens[i] = f[2]; primary[i] = f[3]; secondary[i] = f[4]; desc[i] = f[5]
+        }
+        close(keyfile)
+        krows = i
+    }
+    function row_matches(idx, targetfile,    p, s) {
+        p = primary[idx]; s = secondary[idx]
+        if (system("grep -Eiq -- \x27" p "\x27 " targetfile) != 0) return 0
+        if (s != "" && system("grep -Eiq -- \x27" s "\x27 " targetfile) != 0) return 0
+        return 1
+    }
+'
+
+# --- one pass: every (block, answer-key row) match becomes a pairs.tsv row ---
+: > "$workdir/pairs.tsv"
+all_fids=""
+for blockfile in "$workdir"/block-*.txt; do
+    [ -e "$blockfile" ] || continue
+    heading=$(head -n1 "$blockfile")
+    fid=$(printf '%s' "$heading" | grep -oE 'F[0-9]+' | head -n1)
+    [ -n "$fid" ] || fid="UNKNOWN-$(basename "$blockfile")"
+    all_fids="${all_fids}${fid}
+"
+    awk -v keyfile="$keyfile" -v target="$blockfile" -v fid="$fid" "$score_awk"'
+        END {
+            for (k = 1; k <= krows; k++) {
+                if (row_matches(k, target)) print fid "\t" id[k] "\t" lens[k] "\t" desc[k]
+            }
+        }
+    ' /dev/null >> "$workdir/pairs.tsv"
+done
+
+matched_tids=$(awk -F'\t' '{print $2}' "$workdir/pairs.tsv" | sort -u)
+hits=$(printf '%s\n' "$matched_tids" | grep -c . || true)
+[ -n "$matched_tids" ] || hits=0
+
+# --- Matched: each hit T-id with the F-ids that matched it ---
+matched_out=""
+if [ -n "$matched_tids" ]; then
+    while IFS= read -r tid; do
+        [ -n "$tid" ] || continue
+        row=$(awk -F'\t' -v t="$tid" '$2==t{print; exit}' "$workdir/pairs.tsv")
+        lens_v=$(printf '%s' "$row" | awk -F'\t' '{print $3}')
+        desc_v=$(printf '%s' "$row" | awk -F'\t' '{print $4}')
+        fids=$(awk -F'\t' -v t="$tid" '$2==t{print $1}' "$workdir/pairs.tsv" | sort -u | paste -sd, -)
+        matched_out="${matched_out}- ${tid} (${lens_v}): ${desc_v} -- matched by: ${fids}
+"
+    done <<EOF
+$matched_tids
+EOF
+fi
+
+# --- Missed: answer-key rows with zero matching blocks ---
+missed_out=$(awk -v keyfile="$keyfile" -v matched="$workdir/pairs.tsv" '
+    BEGIN {
+        FS = "\t"
+        while ((getline line < matched) > 0) { split(line, m, "\t"); seen[m[2]] = 1 }
+        rownum = 0
+        while ((getline line < keyfile) > 0) {
+            if (++rownum == 1) continue
+            split(line, f, "\t")
+            if (!(f[1] in seen)) print "- " f[1] " (" f[2] "): " f[5]
+        }
+    }
+' /dev/null)
+
+# --- New candidates: finding blocks that matched zero answer-key rows ---
+new_out=""
+if [ -n "$all_fids" ]; then
+    while IFS= read -r fid; do
+        [ -n "$fid" ] || continue
+        if ! awk -F'\t' -v f="$fid" '$1==f{found=1; exit} END{exit !found}' "$workdir/pairs.tsv"; then
+            blockfile=$(grep -l "^## ${fid}\b" "$workdir"/block-*.txt 2>/dev/null | head -n1)
+            heading=$(head -n1 "$blockfile" 2>/dev/null || echo "## $fid")
+            new_out="${new_out}- ${heading}
+"
+        fi
+    done <<EOF
+$all_fids
+EOF
+fi
+
+# --- Ambiguous overlap: one finding block satisfying more than one known issue ---
+overlap_out=$(awk -F'\t' '
+    { count[$1]++ ; tids[$1] = tids[$1] " " $2 }
+    END { for (f in count) if (count[f] > 1) print "- " f " matches multiple known issues:" tids[f] }
+' "$workdir/pairs.tsv")
+
+echo "# Coverage report"
+echo
+echo "Hits: ${hits}/${total}"
+echo
+echo "## Matched"
+if [ -n "$matched_out" ]; then printf '%s' "$matched_out"; else echo "(none)"; fi
+echo
+echo "## Missed"
+if [ -n "$missed_out" ]; then printf '%s\n' "$missed_out"; else echo "(none)"; fi
+echo
+echo "## New candidates"
+if [ -n "$new_out" ]; then printf '%s' "$new_out"; else echo "(none - every finding matched a known issue)"; fi
+echo
+echo "## Ambiguous overlap (informational)"
+if [ -n "$overlap_out" ]; then printf '%s\n' "$overlap_out"; else echo "(none)"; fi

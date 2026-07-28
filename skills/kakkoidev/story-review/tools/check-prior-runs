@@ -1,0 +1,36 @@
+#!/bin/sh
+# check-prior-runs: deterministic prior-run detector. Reads ONLY each other run's
+# target-id.txt (a single-line page id, written before anything else in stage 01) -
+# never findings.md, story-body.md, or any content artifact. This is what makes
+# disclosure safe: a run can prove another run reviewed the SAME target without ever
+# opening what that run found.
+#
+# Usage: check-prior-runs <icm-runs-root> <this-run-dir-name> <target-id>
+# icm-runs-root is normally .icm/kakkoidev/story-review (relative to the project
+# root where icm.sh init was called). this-run-dir-name is the current run's own
+# timestamp directory name, excluded from the scan so a run never "discovers itself".
+set -eu
+
+runs_root=${1:?"usage: check-prior-runs <icm-runs-root> <this-run-dir-name> <target-id>"}
+this_run=${2:?"usage: check-prior-runs <icm-runs-root> <this-run-dir-name> <target-id>"}
+target_id=${3:?"usage: check-prior-runs <icm-runs-root> <this-run-dir-name> <target-id>"}
+
+echo "run_dir	target_id	same_target"
+
+[ -d "$runs_root" ] || exit 0
+
+for d in "$runs_root"/*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    [ "$name" = "$this_run" ] && continue
+    tid_file="${d}01-gather/output/target-id.txt"
+    [ -f "$tid_file" ] || continue
+    other_id=$(head -n1 "$tid_file" 2>/dev/null || true)
+    [ -n "$other_id" ] || continue
+    if [ "$other_id" = "$target_id" ]; then
+        same="yes"
+    else
+        same="no"
+    fi
+    printf '%s\t%s\t%s\n' "$name" "$other_id" "$same"
+done
