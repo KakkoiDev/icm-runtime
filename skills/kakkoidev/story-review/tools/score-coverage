@@ -30,10 +30,17 @@ keyfile=${2:?"usage: score-coverage <findings.md> <answer-key.tsv>"}
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 
-# --- split findings.md into per-finding blocks (## F<n> ... next ## F<n>) ---
+# --- split findings.md into per-finding blocks (## F<n> ... next ## header) ---
+# A block ends at the next `## F<n>` OR any other `##`-level header (e.g. a
+# reviewer's own lens-divider like `## L2 - ...`) - not just the next F<n>.
+# Found live during the 2026-07-28 variance study: a non-F header glued onto
+# the PRECEDING block inflated its keyword surface (a stray "grounding"/"L2"
+# note collided with answer-key primary term "rounding"), crediting a hit
+# that was really the divider text, not the finding.
 awk -v dir="$workdir" '
-    /^## F[0-9]+/ { n++; file = dir "/block-" n ".txt" }
-    n > 0 { print > file }
+    /^## F[0-9]+/ { n++; file = dir "/block-" n ".txt"; p = 1 }
+    /^##/ && !/^## F[0-9]+/ { p = 0 }
+    p { print > file }
 ' "$findings"
 
 total=$(($(wc -l < "$keyfile") - 1))

@@ -166,12 +166,17 @@ make the score look better.
 
 ## Known limitations (not yet fixed - see the case study for detail)
 
-- The per-block scorer eliminates cross-block false positives but cannot catch a
+- The per-block scorer eliminates cross-block false positives (see "Fixed
+  2026-07-28" below for one that slipped through) but still cannot catch a
   finding that happens to mention both an answer-key row's terms in one block
-  without actually being that finding (same-block topical false positive,
-  observed once). Closing this needs genuine semantic verification (an
-  adversarial refute-this-finding pass, or a deterministic claim-checker like
-  pr-review's `check-value-claims`), not implemented here.
+  without actually being that finding (same-block topical false positive).
+  Validated across 7 independent runs on 2026-07-28: this inflated the raw
+  `Hits: N/M` line by roughly 20-30 percentage points in every single run.
+  Closing it for real needs genuine semantic verification (an adversarial
+  refute-this-finding pass, or a deterministic claim-checker like pr-review's
+  `check-value-claims`), not implemented here. **Mitigated, not fixed:** stage
+  03 now mandates a manual self-audit pass (`output/self-audit.md`,
+  `Corrected count: N/M`) - never trust or report the raw `Hits` line alone.
 - Validated blind three times now (see `case-studies/story-review-icm-skill.md` in
   the `skillful-ai-engineers-club` repo), all against the one document the answer
   key was extracted from. The 8 lenses are designed to generalize but this has not
@@ -199,3 +204,18 @@ make the score look better.
   UI - a one-time, per-target-tree, human-only step (no API exists for a bot to
   grant itself page access). Full incident writeup in aidb:
   `FINDING-mcp-claudeai-connector-blocked-for-subagents.md`.
+
+## Fixed 2026-07-28 (during the 7-run variance study)
+
+- **`tools/score-coverage`'s block-splitter used to terminate a finding block
+  only at the next `## F<n>` header**, so a reviewer's own non-`F` section
+  divider (e.g. a lens note like `## L2 - ...`) glued onto the *preceding*
+  block instead of ending it, inflating that block's keyword surface (a stray
+  "grounding" note collided with answer-key term "rounding", crediting a hit
+  that was really the divider text). Fixed: a block now also ends at any other
+  `##`-level header. Regression test:
+  `eval/score-coverage-block-split.test.sh` (fails on the pre-fix script,
+  passes on the fix - verified both ways).
+- **`references/answer-key.tsv`'s T2 regex required the literal phrase "custom
+  field"** (with a space), missing real matches phrased "custom-field" or
+  "customfield" (no space). Loosened to `custom[- ]?field`.

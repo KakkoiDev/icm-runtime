@@ -1,6 +1,6 @@
 id	lens	primary_regex	secondary_regex	description
 T1	L3-drift	(notification|toast|no confirmation|visual indication)	(stale|does not update|not update|no.*sync)	silent record creation (order created with no notification/toast) + edited source doc does not propagate -> stale-value risk goes unnoticed
-T2	L6-unresolved-dep	(custom field)	(order (header|line)|not.*(mentioned|introduced)|defined.*for order)	custom fields referenced for Order/OrderLine/OrderHeader before any prior definition of them; sync/definition mechanism unclear
+T2	L6-unresolved-dep	(custom[- ]?field)	(order (header|line)|not.*(mentioned|introduced)|defined.*for order)	custom fields referenced for Order/OrderLine/OrderHeader before any prior definition of them; sync/definition mechanism unclear
 T3	L1-jargon	(API name)	(header)	"API name" and "header" used without a definition on first use
 T4	L1-jargon	(bill-to|billing recipient|請求先)	(snapshot|creation time|stored|what.*copied)	client/bill-to snapshot: where is it stored, what exactly counts as "creation time", full record or a field subset
 T5	L2-cross-doc	(revert|repeat.*status|Ordered.*Issued.*Ordered)	(archive|non-archived|US-0)	an AC allowing a repeated status transition contradicts a sibling story's "cannot move phase back while an order exists" rule

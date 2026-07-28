@@ -13,9 +13,11 @@ for t in tools/gather-schema-facts tools/score-coverage tools/check-prior-runs; 
     test -x "$t" || { echo "FAIL: $t missing or not executable"; exit 1; }
 done
 
-for h in eval-heldout/coverage-contract.test.sh eval-heldout/sibling-coverage.test.sh eval-heldout/independence-line.test.sh; do
+for h in eval-heldout/coverage-contract.test.sh eval-heldout/sibling-coverage.test.sh eval-heldout/independence-line.test.sh eval-heldout/self-audit-contract.test.sh; do
     test -f "$h" || { echo "FAIL: $h missing"; exit 1; }
 done
+
+test -x eval/score-coverage-block-split.test.sh || { echo "FAIL: eval/score-coverage-block-split.test.sh missing or not executable"; exit 1; }
 
 test -x checks/gathered.sh || { echo "FAIL: checks/gathered.sh not executable"; exit 1; }
 grep -q 'ICM-GATE' stages/02-blind-review.md || { echo "FAIL: stage 02 missing ICM-GATE"; exit 1; }
