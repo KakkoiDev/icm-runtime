@@ -1,0 +1,108 @@
+#!/bin/sh
+# grounding-audit: deterministic per-finding grounding + precision report. No model
+# judgment - awk/grep only.
+#
+# Why this exists (learned 2026-07-29 from the Accounting story-review page): the
+# frozen answer key is TARGET-BOUND. Scoring a different story against it measures
+# shared financial vocabulary, not coverage, so on a new target the whole Hits: N/M
+# signal is unavailable. The page's own conclusion about what actually predicted
+# review quality instead was:
+#   1. adversarial refutation (25 candidates -> 7 killed -> 18 survived), and
+#   2. concrete grounding (each finding citing a story quote plus a real schema/
+#      code/sibling fact).
+# Both are mechanically countable. This tool counts them, so a run on a target the
+# answer key does not cover still emits a reproducible number instead of nothing.
+#
+# It measures FORM, not truth: a finding can carry a perfect quote and a real code
+# reference and still be wrong. A high grounding rate is a floor on evidence
+# discipline, never a claim that the findings are correct.
+#
+# Usage: grounding-audit <findings.md>
+set -eu
+
+findings=${1:?"usage: grounding-audit <findings.md>"}
+[ -f "$findings" ] || { echo "FAIL: findings file not found: $findings" >&2; exit 1; }
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+# Split into surviving-finding blocks (## F<n>) and refuted blocks (## R<n>). A
+# block ends at the next ##-level header of either kind - same rule as
+# score-coverage, for the same reason (a divider must not inflate its predecessor).
+awk -v dir="$workdir" '
+    /^## F[0-9]+/ { n++; file = dir "/f-" n ".txt"; p = 1; print > file; next }
+    /^## R[0-9]+/ { r++; file = dir "/r-" r ".txt"; p = 1; print > file; next }
+    /^##/ { p = 0; next }
+    p { print > file }
+' "$findings"
+
+CONF_RE='^Confidence: (Confirmed|Strongly supported|Supported|Plausible|Partly refuted)( |$)'
+
+: > "$workdir/rows.tsv"
+for bf in "$workdir"/f-*.txt; do
+    [ -e "$bf" ] || continue
+    heading=$(head -n1 "$bf")
+    fid=$(printf '%s' "$heading" | grep -oE 'F[0-9]+' | head -n1)
+    [ -n "$fid" ] || fid="UNKNOWN"
+
+    quote=no;      grep -qE '^> .'          "$bf" && quote=yes
+    conf=no;       grep -qE "$CONF_RE"      "$bf" && conf=yes
+    evidence=no;   grep -qE '^Evidence: .'  "$bf" && evidence=yes
+    conf_label=$(grep -oE "$CONF_RE" "$bf" | head -n1 | sed 's/^Confidence: //' | sed 's/ $//')
+    [ -n "$conf_label" ] || conf_label="(none)"
+
+    if [ "$quote" = yes ] && [ "$conf" = yes ] && [ "$evidence" = yes ]; then
+        verdict=GROUNDED
+    else
+        verdict=UNGROUNDED
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$fid" "$verdict" "$quote" "$conf" "$evidence" "$conf_label" \
+        >> "$workdir/rows.tsv"
+done
+
+surviving=$(ls "$workdir"/f-*.txt 2>/dev/null | wc -l | tr -d ' ')
+refuted=$(ls "$workdir"/r-*.txt 2>/dev/null | wc -l | tr -d ' ')
+grounded=$(awk -F'\t' '$2=="GROUNDED"' "$workdir/rows.tsv" 2>/dev/null | wc -l | tr -d ' ')
+candidates=$((surviving + refuted))
+
+echo "# Grounding audit"
+echo
+echo "Grounded: ${grounded}/${surviving}"
+echo "Refuted: ${refuted}"
+echo "Candidates: ${candidates}"
+if [ "$candidates" -gt 0 ]; then
+    echo "Survival rate: ${surviving}/${candidates}"
+else
+    echo "Survival rate: n/a (no finding or refuted blocks found)"
+fi
+echo
+echo "## Per finding"
+if [ -s "$workdir/rows.tsv" ]; then
+    echo "| Finding | Verdict | Quote | Confidence field | Evidence field | Confidence |"
+    echo "|---|---|---|---|---|---|"
+    awk -F'\t' '{ printf "| %s | %s | %s | %s | %s | %s |\n", $1, $2, $3, $4, $5, $6 }' \
+        "$workdir/rows.tsv"
+else
+    echo "(none - findings.md contains no \`## F<n>\` block)"
+fi
+echo
+echo "## Ungrounded findings"
+if awk -F'\t' '$2=="UNGROUNDED"{f=1} END{exit !f}' "$workdir/rows.tsv" 2>/dev/null; then
+    awk -F'\t' '$2=="UNGROUNDED" {
+        miss = ""
+        if ($3 == "no") miss = miss " no story quote (`> ` line);"
+        if ($4 == "no") miss = miss " no valid `Confidence:` field;"
+        if ($5 == "no") miss = miss " no `Evidence:` field;"
+        printf "- %s:%s\n", $1, miss
+    }' "$workdir/rows.tsv"
+else
+    echo "(none - every finding carries a quote, a confidence label, and an evidence line)"
+fi
+echo
+echo "## Confidence distribution"
+if [ -s "$workdir/rows.tsv" ]; then
+    awk -F'\t' '{ c[$6]++ } END { for (k in c) printf "- %s: %d\n", k, c[k] }' \
+        "$workdir/rows.tsv" | sort
+else
+    echo "(none)"
+fi

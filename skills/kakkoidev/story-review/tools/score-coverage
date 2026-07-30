@@ -18,14 +18,66 @@
 # shifts every field after it - awk's explicit single-char FS does not have this
 # behavior, so every TSV read below goes through `score.awk`, never shell `read`.
 #
-# Usage: score-coverage <findings.md> <answer-key.tsv>
+# TARGET GUARD (added 2026-07-29): the answer key is bound to the ONE story it was
+# extracted from. Scored against a different story it measures shared domain
+# vocabulary, not coverage - observed live when a US-01-derived key was pointed at
+# a sibling story and the operator had to notice and skip stage 03 by hand. When
+# both id arguments are supplied and disagree, this script refuses to emit a
+# coverage number at all: `Hits: n/a`, every section present but empty, and an
+# explicit `## Not applicable` block. A guard in the script, not a warning in
+# prose, because the failure mode is a number that looks perfectly reasonable.
+#
+# Usage: score-coverage <findings.md> <answer-key.tsv> [<target-id-file> <key-target-file>]
 set -eu
 
-findings=${1:?"usage: score-coverage <findings.md> <answer-key.tsv>"}
-keyfile=${2:?"usage: score-coverage <findings.md> <answer-key.tsv>"}
+findings=${1:?"usage: score-coverage <findings.md> <answer-key.tsv> [<target-id-file> <key-target-file>]"}
+keyfile=${2:?"usage: score-coverage <findings.md> <answer-key.tsv> [<target-id-file> <key-target-file>]"}
+target_file=${3:-}
+key_target_file=${4:-}
 
 [ -f "$findings" ] || { echo "FAIL: findings file not found: $findings" >&2; exit 1; }
 [ -f "$keyfile" ] || { echo "FAIL: answer-key file not found: $keyfile" >&2; exit 1; }
+
+# --- target guard --------------------------------------------------------------
+if [ -n "$target_file" ] || [ -n "$key_target_file" ]; then
+    [ -n "$target_file" ] && [ -n "$key_target_file" ] || {
+        echo "FAIL: target-id-file and key-target-file must be given together" >&2; exit 2; }
+    [ -f "$target_file" ] || { echo "FAIL: target-id file not found: $target_file" >&2; exit 1; }
+    [ -f "$key_target_file" ] || { echo "FAIL: key-target file not found: $key_target_file" >&2; exit 1; }
+
+    # normalize: strip dashes/whitespace so a UUID and its dashless form compare equal
+    norm_target=$(tr -d '\n\r \t-' < "$target_file" | tr 'A-Z' 'a-z')
+    norm_key=$(grep -vE '^[[:space:]]*#' "$key_target_file" | tr -d '\n\r \t-' | tr 'A-Z' 'a-z')
+
+    if [ "$norm_target" != "$norm_key" ]; then
+        echo "# Coverage report"
+        echo
+        echo "Hits: n/a"
+        echo
+        echo "## Not applicable"
+        echo "The frozen answer key was extracted from a different story, so scoring this"
+        echo "run against it would count shared domain vocabulary, not coverage."
+        echo
+        echo "- this run's target: $norm_target"
+        echo "- answer key's source target: $norm_key"
+        echo
+        echo "Use \`tools/grounding-audit\` for this run's reproducible quality number"
+        echo "(grounding rate + refutation survival rate), which is target-independent."
+        echo
+        echo "## Matched"
+        echo "(none - not scored, see Not applicable above)"
+        echo
+        echo "## Missed"
+        echo "(none - not scored, see Not applicable above)"
+        echo
+        echo "## New candidates"
+        echo "(none - not scored, see Not applicable above)"
+        echo
+        echo "## Ambiguous overlap (informational)"
+        echo "(none - not scored, see Not applicable above)"
+        exit 0
+    fi
+fi
 
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT

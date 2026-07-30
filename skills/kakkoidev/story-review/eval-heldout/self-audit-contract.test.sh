@@ -18,10 +18,20 @@ audit="$ICM_RUN_DIR/03-score/output/self-audit.md"
 [ -f "$report" ] || { echo "FAIL: coverage-report.md not found at $report"; exit 1; }
 [ -f "$audit" ] || { echo "FAIL: self-audit.md not found at $audit - stage 03's mandatory self-audit step was skipped"; exit 1; }
 
-grep -qE '^Corrected count: [0-9]+/[0-9]+$' "$audit" || {
-    echo "FAIL: self-audit.md has no well-formed 'Corrected count: N/M' line"
+# `n/a` is the correct corrected count when score-coverage's target guard refused to
+# score this run at all - there are no matched rows to re-judge.
+grep -qE '^Corrected count: ([0-9]+/[0-9]+|n/a)$' "$audit" || {
+    echo "FAIL: self-audit.md has no well-formed 'Corrected count: N/M' or 'Corrected count: n/a' line"
     exit 1
 }
+
+# ...but `n/a` is legitimate ONLY when the coverage report itself reported n/a.
+# Otherwise it is a way to opt out of the self-audit that 7 of 7 runs proved
+# necessary.
+if grep -qE '^Corrected count: n/a$' "$audit" && ! grep -qE '^Hits: n/a$' "$report"; then
+    echo "FAIL: self-audit.md claims 'Corrected count: n/a' but coverage-report.md scored this run"
+    exit 1
+fi
 
 # every T-id under coverage-report.md's ## Matched section must appear in self-audit.md
 matched_tids=$(awk '/^## Matched$/{p=1; next} /^## /{p=0} p' "$report" | grep -oE '^- T[0-9]+' | grep -oE 'T[0-9]+' | sort -u)

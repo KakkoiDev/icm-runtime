@@ -1,0 +1,145 @@
+#!/bin/sh
+# gather-impl-facts: deterministic implementation ground truth BEYOND the prisma
+# model shape that gather-schema-facts already pulls. No model judgment - awk/grep
+# only.
+#
+# Why this exists (learned 2026-07-29 from the Accounting story-review page): the
+# single largest confidence jump in a real review came from reading actual code,
+# not from `model X { ... }` blocks. Several findings only moved from "plausible"
+# to "confirmed" - and one moved to "partly refuted" - after someone read enum
+# definitions, derived-status expressions, and the existing UI/service entry
+# points. gather-schema-facts is structurally blind to all three:
+#   * An entity can be absent as a `model` AND absent as an enum member. The
+#     ABSENCE is the fact (e.g. `CustomFieldTarget` had no `Order`/`OrderLine`
+#     member, which is what confirmed the story's custom-field claim was
+#     unsupported). Absence is only evidence if you searched for it explicitly.
+#   * A status the story treats as stored can be derived in code
+#     (`estimate.issuedAt && estimate.invoices.length > 0`). No schema grep sees
+#     that; only a reference-site list points at the file that computes it.
+#   * "an extension of the existing <X>" is unverifiable without the current
+#     behavior of X, which lives in a hook/service, not the schema.
+#
+# Usage: gather-impl-facts <repo-root> <name1> [name2 ...]
+#
+# Pass BOTH the domain entities and the infrastructure types the doc's capability
+# claims lean on (a custom-field target enum, a permission enum, a phase-type
+# enum). A too-narrow name list is the known way to get a thin, falsely-clean
+# result out of this tool.
+#
+# Section C reports REFERENCING FILES with hit counts, not every hit line: a
+# generic domain word ("Order") produced 309 raw hit lines on a real monorepo,
+# 25-line-capped into pure i18n-dictionary noise. Files-with-counts is what the
+# real review actually used - it names the file to open. Comment-only lines and
+# the tests/ tree are excluded for the same reason.
+set -eu
+
+repo_root=${1:?"usage: gather-impl-facts <repo-root> <name> [name ...]"}
+shift
+[ $# -ge 1 ] || { echo "usage: gather-impl-facts <repo-root> <name> [name ...]" >&2; exit 2; }
+
+FILE_CAP=20
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+echo "# Implementation facts"
+echo
+echo "Repo root: $repo_root"
+echo
+
+# --- file inventory (NUL-delimited: paths may contain spaces) -------------------
+find "$repo_root" -type f \( -name '*.prisma' -o -name '*.ts' -o -name '*.tsx' \) \
+    -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/.next/*' \
+    -not -path '*/tests/*' -not -path '*/__tests__/*' \
+    -not -name '*.spec.ts' -not -name '*.spec.tsx' \
+    -not -name '*.test.ts' -not -name '*.test.tsx' \
+    -not -name '*.mock.ts' -not -name '*.d.ts' \
+    -print0 > "$workdir/files.z" 2>/dev/null || true
+
+if [ ! -s "$workdir/files.z" ]; then
+    echo "no *.prisma / *.ts / *.tsx source files found under $repo_root - nothing to ground against"
+    exit 0
+fi
+
+# Enum scan is restricted to files that actually contain the token `enum`: awk-ing
+# every file in a monorepo took 80s, this takes about one.
+xargs -0 grep -l -- 'enum' < "$workdir/files.z" 2>/dev/null > "$workdir/enum-files.txt" || true
+
+# Every enum block, flattened to one (enum, member, path) row so member presence
+# AND absence are both mechanically checkable below.
+: > "$workdir/enum-pairs.tsv"
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    awk -v path="$f" '
+        # prisma: `enum X {`   ts: `enum X {` / `export enum X {` / `export const enum X {`
+        match($0, /(^|[ \t])enum[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*\{/) {
+            line = $0
+            sub(/.*enum[ \t]+/, "", line)
+            sub(/[ \t]*\{.*/, "", line)
+            cur = line; inblock = 1; next
+        }
+        inblock && /^[ \t]*\}/ { inblock = 0; cur = ""; next }
+        inblock {
+            m = $0
+            sub(/\/\/.*/, "", m)                       # strip line comments
+            gsub(/[ \t]/, "", m)
+            sub(/=.*/, "", m)                          # ts: `Member = "value"`
+            sub(/,$/, "", m)
+            sub(/@.*/, "", m)                          # prisma attributes
+            if (m ~ /^[A-Za-z_][A-Za-z0-9_]*$/) print cur "\t" m "\t" path
+        }
+    ' "$f" >> "$workdir/enum-pairs.tsv" 2>/dev/null || true
+done < "$workdir/enum-files.txt"
+
+for name in "$@"; do
+    echo "## $name"
+    echo
+
+    # --- A. is it an enum in its own right? ------------------------------------
+    echo "### \`enum $name\`"
+    awk -F'\t' -v n="$name" '$1==n {print "- " $2 "   (from " $3 ")"}' \
+        "$workdir/enum-pairs.tsv" | sort -u > "$workdir/own.txt"
+    if [ -s "$workdir/own.txt" ]; then
+        sed "s|$repo_root/||" "$workdir/own.txt"
+    else
+        echo "not found: no \`enum $name\` block in any source file"
+    fi
+    echo
+
+    # --- B. does it appear as a MEMBER of some other enum? --------------------
+    # The absence of rows here is the load-bearing fact: it says the capability
+    # this name would need does not exist in the type system yet.
+    echo "### \`$name\` as a member of another enum"
+    awk -F'\t' -v n="$name" '$2==n && $1!=n {print "- member of `enum " $1 "`   (from " $3 ")"}' \
+        "$workdir/enum-pairs.tsv" | sort -u > "$workdir/member.txt"
+    if [ -s "$workdir/member.txt" ]; then
+        sed "s|$repo_root/||" "$workdir/member.txt"
+    else
+        echo "NOT a member of any enum in this repo - if the doc assumes an"
+        echo "\`$name\`-targeted capability (custom fields, permissions, a phase type),"
+        echo "the type system does not support it yet."
+    fi
+    echo
+
+    # --- C. referencing files, by hit count ------------------------------------
+    echo "### Referencing files (hits per file, comment-only lines excluded)"
+    xargs -0 grep -nw -- "$name" < "$workdir/files.z" 2>/dev/null \
+        | grep -vE ':[0-9]+:[[:space:]]*(//|\*|/\*)' \
+        > "$workdir/refs.txt" || true
+    if [ ! -s "$workdir/refs.txt" ]; then
+        echo "no non-test source file references \`$name\` outside comments"
+    else
+        sed 's/:[0-9]*:.*//' "$workdir/refs.txt" | sort | uniq -c | sort -rn \
+            > "$workdir/byfile.txt"
+        nfiles=$(wc -l < "$workdir/byfile.txt" | tr -d ' ')
+        head -n "$FILE_CAP" "$workdir/byfile.txt" \
+            | sed "s|$repo_root/||" \
+            | awk '{ n = $1; $1 = ""; sub(/^ /, ""); printf "- %s   (%s hits)\n", $0, n }'
+        if [ "$nfiles" -gt "$FILE_CAP" ]; then
+            echo "- ... showing $FILE_CAP of $nfiles referencing files (capped by this tool, NOT"
+            echo "  evidence that the rest are uninteresting - widen the name list or read"
+            echo "  the files directly if a finding turns on them)"
+        fi
+    fi
+    echo
+done

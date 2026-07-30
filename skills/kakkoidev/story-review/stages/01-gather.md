@@ -12,7 +12,7 @@ review, not a lookup against answers already known.
 |--------|----------|-------|
 | Target page id/URL | given at invocation | the story to review |
 | Target repo root | given at invocation | where to grep for schema ground truth |
-| Entity names | given at invocation, space-separated | which models `tools/gather-schema-facts` greps for |
+| Entity names | given at invocation, space-separated | which names `tools/gather-schema-facts` and `tools/gather-impl-facts` grep for - domain entities AND the infrastructure types the doc's capability claims lean on (see step 2b) |
 | Parent epic id/URL | given at invocation, OPTIONAL | if given, used to find sibling stories for lens L2's grounding (step 4) |
 
 ## Process
@@ -78,6 +78,39 @@ review, not a lookup against answers already known.
    ```
    If the repo has no schema file matching any named entity, the script says so
    explicitly in the output - that is a valid (if thin) result, not a stage failure.
+
+2b. **Implementation facts (deterministic).** A `model X { ... }` block is not
+   enough ground truth for L5, and this is the single highest-value gap ever
+   found in this skill: in a real review, six findings sat at "plausible" until
+   someone read actual code, and one was *partly refuted* by it. `schema-facts.md`
+   is structurally blind to enums, derived state, and existing UI/service
+   behavior. Run:
+   ```bash
+   ~/.agents/skills/kakkoidev/story-review/tools/gather-impl-facts <repo-root> <name1> [name2 ...] \
+     > <run>/01-gather/output/impl-facts.md
+   ```
+   **Widen the name list before you run it.** The entity list that came in at
+   invocation is almost always too narrow, because it names what the story is
+   about, not what the story *assumes*. Read `story-body.md` first, then add a
+   name for every capability the doc leans on but does not define - the
+   custom-field target type, the permission enum, the phase/status type, the
+   line-item container. That widening is what produces the load-bearing negative
+   facts: "`OrderLine` is referenced by no source file" and "`CustomFieldTarget`
+   has no `Order` member" are only evidence because something explicitly looked.
+
+   Read the three sections per name for what they are:
+   - `enum <name>` present -> the type exists; its member list is ground truth for
+     any doc claim about allowed values.
+   - `<name> as a member of another enum` EMPTY -> the doc assumes a capability the
+     type system does not support yet. This absence is a finding, not a gap in the
+     tool.
+   - `Referencing files` -> where the current behavior actually lives. If the doc
+     says "an extension of the existing X," the top files here are what X really
+     does; L10 cannot be answered without reading them.
+
+   The referencing-file list is capped and says so. A capped list is not a clean
+   one - if a finding turns on what a file does, open the file.
+
 3. If either output ends up empty, do not silently continue: `story-body.md` empty
    means the fetch failed (wrong id, no access) - stop and report it; an empty
    `schema-facts.md` beyond the tool's own "not found" line means the entity names
@@ -135,6 +168,7 @@ bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/story-review --sta
 | Prior runs | output/prior-runs.tsv | `tools/check-prior-runs` output: `run_dir<TAB>target_id<TAB>same_target` per other run found, or just the header row if none exist. Metadata only - target ids, never content. |
 | Story body | output/story-body.md | The target page's full body (properties + content), verbatim from `notion-fetch`, **comments/discussions never included** |
 | Schema facts | output/schema-facts.md | Deterministic `gather-schema-facts` output: for each named entity, its real field list from the target repo's schema, or an explicit "not found" line |
+| Implementation facts | output/impl-facts.md | Deterministic `gather-impl-facts` output: per name, its own enum block (or "not found"), whether it appears as a member of any other enum (an empty result being the load-bearing fact), and the referencing source files with hit counts. Ground truth for L5 and L10. |
 | Epic siblings | output/epic-siblings.tsv | Present only if a parent epic id was given: `id<TAB>title` for every child/sub-task of the epic excluding the target itself - the complete candidate set, before any relevance judgment. |
 | Sibling manifest | output/siblings-fetched.md | Present only if a parent epic id was given: every row from `epic-siblings.tsv`, each as `FETCHED: ...` (with topic-overlap reason) or `SKIPPED: ...` (with reason). A single line stating "no parent epic id given - L2 has no sibling grounding this run" if step 4 did not run at all. |
 | Sibling bodies | output/sibling-*.md | 0-4 files, one per sibling story fetched for L2 grounding; body only, no comments. Absent entirely if no parent epic id was given. |

@@ -1,0 +1,7 @@
+# The ONE story references/answer-key.tsv was extracted from. Frozen, like the key
+# itself. tools/score-coverage compares this against the run's target-id.txt and
+# refuses to emit a Hits number when they disagree - a key derived from one story
+# scored against another counts shared domain vocabulary, not coverage.
+#
+# Order Management US-01 (見積のステータスを受注に変更したときに受注を作成する)
+3a01ff99692281f8ac7cc0e9c98f9ab9

@@ -12,5 +12,6 @@ g=../01-gather/output
 [ -f "$g/prior-runs.tsv" ] || { echo "gather missing: $g/prior-runs.tsv not found (stage 01 step 0b not done)"; exit 1; }
 [ -s "$g/story-body.md" ] || { echo "gather missing: $g/story-body.md empty (stage 01 not done)"; exit 1; }
 [ -s "$g/schema-facts.md" ] || { echo "gather missing: $g/schema-facts.md empty (stage 01 not done)"; exit 1; }
+[ -s "$g/impl-facts.md" ] || { echo "gather missing: $g/impl-facts.md empty (stage 01 step 2b not done - L5's derived-state and capability-absence checks and all of L10 have no ground truth without it)"; exit 1; }
 
 echo "ok: gather artifacts present"
