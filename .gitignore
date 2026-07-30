@@ -11,3 +11,5 @@ TASK.md
 
 # Presentation build deps (the HTML decks ARE tracked; build.sh / the pre-commit hook keep them in sync).
 docs/presentation/node_modules/
+__pycache__/
+*.pyc

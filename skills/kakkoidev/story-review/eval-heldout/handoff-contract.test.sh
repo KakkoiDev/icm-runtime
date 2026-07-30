@@ -31,6 +31,7 @@ for section in \
     "### Tier 1 comments, ready to post" \
     "## Tier 2 - must share" \
     "## Tier 3 - everything else, in priority order" \
+    "## Land in the body" \
     "## Already answered" \
     "## Refuted" \
     "## Limits"
@@ -71,6 +72,24 @@ bare=$(awk '/^### Tier 1 comments, ready to post$/{p=1; next} /^## /{p=0} p' "$h
 [ -z "$bare" ] || {
     echo "FAIL: bare block URL(s) - must be a markdown link, Notion strips the #fragment otherwise:"
     printf '%s\n' "$bare"; exit 1; }
+
+# --- 3b. every tier-1 item says whether it is a new thread or a reply ---------
+# "Post this" and "reply to this" are different actions, and opening a second thread
+# on a question that already has one splits the answer across two places. Observed:
+# a page where the owner's restructured spec lived in one thread while three
+# reviewers asked for it in three others.
+threadlines=$(awk '/^### Tier 1 comments, ready to post$/{p=1; next} /^## /{p=0} p' "$handoff" \
+    | grep -c '^Thread:' || true)
+[ "$threadlines" -eq "$ready" ] || {
+    echo "FAIL: $ready tier-1 items but $threadlines 'Thread:' lines - every item must say"
+    echo "whether it is a new top-level comment or a reply inside an existing thread"; exit 1; }
+
+badthread=$(awk '/^### Tier 1 comments, ready to post$/{p=1; next} /^## /{p=0} p' "$handoff" \
+    | grep '^Thread:' \
+    | grep -vE '^Thread: (new thread|discussion://[0-9a-fA-F-]{36}/[0-9a-fA-F-]{36}/[0-9a-fA-F-]{36})[[:space:]]*$' || true)
+[ -z "$badthread" ] || {
+    echo "FAIL: Thread: line(s) are neither 'new thread' nor a well-formed discussion:// id:"
+    printf '%s\n' "$badthread"; exit 1; }
 
 # --- 4. every tier-1 item has paste-ready comment text -----------------------
 quotes=$(awk '/^### Tier 1 comments, ready to post$/{p=1; next} /^## /{p=0} p' "$handoff" \

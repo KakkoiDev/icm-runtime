@@ -11,11 +11,17 @@ description: >
   its own weak candidates in a mandatory refutation pass, then measure itself two
   ways: coverage against a frozen answer key when (and only when) the target is the
   story that key came from, and a target-independent grounding + refutation-survival
-  audit always. Ends in a decision-owner handoff, not raw findings. The review stage
-  never reads comments - only the document body - so the run is a genuine blind
-  test, not a lookup. Triggers: "review this user story", "blind-review this spec",
-  "story-review", "audit this doc for the issues my colleagues would find".
-  4 stages: gather, blind-review, score, handoff.
+  audit always. Then take a SECOND pass with the comments now readable: harvest every
+  discussion under a completeness gate, give each finding one of 8 verdicts against
+  what the team has already said (including "answered in comment only" and "void, the
+  text was superseded"), ledger every promise made in a comment that never reached
+  the document, and plan replies for threads that went stale, got a non-answer, or
+  were quietly reversed. Ends in a decision-owner handoff, not raw findings. The
+  review stage never reads comments - only the document body - so the cold pass is a
+  genuine blind test, not a lookup. Triggers: "review this user story",
+  "blind-review this spec", "story-review", "audit this doc for the issues my
+  colleagues would find", "check the comments on this story".
+  5 stages: gather, blind-review, comment-pass, score, handoff.
 ---
 
 # story-review
@@ -76,14 +82,41 @@ It is now step 11 and its casualties are recorded.
 - **Model-mediated, not scripted** - fetching the target Notion page
   (`mcp__claude_ai_Notion__notion-fetch`) and the review judgment itself. Verified
   via `ICM-TOOLS` and the eval-heldout contract checks, not guaranteed by a script.
-- **BLIND BY CONSTRUCTION** - stage 01 fetches the page body only. It must never
-  call `notion-get-comments` / `include_discussions` and must never be run by an
-  agent that has already read this doc's comment thread in the current
+- **BLIND FIRST, COMMENTS SECOND** - stages 01 and 02 fetch the page body only. They
+  must never call `notion-get-comments` / `include_discussions` and must never be run
+  by an agent that has already read this doc's comment thread in the current
   conversation. A "review" informed by the answers already given in comments is a
   lookup, not a review, and will silently inflate the score. If you (the operator)
   have already read this story's comments in this session, invoke this skill from a
   **fresh subagent** that has not - `icm-improve`'s per-phase executor subagent
   already gives you this for free.
+
+  Stage 02b then reads every comment and takes a second pass over the same frozen
+  findings. The ordering is deliberate and was chosen over the obvious alternative:
+  folding comment supersessions into the document BEFORE reviewing it would stop
+  anyone wasting effort on stale text, but it would also absorb the gap between what
+  the body says and what the comments say, and that gap is the most valuable thing
+  this skill produces. Reviewing cold and then diffing makes drift a first-class
+  output. It also keeps blindness structural (the comments were never fetched) rather
+  than a promise a gate has to police.
+- **Deterministic** - `tools/discussion-coverage`: the harvest-completeness gate.
+  `notion-get-comments` truncates silently and announces it only as
+  `total-count="24" shown-count="8"` inside an XML blob. That line was once read as
+  complete, 16 threads went unread, and a finding shipped as "still unanswered" that
+  the owner had answered four hours below the comment that was read. The tool checks
+  declared-vs-harvested count AND that every `discussion://` id the page body points
+  at was actually fetched, so lowering the declared number to force a pass does not
+  work. Stage 04's gate refuses to run without its `ok:` line.
+- **Deterministic enumeration, model-mediated judgment** - `tools/commitment-scan`:
+  every promise in a comment to change the document ("I'll state it in the AC"), and
+  every owner self-correction, as TSV rows that stage 02b must dispose of one by one
+  as `LANDED:` / `NOT LANDED:` / `NOT A PROMISE:`. Markers match on word boundaries,
+  never as substrings - the first version reported "will be" as a first-person
+  promise via `ill be`, and "UI will" via `i will`.
+- **Deterministic** - `tools/thread-state`: per thread, who spoke last, how long ago,
+  and whether the owner ever spoke at all (`AWAITING_OWNER` / `OWNER_LAST` /
+  `NO_OWNER_REPLY`). Only what a script can decide; whether a reply that exists
+  actually answers the question stays with the model.
 - **Fully deterministic, and target-guarded** - `tools/score-coverage`: matches
   stage 02's `findings.md` against the frozen `references/answer-key.tsv` PER
   FINDING BLOCK (never the whole file at once - see the tool's header comment for
@@ -118,15 +151,21 @@ It is now step 11 and its casualties are recorded.
 |-------|------|--------|
 | 01-gather | write target-id.txt; check for prior runs on this target (deterministic, metadata-only); fetch the target story body only (no comments); grep the target repo's schema AND implementation facts for the named entities; optionally fetch sibling stories for L2 | `target-id.txt`, `prior-runs.tsv`, `story-body.md`, `schema-facts.md`, `impl-facts.md`, `epic-siblings.tsv`+`siblings-fetched.md`+`sibling-*.md` (if a parent epic was given) |
 | 02-blind-review | disclose independence; apply the 10 lenses to the body + schema/impl facts + siblings, cold; then refute your own candidates | `findings.md` (`Independence:` line, one `## F<n>` block per surviving finding with quote/Confidence/Evidence/Risk, one `## R<n>` block per refuted candidate) |
+| 02b-comment-pass | second look, comments now readable: harvest every thread under a completeness gate; give each finding one of 8 verdicts and a planned action; ledger every promise made in a comment against what the body actually says | `discussions.md`, `coverage.txt`, `thread-state.tsv`, `commitments.tsv`, `drift-ledger.md`, `dispositions.md` |
 | 03-score | target-guarded coverage vs `references/answer-key.tsv` (per block), plus the always-applicable grounding + survival audit, plus the mandatory self-audit of any real hits | `coverage-report.md`, `grounding-audit.md`, `self-audit.md` |
-| 04-handoff | fetch exact block ids; reconcile every finding against the live comment threads; tier by consequence (tier 1 disaster, capped at 5); write the paste-ready untagged comment and block link for each tier-1 item | `block-ids.tsv`, `handoff.md` |
+| 04-handoff | fetch exact block ids; tier what 02b left live by consequence (tier 1 disaster, capped at 5); per tier-1 item a block link, a new-thread-or-reply routing line, and paste-ready untagged text; one `## Land in the body` ask covering the whole drift ledger | `block-ids.tsv`, `handoff.md` |
+
+Stage 03 scores the BLIND findings, not the reconciled set, on purpose: it measures
+how good the cold review was, which is the only thing a coverage number can honestly
+mean once the answers are readable.
 
 ```mermaid
 flowchart TD
     I(["icm.sh init kakkoidev/story-review"]) --> S1["01-gather<br>target-id + prior-run check + notion-fetch (body only)<br>+ gather-schema-facts + gather-impl-facts + optional sibling fetch"]
     S1 -->|"stage-done 01"| S2["02-blind-review<br>independence line + 10 lenses + refutation -> findings.md"]
-    S2 -->|"stage-done 02"| S3["03-score<br>score-coverage (target-guarded) + grounding-audit + self-audit"]
-    S3 -->|"stage-done 03"| S4["04-handoff<br>fetch-block-ids + reconcile vs live comments<br>+ consequence tiers + paste-ready comments"]
+    S2 -->|"stage-done 02"| S2B["02b-comment-pass<br>discussion-coverage gate + thread-state + commitment-scan<br>-> dispositions.md + drift-ledger.md"]
+    S2B -->|"stage-done 02b"| S3["03-score<br>score-coverage (target-guarded) + grounding-audit + self-audit"]
+    S3 -->|"stage-done 03"| S4["04-handoff<br>fetch-block-ids + consequence tiers<br>+ paste-ready text + reply routing + land-in-body ask"]
     S4 -->|"stage-done 04"| F["handoff.md: the deliverable<br>tier 1 first, linked to the exact block<br>(coverage-report.md is a self-test, not the product)"]
 ```
 
@@ -247,6 +286,59 @@ and a human read of `handoff.md` there instead.
 - `eval-heldout/self-audit-contract.test.sh` - proves the self-audit covered every
   matched row, and that a `Corrected count: n/a` is only claimed when coverage
   really was `n/a`.
+
+## Fixed 2026-07-30b (from a truncated comment read that published a wrong claim)
+
+The previous version reconciled findings against comments inside stage 04, on a
+best-effort read, described in prose. That failed in production. What broke and what
+now enforces it:
+
+- **A comment read of 8 of 24 threads was treated as complete.** The truncation
+  notice is a bare `total-count="24" shown-count="8"` attribute inside an XML blob,
+  and the stage instruction to "page through them" did not survive contact with it.
+  A finding was published as "still unanswered" when the owner had answered it in the
+  same thread four hours below the comment that was read; two more findings were
+  already closed; a live owner self-correction was missed. Now `Declared: N` is
+  written from the page's own `discussion-count` before harvesting, and
+  `tools/discussion-coverage` cross-checks it AND every `discussion://` id the body
+  points at. Stage 04's gate refuses to run without the tool's `ok:` line, so a
+  partial harvest cannot reach a deliverable. Lowering `Declared` to force a pass
+  does not work: the body-span check is independent of it.
+- **The thread's last comment is what decides its state, and prose saying so was not
+  enough.** `tools/thread-state` now computes who spoke last, how long ago, and
+  whether the owner ever spoke (`NO_OWNER_REPLY` being strictly worse than
+  `AWAITING_OWNER`). The staleness cutoff must be derived from the page's own
+  observed owner reply lag; a hardcoded "3 days" is a number nobody can defend.
+- **Findings were generated against acceptance criteria the owner had already
+  rewritten in a comment.** The reviewed text was dead and nobody noticed. New
+  verdict `VOID (SUPERSEDED TEXT)`, and every finding's quote must be checked against
+  the threads for a replacement before it is trusted.
+- **Owner answers that never reach the document.** Measured across two stories: the
+  owner answers in a comment, promises "I'll put it in the AC", and the body is never
+  edited - on one page because the owner said outright that a rewrite would
+  disconnect the existing comments. Three reviewers then each independently asked
+  where the spec went. `tools/commitment-scan` enumerates every promise and every
+  self-correction; stage 02b must dispose of each row; stage 04 turns the whole ledger
+  into ONE `## Land in the body` ask, not one nudge per promise.
+- **A verdict of "answered" that still sends the question.** The held-out contract now
+  rejects `ANSWERED` / `DECIDED AGAINST` / `VOID` paired with anything but
+  `NO ACTION`, and rejects a `REPLY:` action that names no thread.
+- **Replies and new comments were the same thing.** They are not: opening a second
+  thread on a question that already has one splits the answer. Every tier-1 item now
+  carries a `Thread:` line reading `new thread` or a `discussion://` id, and the four
+  reply kinds have distinct shapes (a NUDGE must NOT restate the question; a RE-ASK
+  must quote both what was asked and what came back).
+- **Ordering choice worth recording, because the obvious design is wrong.** Folding
+  comment supersessions into the document before the review would stop anyone
+  reviewing stale text, but it absorbs the body-vs-comments gap and makes drift
+  unmeasurable. Blind first, comments second, keeps both the drift signal and
+  structural blindness.
+- **A tamper test that passes is not a test that works.** The first
+  `commitment-scan` fix removed the marker `ill be` (which matched inside "will be").
+  The tamper test that reintroduced it passed - because `i will` was independently
+  matching inside "UI will". Substring matching was the actual bug; word-boundary
+  matching kills the class. Found only by tampering and reading the output rather
+  than trusting the green.
 
 ## Fixed 2026-07-30 (from taking a real handoff to the point of sending it)
 

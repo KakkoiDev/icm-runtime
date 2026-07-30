@@ -1,0 +1,96 @@
+#!/bin/sh
+# discussion-coverage: assert a comment harvest is COMPLETE before any stage reasons
+# over it.
+#
+# Why this exists, precisely. On 2026-07-30 a reconciliation was performed against
+# `notion-get-comments` output that said, in its own first line,
+# `total-count="24" shown-count="8"`. The read was treated as complete. Sixteen
+# threads went unread, and the consequences were not cosmetic:
+#   * a finding was published as "still unanswered" when the owner had answered it
+#     in the same thread four hours below the comment that was read;
+#   * two other findings were already closed by owner answers in unread threads;
+#   * a live self-correction (the owner withdrawing an earlier answer) was missed.
+# The tool truncates silently and the truncation notice is a bare attribute inside
+# an XML blob. Prose telling a stage "page through them" did not survive contact.
+# This makes the same check mechanical, so a truncated harvest cannot be mistaken
+# for a reconciliation ever again.
+#
+# Two independent checks, because either alone can be fooled:
+#   1. Declared vs harvested count. The stage writes the page's own
+#      discussion-count as `Declared: <N>`; this counts the harvested blocks.
+#   2. Anchored-discussion coverage. Every `discussion://` id that appears in the
+#      page body's `discussion-urls=` attributes must be present in the harvest.
+#      This catches a wrong Declared number, which check 1 cannot.
+# Check 2 is a lower bound only: page-level discussions are anchored to no block
+# and appear in no body span, which is exactly why check 1 is still needed.
+#
+# Usage: discussion-coverage <discussions.md> <story-body.md>
+# Exit 0 = complete. Non-zero = the harvest is partial and nothing may rely on it.
+set -eu
+
+disc=${1:?"usage: discussion-coverage <discussions.md> <story-body.md>"}
+body=${2:?"usage: discussion-coverage <discussions.md> <story-body.md>"}
+
+[ -f "$disc" ] || { echo "FAIL: $disc not found" >&2; exit 2; }
+[ -f "$body" ] || { echo "FAIL: $body not found" >&2; exit 2; }
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT INT TERM
+
+declared=$(sed -n 's/^Declared: *\([0-9][0-9]*\) *$/\1/p' "$disc" | head -1)
+if [ -z "$declared" ]; then
+    echo "FAIL: $disc has no 'Declared: <N>' header line."
+    echo "The stage must record the page's own discussion-count (from notion-fetch's"
+    echo "<page-discussions discussion-count=\"N\">) as the first line, BEFORE harvesting."
+    echo "Without it there is no independent number to check the harvest against, which"
+    echo "is the entire failure this tool exists to prevent."
+    exit 1
+fi
+
+harvested=$(grep -c '^<discussion id=' "$disc" || true)
+: "${harvested:=0}"
+
+status=0
+
+echo "Declared: $declared"
+echo "Harvested: $harvested"
+
+if [ "$harvested" -lt "$declared" ]; then
+    echo "FAIL: harvested $harvested of $declared declared discussions - the harvest is"
+    echo "partial. Enumerate every discussion:// id (notion-fetch with"
+    echo "include_discussions, plus the body's discussion-urls spans) and fetch each one"
+    echo "individually by discussion_id. Do NOT proceed on a partial set and do NOT"
+    echo "lower Declared to match."
+    status=1
+elif [ "$harvested" -gt "$declared" ]; then
+    echo "FAIL: harvested $harvested but declared only $declared - either a discussion"
+    echo "was harvested twice, or Declared is stale. Both make the count meaningless."
+    status=1
+fi
+
+# --- check 2: every block-anchored discussion in the body appears in the harvest
+grep -o 'discussion://[0-9a-fA-F-]\{36\}/[0-9a-fA-F-]\{36\}/[0-9a-fA-F-]\{36\}' "$body" \
+    | tr 'A-Z' 'a-z' | sort -u > "$workdir/anchored.txt" || true
+
+grep -o 'discussion://[0-9a-fA-F-]\{36\}/[0-9a-fA-F-]\{36\}/[0-9a-fA-F-]\{36\}' "$disc" \
+    | tr 'A-Z' 'a-z' | sort -u > "$workdir/harvested-ids.txt" || true
+
+anchored_n=$(wc -l < "$workdir/anchored.txt" | tr -d ' ')
+comm -23 "$workdir/anchored.txt" "$workdir/harvested-ids.txt" > "$workdir/missing.txt" || true
+missing_n=$(wc -l < "$workdir/missing.txt" | tr -d ' ')
+
+echo "Anchored in body: $anchored_n"
+echo "Missing from harvest: $missing_n"
+
+if [ "$missing_n" -gt 0 ]; then
+    echo "FAIL: these discussions are referenced by the page body but absent from the"
+    echo "harvest - fetch each by discussion_id before continuing:"
+    sed 's/^/  /' "$workdir/missing.txt"
+    status=1
+fi
+
+if [ "$status" -eq 0 ]; then
+    echo "ok: harvest complete ($harvested/$declared discussions, $anchored_n anchored, 0 missing)"
+fi
+
+exit "$status"
