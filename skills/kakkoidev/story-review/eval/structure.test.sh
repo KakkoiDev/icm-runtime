@@ -9,9 +9,20 @@ for s in 01-gather 02-blind-review 03-score 04-handoff; do
     test -f "stages/$s.md" || { echo "FAIL: stages/$s.md missing"; exit 1; }
 done
 
-for t in tools/gather-schema-facts tools/gather-impl-facts tools/score-coverage tools/grounding-audit tools/check-prior-runs; do
+for t in tools/gather-schema-facts tools/gather-impl-facts tools/score-coverage tools/grounding-audit tools/check-prior-runs tools/fetch-block-ids; do
     test -x "$t" || { echo "FAIL: $t missing or not executable"; exit 1; }
 done
+
+# fetch-block-ids must refuse to run without a token rather than emitting a partial
+# anchor list, and must never learn the token by reading a file off disk.
+if ( unset NOTION_TOKEN; ./tools/fetch-block-ids 3a01ff99692281a09580f3afa460bad7 >/dev/null 2>&1 ); then
+    echo "FAIL: tools/fetch-block-ids succeeded with no NOTION_TOKEN set"; exit 1
+fi
+# Inspect CODE, not the header comment (which legitimately explains why it does not
+# read a .env). Strip full-line comments before looking for an actual file read.
+if sed 's/^[[:space:]]*#.*//' tools/fetch-block-ids | grep -qE '(cat|source|\.|grep|awk|sed|read)[^|]*\.env'; then
+    echo "FAIL: tools/fetch-block-ids reads a .env file - the token must come from the environment at run time"; exit 1
+fi
 
 for h in eval-heldout/coverage-contract.test.sh eval-heldout/sibling-coverage.test.sh eval-heldout/independence-line.test.sh eval-heldout/self-audit-contract.test.sh eval-heldout/handoff-contract.test.sh; do
     test -f "$h" || { echo "FAIL: $h missing"; exit 1; }
@@ -48,6 +59,31 @@ for lens in L9 L10; do
     grep -q "\*\*$lens - " stages/02-blind-review.md || { echo "FAIL: stage 02 is missing lens $lens"; exit 1; }
 done
 grep -q 'Refutation pass (MANDATORY' stages/02-blind-review.md || { echo "FAIL: stage 02 is missing the mandatory refutation pass"; exit 1; }
+
+# Stage 04's contract: consequence tiers with a capped tier 1, reconciliation against
+# live comments, exact block anchors, and paste-ready untagged comment drafts.
+for needle in \
+    'Tier 1 - disaster if it ships unresolved' \
+    'Tier 1 is capped at 5 items' \
+    'Tier 2 - must share' \
+    'Tier 3 - everything else, in priority order' \
+    'DECIDED AGAINST' \
+    'fetch-block-ids' \
+    'Never invent, guess, or approximate an anchor' \
+    'No @mention of anyone' \
+    'strips the `#block`'
+do
+    grep -qF "$needle" stages/04-handoff.md || { echo "FAIL: stage 04 is missing its contract clause: $needle"; exit 1; }
+done
+
+# Stage 04 is the ONLY stage allowed to read comments; stages 01 and 02 must not.
+for s in stages/01-gather.md stages/02-blind-review.md; do
+    if grep -qE 'notion-get-comments|include_discussions: true' "$s"; then
+        grep -qE 'never|not|Do \*\*not\*\*|must never' "$s" || {
+            echo "FAIL: $s references comment-reading without forbidding it"; exit 1; }
+    fi
+done
+grep -q 'notion-get-comments' stages/04-handoff.md || { echo "FAIL: stage 04 does not reconcile against live comments"; exit 1; }
 
 # No stage may contain an ICM-CALL comment: this skill makes no execution-spec
 # call, so any (even an example) would force a permanent audit deviation.

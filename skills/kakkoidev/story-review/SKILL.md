@@ -62,6 +62,11 @@ It is now step 11 and its casualties are recorded.
   real field/model names for the entities named at invocation, out of the target
   repo's schema, so stage 02's ground-truth lens (L5) has something to check the
   doc's claims against besides its own prose.
+- **Deterministic** - `tools/fetch-block-ids` (Notion REST API walk): every block id
+  and anchor URL on the target page, so stage 04 can link a finding to the exact
+  acceptance criterion instead of naming it. Complete, unlike the OAuth-connector
+  fallback, which only exposes ids for blocks that already carry a discussion. Fails
+  loudly rather than emitting a partial list that reads as complete.
 - **Deterministic** - `tools/gather-impl-facts` (awk/grep): per name, its own enum
   block, whether it appears as a member of any OTHER enum, and the referencing
   source files with hit counts. The empty results are the load-bearing ones -
@@ -114,15 +119,15 @@ It is now step 11 and its casualties are recorded.
 | 01-gather | write target-id.txt; check for prior runs on this target (deterministic, metadata-only); fetch the target story body only (no comments); grep the target repo's schema AND implementation facts for the named entities; optionally fetch sibling stories for L2 | `target-id.txt`, `prior-runs.tsv`, `story-body.md`, `schema-facts.md`, `impl-facts.md`, `epic-siblings.tsv`+`siblings-fetched.md`+`sibling-*.md` (if a parent epic was given) |
 | 02-blind-review | disclose independence; apply the 10 lenses to the body + schema/impl facts + siblings, cold; then refute your own candidates | `findings.md` (`Independence:` line, one `## F<n>` block per surviving finding with quote/Confidence/Evidence/Risk, one `## R<n>` block per refuted candidate) |
 | 03-score | target-guarded coverage vs `references/answer-key.tsv` (per block), plus the always-applicable grounding + survival audit, plus the mandatory self-audit of any real hits | `coverage-report.md`, `grounding-audit.md`, `self-audit.md` |
-| 04-handoff | reshape audited findings into decision-owner questions - priority, location, question per row, refuted list, limits | `handoff.md` |
+| 04-handoff | fetch exact block ids; reconcile every finding against the live comment threads; tier by consequence (tier 1 disaster, capped at 5); write the paste-ready untagged comment and block link for each tier-1 item | `block-ids.tsv`, `handoff.md` |
 
 ```mermaid
 flowchart TD
     I(["icm.sh init kakkoidev/story-review"]) --> S1["01-gather<br>target-id + prior-run check + notion-fetch (body only)<br>+ gather-schema-facts + gather-impl-facts + optional sibling fetch"]
     S1 -->|"stage-done 01"| S2["02-blind-review<br>independence line + 10 lenses + refutation -> findings.md"]
     S2 -->|"stage-done 02"| S3["03-score<br>score-coverage (target-guarded) + grounding-audit + self-audit"]
-    S3 -->|"stage-done 03"| S4["04-handoff<br>Must/Should/Optional questions + refuted + limits"]
-    S4 -->|"stage-done 04"| F["handoff.md: the deliverable<br>(coverage-report.md is a self-test, not the product)"]
+    S3 -->|"stage-done 03"| S4["04-handoff<br>fetch-block-ids + reconcile vs live comments<br>+ consequence tiers + paste-ready comments"]
+    S4 -->|"stage-done 04"| F["handoff.md: the deliverable<br>tier 1 first, linked to the exact block<br>(coverage-report.md is a self-test, not the product)"]
 ```
 
 ## Invocation
@@ -199,6 +204,13 @@ and a human read of `handoff.md` there instead.
 - `tools/score-coverage` - deterministic, per-finding-block findings-vs-answer-key
   scorer with a bidirectional `F<n> <-> T<id>` ledger and a target guard.
 - `tools/grounding-audit` - deterministic grounding + refutation-survival counter.
+- `tools/fetch-block-ids` - deterministic block-id and anchor-URL walk over the
+  target page via the Notion REST API, so stage 04 can link a finding to the exact
+  acceptance criterion instead of naming it. Takes its token from `NOTION_TOKEN` in
+  the environment and never reads secrets off disk. Returns EVERY block, including
+  ones with no discussion yet, which the OAuth-connector fallback structurally
+  cannot (that path exposes a block id only as a side effect of the block already
+  carrying a discussion).
 - `tools/check-prior-runs` - deterministic prior-run detector; reads only other
   runs' `target-id.txt`, never their content.
 - `checks/gathered.sh` - gate: blocks stage 02's `Write` until stage 01's core
@@ -220,9 +232,12 @@ and a human read of `handoff.md` there instead.
 - `eval-heldout/coverage-contract.test.sh` - proves `coverage-report.md` states a
   well-formed `Hits: N/11` **or** `Hits: n/a` line with all sections, and that
   `grounding-audit.md` exists and is well-formed, on the PRODUCED run output.
-- `eval-heldout/handoff-contract.test.sh` - proves every `## F<n>` and `## R<n>` in
-  findings.md is accounted for in `handoff.md`, that all five sections exist, and
-  that the grounding number and confidence labels survived into the deliverable.
+- `eval-heldout/handoff-contract.test.sh` - proves the handoff is tiered with tier 1
+  first and capped at 5; that every tier-1 item carries a well-formed markdown block
+  anchor (or an explicit `no link available`) and paste-ready comment text; that no
+  drafted comment contains a mention; that every `## F<n>` and `## R<n>` is disposed
+  of somewhere; and that the grounding number and confidence labels survived. Eight
+  negative cases verified, including the bare-URL trap below.
 - `eval-heldout/sibling-coverage.test.sh` - proves every candidate in
   `epic-siblings.tsv` gets a disposition in `siblings-fetched.md` - nothing
   silently dropped from sibling consideration.
@@ -232,6 +247,39 @@ and a human read of `handoff.md` there instead.
 - `eval-heldout/self-audit-contract.test.sh` - proves the self-audit covered every
   matched row, and that a `Corrected count: n/a` is only claimed when coverage
   really was `n/a`.
+
+## Fixed 2026-07-30 (from taking a real handoff to the point of sending it)
+
+- **A flat findings list is unsendable, and the skill had no notion of consequence.**
+  A 30-item list buried four project-threatening problems among questions that were
+  already settled. Stage 04 now tiers by damage: tier 1 is disaster-class (money
+  silently wrong at scale, duplicated financial records, a foundational trigger or
+  ownership ambiguity forcing rework, an unrecoverable user state) and is **capped at
+  5**, because a tier 1 of twelve is the original failure wearing a new label.
+  Placing something in tier 1 requires naming the concrete bad outcome AND why
+  nothing downstream catches it; "both readings compile and look correct" is the
+  strongest signal. Severity does not map to tier.
+- **The skill could not tell a new issue from a settled one.** On the reference run
+  12 of 30 findings were already answered, three decided the opposite way, and one
+  repeated a conflation the PM had corrected that same day. Stage 04 now reconciles
+  every finding against the live threads and gives each a verdict
+  (UNRAISED / ANSWERED / DECIDED AGAINST / PARTLY ANSWERED), reads the thread's LAST
+  comment rather than its first, and records the answered ones so the next run does
+  not regenerate them. This reverses an earlier judgment that reconciliation should
+  stay a human step: stage 04 must fetch the page's discussion structure to get block
+  ids anyway, so not using it would be perverse. It is safe here because stage 02's
+  findings are already written and frozen.
+- **The deliverable named the acceptance criterion instead of linking it,** so a
+  human hunted for each one before commenting. Stage 04 now emits a markdown block
+  anchor per tier-1 item via `tools/fetch-block-ids`, plus the comment itself written
+  to be pasted verbatim, with no mention in it (the protocol is post untagged, re-read
+  to confirm each landed on the right block, then tag per item).
+- **Notion silently destroys a bare block URL.** Pasting
+  `https://app.notion.com/p/<page>#<block>` as bare text makes Notion convert it to a
+  page mention and **strip the `#block` fragment**, leaving a link that opens the page
+  and scrolls nowhere. Observed live: all four anchors in a handoff were degraded this
+  way and only a fetch-back caught it. Anchors must be markdown links, and the
+  held-out contract check rejects a bare URL and a fragment-less link.
 
 ## Known limitations (not yet fixed)
 
