@@ -27,6 +27,12 @@ gathering that was optional and silent, and links that were never followed.
   with each box's tick state (`tools/gather-pr` = `gh` + regex -> `links.tsv`,
   `checklist.tsv`, `pr-template.md`). Same PR state -> identical output. The
   *audit* of each checklist item (04) is model-mediated, not the extraction.
+- **Deterministic, same split, for the house-standards pair:** *which* normative
+  documents the repo writes for itself (`tools/gather-house-rules` -> `house-rules.tsv`)
+  and *which* deprecated symbols the diff's added lines use (`tools/gather-deprecations`
+  -> `deprecations.tsv`) are extracted by script, so a document that exists cannot be
+  skipped by forgetting it and a deprecation marker one file away cannot go unread.
+  Whether the code actually *violates* a quoted rule is the model's judgment (04).
 - **Auditable but model-mediated** - not script-deterministic: *following*
   Notion/Slack links (MCP calls) and the review judgment. Verified via ICM-TOOLS
   and the eval-heldout link-coverage check, not guaranteed by a script.
@@ -44,7 +50,7 @@ gathering that was optional and silent, and links that were never followed.
 
 | Stage | Does | Output |
 |-------|------|--------|
-| 01-context | `gh` PR summary + action feed + extract every link + the PR-template mandatory checklist (with tick state) + the repo template + seal the diff (deterministic) | `pr-context.md`, `links.tsv`, `checklist.tsv`, `pr-template.md`, `pr.diff` |
+| 01-context | `gh` PR summary + action feed + extract every link + the PR-template mandatory checklist (with tick state) + the repo template + the repo's own normative documents + the deprecated symbols the diff uses + seal the diff (deterministic) | `pr-context.md`, `links.tsv`, `checklist.tsv`, `pr-template.md`, `house-rules.tsv`, `deprecations.tsv`, `pr.diff` |
 | 02-links | follow each link depth-2 (Notion/Slack/web), flag walled-off | `link-graph.md` |
 | 03-runtime-evidence | how the mechanism executes: run history + a real actor/event instance + secret stores (deterministic); the changed-value impact sweep (tests that still assert a value the diff removes - the dual of dead-code, deterministic); per-AC execution-chain trace | `runtime-evidence.md`, `impact.md`, `ac-execution-trace.md` |
 | 04-review | ported review dimensions + 7-point + scars check + PR-template checklist audit (uniform bar, verified/asserted, bias alarm), findings tagged CONFIRMED/PLAUSIBLE/REFUTED | `findings.md`, `checklist-audit.md` |
@@ -102,6 +108,7 @@ truth instead of one incident (#24618).
 ## Reference
 - `docs/GUIDE-improving-pr-review.md` - how to improve this skill without over-fitting or prose bloat (classify by layer, freeze every miss as a fixture/contract).
 - `tools/gather-pr` - deterministic PR gather (gh + links + checklist + template). `tools/extract-checklist` - shared checkbox parser (frozen by `eval/checklist-extraction.test.sh`). `tools/fetch-web` - curl + auth-wall detect.
+- `tools/gather-house-rules` - deterministic discovery of the repo's OWN normative documents (guideline trees, architecture decision records, contributor and agent instructions, the PR template), with a path-token relevance hint and an explicit `# NONE:`/`# TOTAL:` accounting line so a document that exists cannot be skipped by forgetting it (`house-rules.tsv`; 04 must account for every row and quote the rule it cites). `tools/gather-deprecations` - the deprecated-symbol map intersected with the diff's added lines, resolved to the definition site with the note that names the replacement, and an explicit `# CLEAR:` for searched-and-none-found (`deprecations.tsv`). Both frozen by `eval/house-rules-deprecations.test.sh`.
 - `tools/gather-impact` - deterministic changed-value dual of dead-code: for each user-visible value the diff removes, the tests/snapshots that still assert it (`impact.md`). Catches the class the review agent caught by hand and the skill missed (#24198).
 - `tools/check-value-claims` - deterministic cross-check of the self-graded value floor (an inline-bound `introduced-by-diff=yes` must cite a diff-touched file; frozen by `eval/check-value-claims.test.sh`). `tools/gather-review-feedback` - post-submit thread harvest feeding `references/calibration.md`.
 - `references/scars.md` - generalized review lenses, frozen into the run and used as a review lens in 03. `references/calibration.md` - per-finding ground-truth outcomes (accepted/rejected) driving gate calibration.

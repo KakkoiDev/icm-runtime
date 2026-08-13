@@ -1,0 +1,178 @@
+#!/bin/sh
+# gather-deprecations: deterministic detection of DEPRECATED symbols the diff USES.
+#
+# Why this exists: a codebase marks its own retired API with a deprecation note that
+# usually names the replacement. New code that calls it compiles, passes lint, and
+# passes review - the marker is one file away and nobody opens it. That is the cheapest
+# review finding there is, and the most reliably missed, because it is invisible in the
+# diff: the added line looks ordinary, and the fact that it is deprecated lives at the
+# definition site.
+#
+# Direction matters. We do NOT try to resolve every symbol the diff imports (import
+# resolution across aliases, barrels and re-exports is where that approach dies).
+# We build the repo's deprecated-symbol map FIRST, from the markers themselves, then
+# intersect it with the identifiers on the diff's ADDED lines. Cheap, and it cannot
+# miss a symbol whose marker exists.
+#
+# Usage: gather-deprecations <pr-diff-file> <out-dir> [repo-root]
+#   repo-root defaults to `git rev-parse --show-toplevel`.
+# Writes:
+#   <out-dir>/deprecations.tsv - one row per (deprecated symbol, added-line site):
+#       <symbol>\t<definition-file:line>\t<note>\t<diff-path>\t<added-line>
+#     An empty result writes an explicit CLEAR line, so "no rows" reads as "searched and
+#     found none" rather than "not checked".
+#
+# NO judgment: this script does not decide severity. Stage 04 decides, and the note
+# usually carries the replacement, so the fix is concrete rather than advisory.
+#
+# Read-only. No gh, no network. POSIX sh / bash 3.2.
+#
+# Known residual misses (documented, not solved):
+#   - a dependency deprecated at the registry level (npm deprecate, a yanked crate).
+#     That needs the network; the supply-chain lens in stage 04 owns it.
+#   - a symbol deprecated only in prose ("we don't use this anymore") with no marker.
+#   - a deprecated symbol reached indirectly, through a wrapper the diff calls.
+#   - re-exported aliases: the marker names the original, the diff may use the alias.
+#   - object-literal method shorthand (`{ /** @deprecated */ toPayload(x) {} }`). A bare
+#     `name(` line is only accepted as a declaration after an access modifier, because
+#     without that guard the same pattern matches ordinary call lines inside a deprecated
+#     block and floods the result with generic names. Precision bought with recall here.
+set -eu
+
+DIFF=${1:-}; OUT=${2:-}; ROOT=${3:-}
+[ -n "$DIFF" ] && [ -n "$OUT" ] || { echo "usage: gather-deprecations <pr-diff-file> <out-dir> [repo-root]" >&2; exit 2; }
+[ -f "$DIFF" ] || { echo "gather-deprecations: diff file not found: $DIFF" >&2; exit 2; }
+if [ -z "$ROOT" ]; then
+    ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+fi
+[ -d "$ROOT" ] || { echo "gather-deprecations: repo root not a directory: $ROOT" >&2; exit 2; }
+mkdir -p "$OUT"
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+OUTFILE=$OUT/deprecations.tsv
+
+# ------------------------------------------------------- 1. the marker locations
+# One pass for every deprecation marker in source, excluding vendored and generated
+# trees. `-I` skips binaries. The marker forms cover JSDoc/TSDoc, Java/Kotlin/C#
+# annotations, Python decorators, and plain prose markers in a comment.
+MARKER='@deprecated|@Deprecated|@obsolete|@Obsolete|DEPRECATED:|Deprecated:|\[Obsolete\]|\[deprecated\]'
+grep -rInE "$MARKER" "$ROOT" \
+    --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist \
+    --exclude-dir=build --exclude-dir=.next --exclude-dir=coverage \
+    --exclude-dir=vendor --exclude-dir=target --exclude-dir=__pycache__ \
+    --exclude='*.lock' --exclude='*-lock.json' --exclude='*.min.js' \
+    --exclude='*.map' --exclude='openapi.gen.d.ts' --exclude='swagger.json' \
+    > "$TMP/markers" 2>/dev/null || :
+
+# ---------------------------------------------- 2. marker -> the symbol it marks
+# For each marker, look at the next few lines for a declaration and take its name.
+# A marker with no resolvable declaration within the window is skipped rather than
+# guessed at: a wrong symbol name would produce a false finding on an unrelated call.
+: > "$TMP/symbols"
+while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    file=${hit%%:*}
+    rest=${hit#*:}
+    lineno=${rest%%:*}
+    [ -f "$file" ] || continue
+    case $lineno in
+    ''|*[!0-9]*) continue ;;
+    esac
+    note=$(printf '%s' "$hit" | sed 's/^[^:]*:[0-9]*://' \
+        | sed 's|^[[:space:]]*[/*#-]*[[:space:]]*||; s/[[:space:]]*$//' | cut -c1-160)
+    end=$((lineno + 6))
+    # Declaration extraction in awk, not sed: BSD sed does not support an interval on
+    # a group (`\(x\)\{0,1\}`), which silently matched nothing on macOS.
+    sym=$(sed -n "${lineno},${end}p" "$file" 2>/dev/null | awk '
+    {
+        s = $0
+        sub(/^[[:space:]]+/, "", s)
+        sub(/^export[[:space:]]+/, "", s)
+        sub(/^default[[:space:]]+/, "", s)
+        sub(/^async[[:space:]]+/, "", s)
+        sub(/^abstract[[:space:]]+/, "", s)
+        member = sub(/^(public|private|protected|readonly|static)[[:space:]]+/, "", s)
+        if (match(s, /^(const|let|var|function|class|interface|type|enum)[[:space:]]+[A-Za-z_$][A-Za-z0-9_$]*/)) {
+            t = substr(s, RSTART, RLENGTH)
+            sub(/^[a-z]+[[:space:]]+/, "", t)
+            print t; exit
+        }
+        if (match(s, /^def[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) {
+            t = substr(s, RSTART, RLENGTH); sub(/^def[[:space:]]+/, "", t)
+            print t; exit
+        }
+        # A bare `name(` is only a declaration when an access modifier preceded it.
+        # Without that guard this pattern matches ordinary call lines inside a
+        # deprecated block and yields generic names like `rows(` or `results(`.
+        if (member && match(s, /^[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*\(/)) {
+            t = substr(s, RSTART, RLENGTH)
+            sub(/[[:space:]]*\($/, "", t)
+            print t; exit
+        }
+    }')
+    [ -n "$sym" ] || continue
+    # Guard against language keywords and one/two-character names: too generic to
+    # intersect safely against arbitrary added lines.
+    # Keywords, and names too generic to intersect against arbitrary added lines: a
+    # match on `data` or `rows` says nothing about the deprecated declaration.
+    case $sym in
+    if|for|while|switch|return|constructor|catch|try|new|this|super|function|class|type|const) continue ;;
+    data|rows|row|results|result|items|item|list|value|values|name|names|id|ids|key|keys|\
+    get|set|add|delete|remove|create|update|find|index|count|total|address|options|args|\
+    params|props|state|error|errors|response|request|handler|callback|next|done|init) continue ;;
+    ?|??|???) continue ;;
+    esac
+    rel=${file#"$ROOT"/}
+    printf '%s\t%s:%s\t%s\n' "$sym" "$rel" "$lineno" "$note" >> "$TMP/symbols"
+done < "$TMP/markers"
+sort -u -o "$TMP/symbols" "$TMP/symbols" 2>/dev/null || :
+
+# ------------------------------------------------- 3. the diff's added-line sites
+# Track the current target path and emit `path<TAB>added line` for every `+` line,
+# skipping the `+++` header itself.
+awk '
+/^\+\+\+ b\// { path = substr($0, 7); sub(/[[:space:]]+$/, "", path); next }
+/^\+\+\+ / { path = ""; next }
+/^\+/ {
+    if (path == "") next
+    line = substr($0, 2)
+    if (line ~ /^[[:space:]]*$/) next
+    print path "\t" line
+}
+' "$DIFF" > "$TMP/added" || :
+
+# ------------------------------------------------------------ 4. the intersection
+n=0
+{
+    printf '# deprecations.tsv - deprecated symbols USED on this diff'"'"'s added lines\n'
+    printf '# symbol\tdefinition\tnote\tdiff-path\tadded-line\n'
+} > "$OUTFILE"
+
+if [ -s "$TMP/symbols" ] && [ -s "$TMP/added" ]; then
+    while IFS='	' read -r sym def note; do
+        [ -n "$sym" ] || continue
+        # Word-boundary match on the added line. The definition's own file is excluded
+        # so a diff that ADDS the deprecation marker does not report itself.
+        defpath=${def%%:*}
+        grep -nE "(^|[^A-Za-z0-9_$])$sym([^A-Za-z0-9_$]|$)" "$TMP/added" 2>/dev/null \
+        | while IFS= read -r m; do
+            body=${m#*:}
+            dpath=${body%%	*}
+            dline=${body#*	}
+            [ "$dpath" != "$defpath" ] || continue
+            printf '%s\t%s\t%s\t%s\t%s\n' \
+                "$sym" "$def" "$note" "$dpath" "$(printf '%s' "$dline" | sed 's/^[[:space:]]*//' | cut -c1-120)"
+        done
+    done < "$TMP/symbols" | sort -u >> "$OUTFILE"
+    n=$(awk '!/^#/ {c++} END {print c+0}' "$OUTFILE")
+fi
+
+if [ "$n" -eq 0 ]; then
+    printf '# CLEAR: searched every deprecation marker in source against this diff'"'"'s added\n' >> "$OUTFILE"
+    printf '# lines and found no deprecated symbol in use. This is a searched-and-clear\n' >> "$OUTFILE"
+    printf '# result, not an unchecked one.\n' >> "$OUTFILE"
+else
+    printf '# TOTAL: %s deprecated-symbol use sites on added lines.\n' "$n" >> "$OUTFILE"
+fi
+
+echo "gather-deprecations: $n use sites -> $OUTFILE"

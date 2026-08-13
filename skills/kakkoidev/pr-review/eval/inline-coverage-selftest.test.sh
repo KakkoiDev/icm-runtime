@@ -44,6 +44,16 @@ mkrun() {
     done
     printf ']' >> "$d/06-report/output/review-comments.json"
     { printf 'Findings coverage: %s\n\nVERIFIED: PASS\n' "$cov"; } > "$d/06-report/output/report-receipt.md"
+    # The pending review's BODY. The check requires it whenever anything was posted, and
+    # requires every posted id to appear in it; without it the baseline 'good' fixture
+    # fails for a reason that has nothing to do with the mutation under test.
+    { printf '# Review summary\n\n'
+      printf '%s\n' "$cov" | grep -oE 'F[0-9]+:(inline|body-only)' | while IFS=: read -r fid _; do
+          printf -- '- %s posted inline.\n' "$fid"
+      done
+    } > "$d/06-report/output/review-summary.md"
+    # Only POSTED ids go in the body. A report-only finding named here would reach the PR
+    # on submit, which is exactly the noise the value gate rerouted away from it.
     echo "$d"
 }
 

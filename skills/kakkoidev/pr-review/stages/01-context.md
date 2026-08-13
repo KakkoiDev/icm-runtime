@@ -58,6 +58,25 @@ here: this stage is a single script call so the gathered context is reproducible
      the whole review non-reproducible/out-of-seal. Do not pick `working-tree` on your
      own. If `diverged=no`, no decision file is needed.
 
+6. **Gather the repo's own standards and the deprecation map** (deterministic, two more
+   tools, same cwd rule - both read the sealed `output/pr.diff`, so run them after step 1):
+   ```bash
+   cd <abs-run-dir>/01-context && \
+     bash ~/.agents/skills/kakkoidev/pr-review/tools/gather-house-rules output/pr.diff output <abs-repo-root> && \
+     bash ~/.agents/skills/kakkoidev/pr-review/tools/gather-deprecations output/pr.diff output <abs-repo-root>
+   ```
+   `output/house-rules.tsv` is the complete set of normative documents the repo writes
+   for itself - guideline trees, decision records, contributor and agent instructions,
+   the PR template. Discovery is deterministic precisely so stage 04 cannot silently skip
+   a document that exists: a `# NONE:` marker means the repo states no standards, which is
+   a fact to report, not a pass. The `likely`/`unknown` relevance column is a HINT from
+   path-token overlap, never a filter - an `unknown` row still has to be judged.
+   `output/deprecations.tsv` is every deprecated symbol the diff's ADDED lines use,
+   resolved to its definition site with the deprecation note (which usually names the
+   replacement). A `# CLEAR:` marker means searched-and-none-found, which is different
+   from not-checked; do not report a clear as silence or a silence as a clear.
+   Read both. Note the counts; they are the inputs to stage 04's house-standards audit.
+
 **Run discipline (cwd + one model per run).** Two working directories coexist and
 mixing them is the most common operational failure: tools read/write a
 cwd-relative `output/`, so run each tool from its stage dir (`cd <abs-run-dir>/<stage>`);
@@ -87,4 +106,6 @@ cd <abs-repo-root> && \
 | Prior runs | output/prior-runs.tsv | Written by `gather-pr` (deterministic, no cwd trap): paths to sealed `REVIEW-<PR#>.md` from earlier runs of THIS SAME PR (empty = fresh). Non-empty makes this a re-review: 04 forms findings blind before reading a predecessor, 06 discloses independence. |
 | Seal | output/seal.tsv | `pr_head_sha`, `local_head_sha`, `dirty` (yes/no), `diverged` (yes/no). Reviewed-revision provenance: `pr.diff` is the PR head; `diverged=yes` (different local commit OR dirty tree) means on-disk reads may be out-of-seal (04). |
 | Seal decision | output/seal-decision.tsv | Written ONLY when `diverged=yes`: `target` (`sealed`/`working-tree`), `human_approved` (`yes`/`no`), `note`. Records which revision the review targets; 04's gate blocks the review Write without it (working-tree needs human_approved=yes). |
+| House rules | output/house-rules.tsv | One row per normative document the repo writes for itself: `<path>\t<title>\t<lines>\t<relevance>\t<matched>`. Vendored trees excluded. `relevance` (`likely`/`unknown`) is a path-token hint, not a filter. Ends with a `# TOTAL:` line, or `# NONE:` when the repo states no standards - stage 04 must account for every row. |
+| Deprecations | output/deprecations.tsv | One row per deprecated symbol used on an added line: `<symbol>\t<definition-file:line>\t<note>\t<diff-path>\t<added-line>`. The note usually names the replacement. Ends with `# TOTAL:` or an explicit `# CLEAR:` - a searched-and-clear result, never to be conflated with unchecked. |
 | Diff | output/pr.diff | `gh pr diff` output - the exact change under review, sealed with the context so the review stage reads a reproducible artifact, not an ad-hoc re-fetch. |

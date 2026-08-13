@@ -497,3 +497,103 @@ when budget allows. The 8 fixes, each frozen in an eval self-test:
 Meta-lesson: the value gate's own enforcement code needed the same adversarial pass the
 gate applies to PRs - and the one lens that ran found 8 real defects. The remaining
 three lenses are open follow-up, recorded here so partial coverage cannot read as full.
+
+---
+
+## The house-standards pair (2026-08-13)
+
+Source: a run on `meetsmore/meetsone` PR #25350 (SOBA-399, change-order API), plus a
+comparison against how the repo's own reviewers reviewed the sibling PR #25392 in the
+same module.
+
+### The failure
+
+Two whole classes of objection had NO mechanism behind them, and both showed up in the
+sibling PR's human review within a day.
+
+1. **The repo writes its own standards and the review never opened them.** `meetsone`
+   carries a guideline tree (`docs/guidelines/{api,coding,testing,monitoring}/`), seven
+   architecture decision records, a domain-knowledge contributing guide, and agent
+   instruction files. That is the bar its reviewers actually enforce. Every dimension in
+   stage 04 was generic - security, dead code, coverage, scope - so the review audited
+   against the reviewer's taste and could not cite a single house rule. The human review
+   of the sibling PR cited the deprecation guide, the module-scoped dictionary
+   convention, and the AC page, all of which are written down in the repo or its ticket.
+2. **A deprecated symbol used by new code is invisible in a diff.** All three handlers
+   in #25350 take `@LoggedInUser()`, whose own definition at
+   `apps/server/src/auth/decolators/logged-in-user.decorator.ts:8` says
+   "@deprecated Use `@Context()` ... instead. `@LoggedInUser()` will be removed in the
+   next step." The added line looks completely ordinary; the fact that it is retired
+   lives one file away. Nothing in the pipeline read a definition site, so the review
+   could not see it. The sibling PR's human reviewer opened with exactly this objection,
+   linking the decorator's own notice.
+
+### The change
+
+Two deterministic gather tools in 01, two mandatory audit steps in 04.
+
+- `tools/gather-house-rules <pr-diff> <out> [root]` -> `house-rules.tsv`. Discovers
+  normative documents in conventional locations (a guidelines tree, architecture
+  decision records / ADRs, `CONTRIBUTING.md`, `AGENTS.md` / `CLAUDE.md`, code-review and
+  convention documents, the PR template, `docs/*/README.md`, `docs/config.md`), excluding
+  vendored trees. Emits path, title, size, a `likely`/`unknown` relevance hint from
+  path-token overlap with the diff, and the matched tokens. Ends with `# TOTAL:` or an
+  explicit `# NONE:`.
+- `tools/gather-deprecations <pr-diff> <out> [root]` -> `deprecations.tsv`. Builds the
+  repo's deprecated-symbol map from the markers themselves, then intersects it with the
+  identifiers on the diff's ADDED lines. Emits symbol, definition `file:line`, the note
+  (which usually names the replacement), and the added-line site. Ends with `# TOTAL:`
+  or an explicit `# CLEAR:`.
+- Stage 04 gains step 10 (house-standards audit) and step 11 (deprecation warning).
+  Step 10 requires every discovered document to be accounted for as audited or
+  not-applicable-with-a-reason, requires a finding to QUOTE the rule with its line, and
+  judges both directions: a rule the whole surrounding module already breaks is a finding
+  about the stale document, `introduced-by-diff=no`, not a bill to this author. Step 11
+  makes every row at least a warning, states the replacement as the fix, and grades
+  severity by consequence rather than by the label.
+
+### Why this direction, and what was rejected
+
+- **Rejected: resolve every symbol the diff imports, then check its definition.** Import
+  resolution across path aliases, barrel files and re-exports is where that approach
+  dies, and it fails silently. Building the marker map first cannot miss a symbol whose
+  marker exists, and costs one grep pass.
+- **Rejected: let the model list the repo's standards from memory of the tree.** That is
+  the exact failure mode being fixed - a document is skipped by not being thought of.
+  Discovery has to be deterministic for the accounting line to mean anything.
+- **Rejected: make relevance a filter.** The hint is token overlap, not comprehension:
+  ADR 0001 (tenant isolation) scored `unknown` on a diff that reads `tenantId` in eight
+  places. So `unknown` means "you must judge and say so", never "skip".
+- **Accepted precision cost.** A bare `name(` line is treated as a declaration only after
+  an access modifier. Without that guard the same pattern matches ordinary call lines
+  inside a deprecated block and floods the output with `rows`, `results`, `address`,
+  `delete` - 8 of 11 rows on the first real run were that noise. The cost is a recall
+  miss on deprecated object-literal method shorthand, documented in the tool header.
+  A generic-name stoplist is the second, independent guard.
+
+### Verification
+
+`eval/house-rules-deprecations.test.sh` against the frozen offline fixture
+`eval/fixtures/house-rules/` (no gh, no network, no live repo). It asserts discovery is
+complete (B1) AND scoped so a vendored `node_modules` document is never a house rule (B2),
+that the relevance hint computes and the totals line exists (B3), that an empty discovery
+says `# NONE:` (B4), that a real deprecated symbol resolves to its definition (C1) with
+the note naming the replacement (C2), that the stoplist (C3) and the access-modifier
+guard (C3b) each suppress noise independently, and that a clean diff records
+`# CLEAR:` rather than looking identical to an unchecked run (C4). Both precision guards
+were confirmed to fail the test on individual revert.
+
+### Two pre-existing defects found while wiring this in
+
+Both predate this change and were confirmed against the previous commit.
+
+- `eval-heldout/inline-comment-coverage.test.sh:145` used bash process substitution
+  `<(...)` in a `#!/bin/sh` script. Under `sh` that is a parse error, so the entire
+  held-out check was unrunnable and the guarantee it encodes was inert; the self-test
+  reported the parse failure as a fixture failure, which is why it read as a stale
+  fixture rather than a broken check. Replaced with temp files.
+- With the check running again, `eval/inline-coverage-selftest.test.sh` failed for a real
+  reason: its synthetic run builder never wrote `06-report/output/review-summary.md`, the
+  pending review's body, which the check requires whenever anything was posted. The
+  builder now writes it, containing exactly the posted ids - a report-only id named there
+  would reach the PR on submit, which is the noise the value gate rerouted away from it.

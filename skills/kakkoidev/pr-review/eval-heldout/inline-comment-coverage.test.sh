@@ -142,9 +142,18 @@ if [ -n "$fids" ]; then
     if [ -x "$cvc" ] && [ -s "$prdiff" ]; then
         rerun=$(mktemp); trap 'rm -f "$rerun"' EXIT
         if "$cvc" "$findings" "$prdiff" > "$rerun" 2>/dev/null; then
-            if ! cmp -s <(cut -f1,3 "$rerun" | sort) <(cut -f1,3 "$vc" | sort); then
+            # Temp files, not `<(...)`: this script is #!/bin/sh and process
+            # substitution is a bash extension. Under sh it is a SYNTAX error, so the
+            # whole check was unrunnable and the guarantee it encodes was inert - the
+            # caller read the parse failure as a fixture failure instead.
+            _a=$(mktemp); _b=$(mktemp)
+            cut -f1,3 "$rerun" | sort > "$_a"
+            cut -f1,3 "$vc" | sort > "$_b"
+            if ! cmp -s "$_a" "$_b"; then
+                rm -f "$_a" "$_b"
                 echo "FAIL: value-claims.tsv does not match a re-run of check-value-claims against the sealed diff (forged or stale cross-check)"; exit 1
             fi
+            rm -f "$_a" "$_b"
         else
             echo "FAIL: check-value-claims failed on the sealed diff but value-claims.tsv exists (where did it come from?)"; exit 1
         fi
