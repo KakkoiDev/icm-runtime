@@ -20,6 +20,7 @@ exists, so the report always carries execution results. Then seal the run.
 
 ## Process
 1. Write `output/REVIEW-<PR#>.md` (`<PR#>` from pr-context) in this structure:
+   - A first line reading `> 🤖 AI-generated review. An automated agent wrote this. It is written to be triaged by another agent, which judges each finding and fixes only what should be fixed. Findings are hypotheses, not conclusions.` The report gets read by humans who did not run it, and a machine review that reads like a human verdict both wastes their time and lands as an insult. Name what wrote it, on the first line, every time. The posted draft carries the same disclaimer, prepended deterministically by `tools/post-review`, so do NOT repeat it inside `review-summary.md`.
    - `**Verdict**: SHIP | SHIP WITH FIXES | BLOCK` + one-line rationale.
    - Scope (N files, +M/-L), PR title + link, specialists run.
    - `Independence:` line from `../01-context/output/prior-runs.tsv` - `fresh` if empty, else `re-review (N prior same-PR runs; prior review read: yes/no)`. If a predecessor review was read, this run's findings are not fully independent of it - say so plainly. Do NOT claim `fresh` if `prior-runs.tsv` is non-empty; the report-contract cross-checks the on-disk prior reviews and FAILS a false `fresh`.

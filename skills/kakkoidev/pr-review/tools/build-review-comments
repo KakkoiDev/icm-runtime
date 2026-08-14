@@ -9,7 +9,11 @@
 #   `snippet` is copied verbatim from an ADDED (or context) line of pr.diff - the model
 #   quotes the code, this tool finds the line, so a wrong line number is impossible.
 # Writes:
-#   <out-dir>/review-comments.json  - JSON array of {path,line,side:RIGHT,body} (anchored)
+#   <out-dir>/review-comments.json  - JSON array of {path,line,side:RIGHT,body} (anchored),
+#                                     each body prefixed with the AI-review marker so a human
+#                                     reading one comment in isolation knows where it came from.
+#                                     Deterministic here rather than left to the model, because a
+#                                     comment that reads as human review is the failure mode.
 #   <out-dir>/unanchored.tsv        - path<TAB>reason<TAB>snippet for every comment that
 #                                     could NOT be anchored (0 or >1 diff-line matches).
 #                                     NEVER silently dropped - a comment with no unique
@@ -21,6 +25,9 @@
 # quoted substring to its RIGHT-side new-file line is reproducible and self-correcting.
 # Parses under bash 3.2 / POSIX sh (awk + jq).
 set -eu
+
+# Prefixed to every anchored comment body. One line, so it does not bury the finding.
+AI_MARKER='🤖 '
 
 DIFF=${1:-}; NDJSON=${2:-}; OUT=${3:-}
 [ -n "$DIFF" ] && [ -n "$NDJSON" ] && [ -n "$OUT" ] \
@@ -81,8 +88,8 @@ while IFS= read -r rec; do
   n=$(printf '%s\n' "$matchlines" | grep -c '[0-9]' || true)
   if [ "$n" -eq 1 ]; then
     line=$(printf '%s\n' "$matchlines" | grep '[0-9]' | head -1)
-    printf '%s' "$rec" | jq -c --argjson ln "$line" \
-      '{path: .path, line: $ln, side: "RIGHT", body: .body}' >> "$TMP/resolved.ndjson"
+    printf '%s' "$rec" | jq -c --argjson ln "$line" --arg mk "$AI_MARKER" \
+      '{path: .path, line: $ln, side: "RIGHT", body: ($mk + .body)}' >> "$TMP/resolved.ndjson"
     anchored=$((anchored+1))
   elif [ "$n" -eq 0 ]; then
     printf '%s\t%s\t%s\n' "$path" "snippet not found in diff (RIGHT side)" "$snip" >> "$OUT/unanchored.tsv"

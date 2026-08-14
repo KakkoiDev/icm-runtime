@@ -11,7 +11,9 @@
 # Behaviour:
 #   - 0 comments in the payload -> no-op (exit 0).
 #   - No existing pending review by the current user -> CREATE one (REST, no event) with
-#     all comments, and the summary --body-file if given.
+#     all comments, and the summary --body-file if given. The AI-review disclaimer below is
+#     prepended to that body unconditionally, so the header cannot be forgotten by the model
+#     that wrote the summary or dropped because --body-file was omitted.
 #   - An existing pending review by the current user -> APPEND each comment to it
 #     (GraphQL addPullRequestReviewThread), so it never 422s on "one pending review per
 #     user", and never clobbers a review the human already started.
@@ -21,6 +23,19 @@
 #
 # Read-only inputs otherwise. Requires gh (authenticated) + jq.
 set -eu
+
+# Prepended to the review body on create. Says three things a human needs in the first
+# five seconds: a machine wrote this, an agent triages it, and nothing is owed in reply.
+AI_DISCLAIMER='## 🤖 AI-generated review
+
+An automated agent wrote this review. No human has read these findings yet.
+
+It exists so **another agent can triage it** and fix only what should be fixed. It is not a
+verdict on the work and it is not a review you owe a reply to.
+
+Findings are hypotheses, not conclusions. Some of them are wrong. If one looks wrong to you,
+it probably is - say so in a word and move on, there is nothing here to defend against.
+'
 
 OR=${1:-}; PR=${2:-}; PAYLOAD=${3:-}
 [ -n "$OR" ] && [ -n "$PR" ] && [ -n "$PAYLOAD" ] \
@@ -87,6 +102,8 @@ if [ -z "$PID" ]; then
   # CREATE a pending review (no event) with all to-post comments.
   HEAD=$(gh api "repos/$OR/pulls/$PR" --jq '.head.sha' 2>/dev/null)
   BODY=""; [ -n "$BODYFILE" ] && [ -f "$BODYFILE" ] && BODY=$(cat "$BODYFILE")
+  BODY="$AI_DISCLAIMER
+$BODY"
   jq -n --arg cid "$HEAD" --arg body "$BODY" --slurpfile cs "$TOPOST" \
     '{commit_id: $cid, body: $body, comments: ($cs | map({path,line,side,body}))}' > "$TOPOST.req"
   RID=$(gh api "repos/$OR/pulls/$PR/reviews" --method POST --input "$TOPOST.req" --jq '.id' 2>&1) \
