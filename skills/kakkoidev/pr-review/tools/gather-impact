@@ -13,7 +13,9 @@
 # handful of assertions that will actually break.
 #
 # Usage: gather-impact <pr-diff-file> <out-dir> [repo-root]
-#   repo-root defaults to `git rev-parse --show-toplevel` (the checkout under review).
+#   repo-root defaults to `git rev-parse --show-toplevel`, which is only correct when the
+#   caller's cwd is inside the reviewed checkout. Pass it explicitly; the guard below refuses
+#   the wrong tree rather than printing a clean values=0 for a repo the diff never touched.
 # Writes:
 #   <out-dir>/impact.md  - per removed value, its test-tree consumers (or an explicit
 #                          "searched <trees>, 0 consumers" clear line). NO judgment.
@@ -38,6 +40,46 @@ mkdir -p "$OUT"
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 TAB=$(printf '\t')
+
+# ---- Root guard: the diff and the root must belong to the same repository ----
+# In an ICM run the cwd is the run dir inside the reviewer's own home, so the `git rev-parse`
+# default resolves to the REVIEWER's repo: the sweep then inventories an unrelated tree, finds
+# no test asserting any removed value, and prints values=0 with a repo-root line and a file
+# count that read as evidence. A silent false clear defeats this tool's whole purpose, so
+# require that at least one path the diff touches exists under $ROOT.
+# A file the diff CREATES or DELETES (`/dev/null` on one side) is not expected to exist at an
+# arbitrary checkout state, so its witness is the directory that holds it - weaker than a file
+# hit, but the only witness such a path can offer, and a deletion-only or add-only diff must
+# still be checkable rather than exempt. A diff with no file headers at all yields no witness -
+# it also carries no removed values to search, so it runs.
+awk '
+  /^--- /{ a=$0; sub(/^--- (a\/)?/,"",a); next }
+  /^\+\+\+ /{ b=$0; sub(/^\+\+\+ (b\/)?/,"",b)
+              if (b == "/dev/null") { if (a != "" && a != "/dev/null") printf "D\t%s\n", a; next }
+              if (a == "/dev/null") { printf "D\t%s\n", b; next }
+              printf "F\t%s\n", b }
+' "$DIFF" > "$TMP/diffpaths.tsv" 2>/dev/null || : > "$TMP/diffpaths.tsv"
+if [ -s "$TMP/diffpaths.tsv" ]; then
+    FOUND=no; EXAMPLE=
+    while IFS="$TAB" read -r kind p; do
+        [ -n "$p" ] || continue
+        if [ "$kind" = D ]; then
+            d=$(dirname "$p")
+            if [ -d "$ROOT/$d" ]; then FOUND=yes; break; fi
+        else
+            if [ -e "$ROOT/$p" ]; then FOUND=yes; break; fi
+        fi
+        [ -n "$EXAMPLE" ] || EXAMPLE=$p
+    done < "$TMP/diffpaths.tsv"
+    if [ "$FOUND" = no ]; then
+        echo "gather-impact: no path this diff touches exists under the resolved repo root -" >&2
+        echo "  refusing to scan an unrelated tree (a false 'values=0' clear is worse than no run)." >&2
+        echo "  resolved repo root: $ROOT" >&2
+        echo "  example diff path not found there: $EXAMPLE" >&2
+        echo "  pass the reviewed checkout as the 3rd argument: gather-impact <pr-diff-file> <out-dir> <repo-root>" >&2
+        exit 2
+    fi
+fi
 
 # A bracket class matching either quote char: [ " ' ]  (built to survive sh quoting).
 QC='["'"'"']'
