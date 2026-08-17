@@ -63,6 +63,9 @@ What is freezable and what is not:
 | Value-binding false positives: nested sub-bullet + blank-line widening (#24370, the reviewed repo) | (belongs to the reviewed codebase, not the skill) | the meetsone repo's own spec; the skill lesson is the review-detection one below |
 | Same-PR re-review inherited its predecessor (#24370) | contract | `01` writes `prior-runs.tsv` + `04` blind-pass rule + `06` Independence line + `eval-heldout` assertion |
 | Reviewed the working tree / unpushed commit, not the sealed diff (#24370) | contract | (OPEN) needs an out-of-seal guard - see section 7 |
+| `gather-impact` swept the REVIEWER's repo (implied root from the run-dir cwd) and printed a clean `values=0` (2026-08-17) | contract | root guard in `tools/gather-impact` (refuses a root holding none of the diff's paths) + `eval/impact-root-guard.test.sh`; `03` passes the reviewed checkout, frozen in `eval/structure.test.sh` |
+| No honest suite state for "a runner exists and was deliberately not run" (2026-08-17) | contract | `05` third suite state + its Outputs row (reason, substitute oracle, the steps that produced no evidence). Contract wording only - whether a suite SHOULD have run is not decidable from the artifacts |
+| Checklist audit keyed on the body's boxes, so a PR that dropped the template escaped it entirely (2026-08-17) | enforcement | `gather-pr` writes `template-checklist.tsv`; `04`/`06` key the mandate on it; `eval-heldout/report-contract` + the dropped-template case in `eval/report-contract-selftest.test.sh` |
 
 When a new miss lands, add a row and its freeze. An empty "frozen by" cell is a
 TODO, not a closed miss.

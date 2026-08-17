@@ -32,8 +32,13 @@ grep -q 'ICM-GATE .*run="test -s ../05-verify/output/verification.md"' stages/06
 
 # C1: the runtime-evidence stage runs the deterministic grounding tool.
 grep -q 'gather-runtime-evidence' stages/03-runtime-evidence.md || { echo "FAIL: 03-runtime-evidence must invoke gather-runtime-evidence (C1)"; exit 1; }
-# C-dual: the same stage runs the changed-value impact tool (dead-code's reverse direction).
+# C-dual: the same stage runs the changed-value impact tool (dead-code's reverse direction),
+# naming the reviewed checkout - the cwd in an ICM run is the run dir, so an implied root
+# sweeps the reviewer's own repo and prints a false clear (2026-08-17 run).
 grep -q 'gather-impact' stages/03-runtime-evidence.md || { echo "FAIL: 03-runtime-evidence must invoke gather-impact (changed-value dual)"; exit 1; }
+grep -qE 'gather-impact .*output <abs-reviewed-checkout>' stages/03-runtime-evidence.md \
+    || { echo "FAIL: 03-runtime-evidence must pass the reviewed checkout to gather-impact, not imply it from the cwd"; exit 1; }
+test -x eval/impact-root-guard.test.sh || { echo "FAIL: eval/impact-root-guard.test.sh missing or not executable (the wrong-root false-clear freeze)"; exit 1; }
 
 # Deterministic tools present and executable.
 for t in tools/gather-pr tools/fetch-web tools/gather-runtime-evidence tools/gather-impact tools/extract-checklist tools/build-review-comments tools/post-review; do
@@ -100,6 +105,10 @@ grep -q 'pr.diff' tools/gather-pr || { echo "FAIL: gather-pr must write output/p
 # C-checklist: gather-pr extracts the PR-template checklist via the shared tool (no
 # inline drift), so the checklist-audit lesson stays frozen by eval/.
 grep -q 'extract-checklist' tools/gather-pr || { echo "FAIL: gather-pr must invoke extract-checklist"; exit 1; }
+# C-template-mandate: the audit trigger is the TEMPLATE's own boxes, not the body's - a PR
+# that drops the template whole leaves checklist.tsv empty and used to escape the audit.
+grep -q 'template-checklist.tsv' tools/gather-pr || { echo "FAIL: gather-pr must write template-checklist.tsv (the repo's mandated boxes, independent of the body)"; exit 1; }
+grep -q 'template-checklist.tsv' stages/06-report.md || { echo "FAIL: 06-report must key the checklist-audit requirement on template-checklist.tsv, not on what the author pasted"; exit 1; }
 # C-provenance: gather-pr writes prior-runs + seal deterministically (the detection is
 # a tool, not fragile stage prose - review 3 re-review had a cwd-trap false "fresh").
 grep -q 'prior-runs.tsv' tools/gather-pr || { echo "FAIL: gather-pr must write prior-runs.tsv (deterministic re-review detection)"; exit 1; }
