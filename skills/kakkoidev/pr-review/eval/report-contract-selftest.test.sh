@@ -47,4 +47,13 @@ d=$(printf 'Human handoff: read, rewrite, submit.\nFindings coverage: F1:inline 
     | mkrun invisible 'only F1 is discussed.')
 expect fail invisible "$d" "a report-only finding absent from the report must fail"
 
-echo "ok: report-contract self-test (1 pass shape, 3 mutations bitten)"
+# Dropped template: the repo mandates boxes and the body pasted none, so checklist.tsv is
+# empty while template-checklist.tsv has rows. The audit stays mandatory - keying it on the
+# body's rows made the requirement vanish exactly when the template was ignored whole.
+d=$(printf 'Human handoff: read, rewrite, submit.\nFindings coverage: F1:inline\n\nVERIFIED: PASS\n' \
+    | mkrun droppedtemplate 'F1 detail here.')
+printf 'unchecked\tAll acceptance criteria checked\n' > "$d/01-context/output/template-checklist.tsv"
+: > "$d/01-context/output/checklist.tsv"
+expect fail droppedtemplate "$d" "a repo-mandated checklist with no audit section must fail even when the body pasted no boxes"
+
+echo "ok: report-contract self-test (1 pass shape, 4 mutations bitten)"

@@ -17,10 +17,14 @@ grep -qiE '\*\*?Verdict\*?\*?:[[:space:]]*(SHIP|SHIP WITH FIXES|BLOCK)' "$report
 grep -qiE '7[- ]?Point' "$report" \
     || { echo "FAIL: report missing the 7-Point validation section"; exit 1; }
 
-# When the PR carried a template checklist (01-context extracted rows), the report
-# MUST reconcile it - a code review that never audits the PR against its own
-# mandatory checklist is the miss this section closes.
-checklist="$ICM_RUN_DIR/01-context/output/checklist.tsv"
+# When the REPO mandates a template checklist, the report MUST reconcile it - a code
+# review that never audits the PR against its own mandatory checklist is the miss this
+# section closes. The trigger is the template's own boxes, not the body's: a PR that
+# dropped the template whole leaves checklist.tsv empty, and keying on that file made the
+# requirement vanish exactly when the template was most ignored. Older runs have no
+# template-checklist.tsv - fall back to the body rows there rather than pass silently.
+checklist="$ICM_RUN_DIR/01-context/output/template-checklist.tsv"
+[ -f "$checklist" ] || checklist="$ICM_RUN_DIR/01-context/output/checklist.tsv"
 if [ -s "$checklist" ]; then
     grep -qiE 'checklist audit' "$report" \
         || { echo "FAIL: checklist.tsv is non-empty but the report has no 'Checklist Audit' section"; exit 1; }

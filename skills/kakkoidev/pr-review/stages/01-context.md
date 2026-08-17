@@ -24,18 +24,23 @@ here: this stage is a single script call so the gathered context is reproducible
    `output/checklist.tsv` (the PR-template mandatory checklist as instantiated in
    the body, one row per box: `checked`/`unchecked` <TAB> item text),
    `output/pr-template.md` (the repo's PR template, ground truth for which items
-   are mandatory), and `output/pr.diff` (the change under review, sealed so the
+   are mandatory) with `output/template-checklist.tsv` (that template's own boxes,
+   same extractor), and `output/pr.diff` (the change under review, sealed so the
    review is reproducible).
 2. Do NOT hand-edit any of these files. If the tool errors (auth, missing PR),
    report the exact error to the user and stop - do not fabricate context.
 3. Read `output/pr-context.md` so you know the PR; note the bucket counts and any
    linked Notion/Slack/requirement URLs you will follow in stage 02.
-4. Read `output/checklist.tsv` and `output/pr-template.md`. Note how many items the
-   template mandates, which the body ticked vs left unchecked, and any template item
+4. Read `output/template-checklist.tsv` (what the REPO's template mandates),
+   `output/checklist.tsv` (what the BODY pasted) and `output/pr-template.md`. Note how many
+   items the template mandates, which the body ticked vs left unchecked, and any template item
    MISSING from the body (a deleted checklist line is a dodge, not a pass). This is
    the input to stage 04's checklist audit - the author's tick state is a *claim*,
-   not evidence. If `checklist.tsv` is empty (no template / no checklist in this
-   repo), record that fact; there is then nothing to audit and 04 says so explicitly.
+   not evidence. The two files answer different questions and only the first drives the
+   mandate: `template-checklist.tsv` empty = this repo mandates no checklist, nothing to
+   audit; non-empty with `checklist.tsv` empty = **the body dropped the template whole**,
+   which is the worst omission and still gets the full audit (every template item, tick
+   state `absent`), plus the dropped template as a finding of its own.
 5. **Read the provenance `gather-pr` wrote** (deterministic - do NOT hand-run a glob;
    the earlier prose version had a cwd trap that silently produced an empty file and a
    false "fresh" on a real re-review):
@@ -101,7 +106,8 @@ cd <abs-repo-root> && \
 |----------|----------|--------|
 | PR context | output/pr-context.md | Summary (title, repo, #, state, author, dates, size, labels, linked issues); file buckets (prod/test/config/generated/lockfile/docs with paths); chronological action feed (ts, who, event, note) |
 | Link set | output/links.tsv | One row per discovered URL: `<url>\t<source>` (PR-body, comment:<author>, review:<author>, commit). Deterministic and complete - every link in the PR's free text. |
-| Checklist | output/checklist.tsv | One row per PR-template checkbox in the body: `checked`/`unchecked` <TAB> item text. The tick state is the author's claim; stage 04 audits each item against the diff. Empty if the repo has no template checklist. |
+| Checklist | output/checklist.tsv | One row per PR-template checkbox in the body: `checked`/`unchecked` <TAB> item text. The tick state is the author's claim; stage 04 audits each item against the diff. Empty if the body pasted no checklist - which includes the body that dropped the template entirely, so this file never decides whether the audit is mandated. |
+| Template checklist | output/template-checklist.tsv | The same extractor run over `pr-template.md`: one row per checkbox the REPO's template mandates (empty when the repo has no template, or a template with no boxes). Non-empty = the audit is mandated in 04/06 no matter what the body contains; non-empty here with an empty `checklist.tsv` is the dropped-template case. |
 | PR template | output/pr-template.md | The repo's PR template (fetched from the common `.github/PULL_REQUEST_TEMPLATE.md` paths), so 04 can tell a mandatory item the body DROPPED from one that was genuinely absent. A placeholder line if no template exists. |
 | Prior runs | output/prior-runs.tsv | Written by `gather-pr` (deterministic, no cwd trap): paths to sealed `REVIEW-<PR#>.md` from earlier runs of THIS SAME PR (empty = fresh). Non-empty makes this a re-review: 04 forms findings blind before reading a predecessor, 06 discloses independence. |
 | Seal | output/seal.tsv | `pr_head_sha`, `local_head_sha`, `dirty` (yes/no), `diverged` (yes/no). Reviewed-revision provenance: `pr.diff` is the PR head; `diverged=yes` (different local commit OR dirty tree) means on-disk reads may be out-of-seal (04). |

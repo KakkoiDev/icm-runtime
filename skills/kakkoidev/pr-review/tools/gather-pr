@@ -108,6 +108,13 @@ for p in \
 done
 [ -s "$OUT/pr-template.md" ] || echo "(no PR template found at common paths; the PR body checklist is the only source)" > "$OUT/pr-template.md"
 
+# ---- template-checklist.tsv: the boxes the REPO's template mandates, parsed with the same
+# extractor. checklist.tsv is only what the BODY pasted, so a PR that drops the template
+# whole yields zero rows there - the audit mandate keys on THIS file, and body-rows=0 while
+# template-rows>0 is the dropped-template case, itself a finding. ----
+"$(dirname "$0")/extract-checklist" < "$OUT/pr-template.md" > "$OUT/template-checklist.tsv" 2>/dev/null || true
+[ -f "$OUT/template-checklist.tsv" ] || : > "$OUT/template-checklist.tsv"
+
 # ---- prior-runs.tsv: sealed reviews of THIS SAME PR from earlier runs. Deterministic
 # and cwd-trap-free: computed from OUT (= <runs-root>/<ts>/01-context/output), not a
 # hand-run glob whose meaning depends on the caller's cwd. A non-empty list makes the
@@ -146,4 +153,4 @@ DIVERGED=no
 gh pr diff "$PR" --repo "$OR" > "$OUT/pr.diff" 2>"$TMP/differr" \
   || { echo "gather-pr: gh pr diff failed:" >&2; cat "$TMP/differr" >&2; exit 5; }
 
-echo "gather-pr: $OUT/pr-context.md ($(wc -l < "$OUT/pr-context.md" | tr -d ' ') lines), $OUT/links.tsv ($(wc -l < "$OUT/links.tsv" | tr -d ' ') links), $OUT/checklist.tsv ($(wc -l < "$OUT/checklist.tsv" | tr -d ' ') items), $OUT/prior-runs.tsv ($(wc -l < "$OUT/prior-runs.tsv" | tr -d ' ') prior same-PR reviews), $OUT/seal.tsv (diverged=$(awk -F'\t' '$1=="diverged"{print $2}' "$OUT/seal.tsv")), $OUT/pr.diff ($(wc -l < "$OUT/pr.diff" | tr -d ' ') lines)"
+echo "gather-pr: $OUT/pr-context.md ($(wc -l < "$OUT/pr-context.md" | tr -d ' ') lines), $OUT/links.tsv ($(wc -l < "$OUT/links.tsv" | tr -d ' ') links), $OUT/checklist.tsv ($(wc -l < "$OUT/checklist.tsv" | tr -d ' ') body items of $(wc -l < "$OUT/template-checklist.tsv" | tr -d ' ') template items), $OUT/prior-runs.tsv ($(wc -l < "$OUT/prior-runs.tsv" | tr -d ' ') prior same-PR reviews), $OUT/seal.tsv (diverged=$(awk -F'\t' '$1=="diverged"{print $2}' "$OUT/seal.tsv")), $OUT/pr.diff ($(wc -l < "$OUT/pr.diff" | tr -d ' ') lines)"
