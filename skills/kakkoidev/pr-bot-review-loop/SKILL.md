@@ -59,7 +59,7 @@ and the gates mechanically enforce R1..R7 and R9..R11.
 | R8 | Read CI honestly - a green wrapper can hide a crashed step, a red gate can be a poll race |
 | R9 | Any push requires a fresh round on the new head - pushing and declaring done is a defect |
 | R10 | Every bot thread is answered with its outcome and resolved as it is addressed |
-| R11 | Superseded bot reports are collapsed as OUTDATED - as the closing step, after convergence, final report kept visible |
+| R11 | Superseded bot reports and every review-request comment (including the last) are collapsed as OUTDATED - as the closing step, after convergence; only the final bot report stays visible |
 | R12 | A guard refusing one route is not proof the capability is missing - check the approved wrapper before reporting a blocker |
 
 ## Determinism boundary (read this)
@@ -70,8 +70,9 @@ and the gates mechanically enforce R1..R7 and R9..R11.
   that moment (`tools/gather-round`, R7); per-job/per-step CI conclusions and the
   crash/poll-race markers (`tools/gather-ci`, R8); the two-direction test result
   (`tools/check-revert-proof`, R4); which bot reports are superseded and still expanded
-  (`tools/gather-round`, R11); and the completeness audit of the ledger
-  (`tools/ledger-audit`, R2/R3/R6/R9/R10/R11).
+  (`tools/gather-round`, R11); which review-request comments the loop posted across every
+  round, collected for collapsing (`tools/gather-requests`, R11); and the completeness
+  audit of the ledger (`tools/ledger-audit`, R2/R3/R6/R9/R10/R11).
 - **Model judgment, recorded not automated** - whether a finding is true, whether a
   proposed fix is right, whether an item is out of scope, and whether a SUSPECT CI row is
   a real failure or infrastructure. The tools make these judgments *visible and
@@ -88,7 +89,7 @@ and the gates mechanically enforce R1..R7 and R9..R11.
 |-------|------|--------|
 | 01-preflight | preconditions: the strong local review ran, the PR exists, the bot's login + mention handle are known, the PR's own defect class is named (R5), the ledger is initialised | `preflight.md`, `rounds.tsv`, `ledger.tsv` |
 | 02-round | the loop, repeated with no cap (R2): request with a mention and verify it fired (R1) -> harvest the round against the commit it reviewed (R7) -> triage each finding as a hypothesis (R3) -> fix with a revert-proven test (R4) -> re-check the PR's own defect class (R5) -> answer and resolve each thread (R10) -> read CI honestly (R8) -> push -> next round (R9) | `round-<n>.md`, `round-<n>.tsv`, `request-<n>.tsv`, `ci-<n>.tsv`, `revert-proof-<n>.tsv`, `threads-<n>.tsv`, `bot-comments-<n>.tsv`, appended `rounds.tsv` + `ledger.tsv`, `pr-body.md`, `exit-head.tsv` |
-| 03-close | the exit gate (a quiet round, on the current head, with no open threads), then the closing cleanup: collapse every superseded bot report as OUTDATED keeping the final one visible (R11), the PR-body ledger of refusals and out-of-scope items with their tickets, the honest CI line, the human handoff | `close.md`, `ledger-audit.tsv`, `superseded.tsv` |
+| 03-close | the exit gate (a quiet round, on the current head, with no open threads), then the closing cleanup: collapse every superseded bot report as OUTDATED keeping the final one visible, and collapse every review-request comment the loop posted including the last (R11), the PR-body ledger of refusals and out-of-scope items with their tickets, the honest CI line, the human handoff | `close.md`, `ledger-audit.tsv`, `superseded.tsv`, `superseded-requests.tsv` |
 
 ## Invocation
 
@@ -149,14 +150,23 @@ bash ~/.agents/skills/icm/runtime/icm.sh seal kakkoidev/pr-bot-review-loop
 - `tools/ledger-audit` - the mechanical half of the rules, in three modes: `audit`
   (per-round and per-finding completeness, safe mid-loop), `converged` (adds the exit
   condition - a quiet round on the current head, nothing pushed after it, no thread left
-  open or unanswered) and `closed` (adds R11: every superseded report collapsed, the final
-  one still visible).
-- `tools/mark-superseded` - R11: collapses the bot's superseded round reports with
+  open or unanswered) and `closed` (adds R11: every superseded bot report collapsed with
+  the final one still visible, AND every review-request comment collapsed including the
+  last).
+- `tools/mark-superseded` - R11: collapses issue comments with
   `minimizeComment(classifier: OUTDATED)`, through `gh-axi api POST /graphql` and batched
   as GraphQL aliases so the whole cleanup is one approval (proven on PR 26204). Dry-run
-  unless `--apply`; refuses any comment not authored by the bot, never the latest report,
-  and cannot reach a review or a human's pending draft. Run in 03-close, after convergence
-  - never between rounds.
+  unless `--apply`; refuses any comment not authored by the given login and cannot reach a
+  review or a human's pending draft. Used twice in 03-close: once against
+  `bot-comments-<last>.tsv` (never collapses the latest bot report), once against
+  `gather-requests`' output (collapses every request comment, latest included - the input
+  TSV marks every row `superseded=yes`, so the tool itself needs no bot/request distinction).
+  Run only in 03-close, after convergence - never between rounds.
+- `tools/gather-requests` - R11: collects every `request_comment_id` the loop posted
+  (from `request-<n>.tsv` across all rounds) with its live minimized state, so the closing
+  cleanup can feed them to `tools/mark-superseded` and collapse all of them - including the
+  last one, which is pure machinery ("@claude review, round N, head is X") and carries
+  nothing a human or a later round needs. Captain's ruling, 2026-09-09.
 - `checks/loop-exit.sh` - the close gate; blocks stage 03's Write until `ledger-audit`
   passes in exit mode.
 - `eval/structure.test.sh` - skill shape and that all twelve rules survive with their

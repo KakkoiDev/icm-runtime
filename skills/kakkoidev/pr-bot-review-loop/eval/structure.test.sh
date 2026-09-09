@@ -26,7 +26,8 @@ grep -q 'ICM-GATE .*run="checks/loop-exit.sh"' stages/03-close.md \
 test -x checks/loop-exit.sh || { echo "FAIL: checks/loop-exit.sh missing or not executable"; exit 1; }
 
 for t in tools/verify-request-fired tools/gather-round tools/gather-ci \
-         tools/check-revert-proof tools/ledger-audit tools/mark-superseded; do
+         tools/check-revert-proof tools/ledger-audit tools/mark-superseded \
+         tools/gather-requests; do
     test -x "$t" || { echo "FAIL: $t missing or not executable"; exit 1; }
 done
 
@@ -65,6 +66,9 @@ grep -qi 'gh-axi' "$rules" || { echo "FAIL: R11/R12 must name the approved wrapp
 grep -qi 'aliases' "$rules" || { echo "FAIL: R11 must keep the one-call batching (one approval)"; exit 1; }
 grep -qi 'pending draft' "$rules" || { echo "FAIL: R11 must keep the never-touch-a-human-draft guardrail"; exit 1; }
 grep -qi 'after the loop converges' "$rules" || { echo "FAIL: R11's ordering (cleanup only after convergence) must survive"; exit 1; }
+grep -qi 'request comment' "$rules" || { echo "FAIL: R11 must cover request-comment collapsing"; exit 1; }
+grep -qi 'including the last' "$rules" || { echo "FAIL: R11 must state request comments are collapsed including the last one"; exit 1; }
+grep -qi 'gather-requests' "$rules" || { echo "FAIL: R11 must name tools/gather-requests"; exit 1; }
 
 # The scope-refusal procedure: five steps, the ticket-creator skill, no hand-made tickets.
 grep -q '^## Scope-refusal procedure' "$rules" || { echo "FAIL: the scope-refusal procedure is missing"; exit 1; }
@@ -91,7 +95,8 @@ grep -qi 'Do not close this stage between rounds' stages/02-round.md \
 
 # The deterministic freezes.
 for e in eval/ledger-audit.test.sh eval/request-fired.test.sh eval/gather-ci.test.sh \
-         eval/revert-proof.test.sh eval/mark-superseded.test.sh eval/loop-exit.test.sh; do
+         eval/revert-proof.test.sh eval/mark-superseded.test.sh eval/loop-exit.test.sh \
+         eval/gather-requests.test.sh; do
     test -x "$e" || { echo "FAIL: $e missing or not executable"; exit 1; }
 done
 

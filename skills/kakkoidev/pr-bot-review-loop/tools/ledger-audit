@@ -7,6 +7,7 @@
 #   ledger-audit --rounds <rounds.tsv> --ledger <ledger.tsv> --pr-body <file>
 #                [--exit-head <exit-head.tsv>] [--final-round <round-<n>.tsv>]
 #                [--final-bot-comments <bot-comments-<n>.tsv>]
+#                [--final-requests <requests.tsv>]
 #                --mode audit|converged|closed
 #
 # Modes:
@@ -15,10 +16,12 @@
 #              with every thread answered and resolved, and nothing pushed after it.
 #              This is what gates entry to 03-close.
 #   closed     converged + the R11 cleanup actually happened: every superseded bot report
-#              collapsed, the final one still visible. Run at the END of 03-close, after
-#              mark-superseded --apply. Cleanup is a closing step, never a per-round one -
-#              while rounds are still coming, the history is what the next round and the
-#              human read.
+#              collapsed with the final one still visible, AND every review-request comment
+#              the loop posted collapsed too - including the last one, which carries nothing
+#              a human or a later round needs. Run at the END of 03-close, after
+#              mark-superseded --apply (run twice: once for bot reports, once for request
+#              comments). Cleanup is a closing step, never a per-round one - while rounds
+#              are still coming, the history is what the next round and the human read.
 #
 # rounds.tsv columns (no header, one row per round):
 #   1 round  2 request_verdict  3 reviewed_sha  4 head_sha  5 stale
@@ -30,6 +33,11 @@
 #   disposition is one of: fixed | refused-finding-wrong | refused-fix-wrong |
 #                          out-of-scope | duplicate
 #
+# requests.tsv columns (no header, one row per review-request comment the loop posted;
+# written by tools/gather-requests, checked in closed mode only):
+#   1 id  2 created_at  3 minimized  4 superseded (always "yes" - every request comment is
+#   eligible, including the last one; unlike a bot report, none of them is "the current one")
+#
 # Lines starting with # and blank lines are ignored in both files.
 #
 # Emits TSV: PASS|FAIL <TAB> check <TAB> rule <TAB> detail
@@ -37,7 +45,7 @@
 # Parses under bash 3.2 / POSIX sh.
 set -eu
 
-ROUNDS=""; LEDGER=""; PRBODY=""; EXITHEAD=""; FINALROUND=""; FINALBC=""; MODE=""
+ROUNDS=""; LEDGER=""; PRBODY=""; EXITHEAD=""; FINALROUND=""; FINALBC=""; FINALREQ=""; MODE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --rounds) ROUNDS=${2:-}; shift 2 ;;
@@ -46,12 +54,13 @@ while [ $# -gt 0 ]; do
         --exit-head) EXITHEAD=${2:-}; shift 2 ;;
         --final-round) FINALROUND=${2:-}; shift 2 ;;
         --final-bot-comments) FINALBC=${2:-}; shift 2 ;;
+        --final-requests) FINALREQ=${2:-}; shift 2 ;;
         --mode) MODE=${2:-}; shift 2 ;;
         *) echo "ledger-audit: unknown argument $1" >&2; exit 2 ;;
     esac
 done
 [ -n "$ROUNDS" ] && [ -n "$LEDGER" ] && [ -n "$PRBODY" ] && [ -n "$MODE" ] \
-    || { echo "usage: ledger-audit --rounds <f> --ledger <f> --pr-body <f> [--exit-head <f>] [--final-round <f>] [--final-bot-comments <f>] --mode audit|converged|closed" >&2; exit 2; }
+    || { echo "usage: ledger-audit --rounds <f> --ledger <f> --pr-body <f> [--exit-head <f>] [--final-round <f>] [--final-bot-comments <f>] [--final-requests <f>] --mode audit|converged|closed" >&2; exit 2; }
 case "$MODE" in audit|converged|closed) : ;; *) echo "ledger-audit: --mode must be audit, converged or closed" >&2; exit 2 ;; esac
 for f in "$ROUNDS" "$LEDGER" "$PRBODY"; do
     [ -f "$f" ] || { echo "ledger-audit: $f not found" >&2; exit 2; }
@@ -217,6 +226,20 @@ if [ "$MODE" = closed ]; then
         fi
     else
         fail "final-report-visible" R11 "--final-bot-comments is required in closed mode"
+    fi
+
+    if [ -n "$FINALREQ" ] && [ -f "$FINALREQ" ]; then
+        total=$(awk -F'\t' '$1!~/^#/ && NF>=3{n++} END{print n+0}' "$FINALREQ")
+        hidden=$(awk -F'\t' '$1!~/^#/ && NF>=3 && $3!="yes"{n++} END{print n+0}' "$FINALREQ")
+        if [ "$total" -eq 0 ]; then
+            fail "requests-collapsed" R11 "no review-request comment found in $FINALREQ - the loop's own request comments must be tracked and collapsed"
+        elif [ "$hidden" -eq 0 ]; then
+            pass "requests-collapsed" R11 "every review-request comment is collapsed, including the last"
+        else
+            fail "requests-collapsed" R11 "$hidden review-request comment(s) still expanded - collapse every one, including the last, before handing the PR to a human"
+        fi
+    else
+        fail "requests-collapsed" R11 "--final-requests is required in closed mode (gather-requests writes it)"
     fi
 fi
 

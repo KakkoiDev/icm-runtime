@@ -151,25 +151,54 @@ printf '11%s2026-09-08T00:00:00Z%syes%syes\n' "$T" "$T" "$T" > "$tmp/bc-clean.ts
 printf '22%s2026-09-09T00:00:00Z%sno%sno\n'  "$T" "$T" "$T" >> "$tmp/bc-clean.tsv"
 printf '22%s2026-09-09T00:00:00Z%syes%sno\n' "$T" "$T" "$T" > "$tmp/bc-hidden.tsv"
 
+# request comments: every row is superseded=yes (no exempt "latest" one). Clean = every
+# one collapsed, including the last; dirty = the last one is still expanded.
+printf '31%s2026-09-01T00:00:00Z%syes%syes\n' "$T" "$T" "$T" > "$tmp/req-clean.tsv"
+printf '32%s2026-09-02T00:00:00Z%syes%syes\n' "$T" "$T" "$T" >> "$tmp/req-clean.tsv"
+printf '31%s2026-09-01T00:00:00Z%syes%syes\n' "$T" "$T" "$T" > "$tmp/req-dirty.tsv"
+printf '32%s2026-09-02T00:00:00Z%sno%syes\n'  "$T" "$T" "$T" >> "$tmp/req-dirty.tsv"
+: > "$tmp/req-empty.tsv"
+
 out=$(audit "$tmp/rounds.tsv" "$tmp/ledger.tsv" "$tmp/pr-body.md" closed \
       --exit-head "$tmp/exit-head.tsv" --final-round "$tmp/final-clean.tsv" \
-      --final-bot-comments "$tmp/bc-clean.tsv")
+      --final-bot-comments "$tmp/bc-clean.tsv" --final-requests "$tmp/req-clean.tsv")
 expect_pass_all "$out" "the clean closed loop"
 
 out=$(audit "$tmp/rounds.tsv" "$tmp/ledger.tsv" "$tmp/pr-body.md" closed \
       --exit-head "$tmp/exit-head.tsv" --final-round "$tmp/final-dirty.tsv" \
-      --final-bot-comments "$tmp/bc-clean.tsv")
+      --final-bot-comments "$tmp/bc-clean.tsv" --final-requests "$tmp/req-clean.tsv")
 expect_fail "$out" "superseded-collapsed" "superseded reports still expanded"
 
 out=$(audit "$tmp/rounds.tsv" "$tmp/ledger.tsv" "$tmp/pr-body.md" closed \
       --exit-head "$tmp/exit-head.tsv" --final-round "$tmp/final-clean.tsv" \
-      --final-bot-comments "$tmp/bc-hidden.tsv")
+      --final-bot-comments "$tmp/bc-hidden.tsv" --final-requests "$tmp/req-clean.tsv")
 expect_fail "$out" "final-report-visible" "the final report minimized away from the human"
+
+# 15b. R11 extended - the loop's LAST request comment must also be collapsed, not exempted
+out=$(audit "$tmp/rounds.tsv" "$tmp/ledger.tsv" "$tmp/pr-body.md" closed \
+      --exit-head "$tmp/exit-head.tsv" --final-round "$tmp/final-clean.tsv" \
+      --final-bot-comments "$tmp/bc-clean.tsv" --final-requests "$tmp/req-dirty.tsv")
+expect_fail "$out" "requests-collapsed" "the last request comment left expanded"
+
+# 15c. closed mode with no --final-requests must FAIL, not silently skip the check
+out=$(audit "$tmp/rounds.tsv" "$tmp/ledger.tsv" "$tmp/pr-body.md" closed \
+      --exit-head "$tmp/exit-head.tsv" --final-round "$tmp/final-clean.tsv" \
+      --final-bot-comments "$tmp/bc-clean.tsv")
+expect_fail "$out" "requests-collapsed" "closed mode with no --final-requests"
+
+# 15d. an empty request-comments file is not proof of a clean cleanup
+out=$(audit "$tmp/rounds.tsv" "$tmp/ledger.tsv" "$tmp/pr-body.md" closed \
+      --exit-head "$tmp/exit-head.tsv" --final-round "$tmp/final-clean.tsv" \
+      --final-bot-comments "$tmp/bc-clean.tsv" --final-requests "$tmp/req-empty.tsv")
+expect_fail "$out" "requests-collapsed" "an empty final-requests file"
 
 # 16. converged mode must NOT check the R11 cleanup - it happens inside 03, after the gate
 out=$(audit "$tmp/rounds.tsv" "$tmp/ledger.tsv" "$tmp/pr-body.md" converged --exit-head "$tmp/exit-head.tsv")
 if printf '%s' "$out" | grep -q 'superseded-collapsed'; then
     echo "FAIL: converged mode must not gate on the R11 cleanup (it is the closing step)"; exit 1
+fi
+if printf '%s' "$out" | grep -q 'requests-collapsed'; then
+    echo "FAIL: converged mode must not gate on the request-comment cleanup either"; exit 1
 fi
 
 # 17. an empty rounds file is no loop, not a clean one

@@ -176,13 +176,24 @@ from re-raising the same item.
 
 ## R11 - Mark superseded bot rounds handled, but only after the loop converges
 
-Two mechanisms, because GitHub gives the bot's two output shapes different affordances:
+Three mechanisms, because GitHub gives the loop's three output shapes different affordances:
 
 - **a review thread** is answered and then **resolved** (that is R10, done as each thread
   is addressed);
 - **an issue comment** - the bot's round report - cannot be resolved, but it *can* be
   **collapsed**: GraphQL `minimizeComment` with `classifier: OUTDATED`
-  (`tools/mark-superseded`).
+  (`tools/mark-superseded`);
+- **our own review-request comment** - the loop's "@claude review, round N, head is X" -
+  is also an issue comment, and it is collapsed the same way. **Extended by the captain's
+  ruling of 2026-09-09:** unlike a bot report, a request comment carries nothing a human
+  reviewer or a later round needs, so **every one is collapsed, including the last**.
+  There is no "current" request comment to protect - the newest bot report is kept
+  visible because it is the record of the loop's own findings; the newest request comment
+  is not, it is only the machinery that asked for it. `tools/gather-requests` collects
+  every `request_comment_id` written across all rounds and feeds them to the same
+  `tools/mark-superseded`, unmodified - it already collapses anything the input TSV marks
+  `superseded=yes`, so marking every request row `yes` (there is no "no" row) collapses
+  all of them, last one included.
 
 **The mechanism, proven and executed on PR 26204:** the mutation goes through the approved
 wrapper at its `/graphql` path (`gh-axi api POST /graphql`) - the plain GitHub CLI route
@@ -191,25 +202,32 @@ GraphQL aliases** (`m0:`, `m1:`, ...), so the whole cleanup costs the captain on
 instead of one per comment.
 
 **Ordering, and it is the whole rule:** cleanup happens **after the loop converges, never
-during it**. While rounds are still coming, leave the earlier reports expanded - that
-history is what the next round and the human actually read. Once a round against the
-current head returns nothing actionable, collapse every superseded report as the closing
-step. `ledger-audit --mode converged` (the gate into 03-close) does not check collapsing;
-`--mode closed`, run at the end of 03, does.
+during it**. While rounds are still coming, leave the earlier reports (and the round's own
+request comment) expanded - that history is what the next round and the human actually
+read. Once a round against the current head returns nothing actionable, collapse every
+superseded bot report AND every request comment as the closing step. `ledger-audit --mode
+converged` (the gate into 03-close) does not check collapsing; `--mode closed`, run at the
+end of 03, checks both.
 
-Two things are never touched:
+What stays visible, and what does not:
 
-- **the final round's report stays visible** - it is the one the human needs;
+- **the final bot report stays visible** - it is the record that the loop converged, and
+  it is the one the human needs;
+- **the final request comment does NOT stay visible** - it is collapsed along with every
+  earlier one. It is pure machinery and carries nothing the bot report doesn't already say;
 - **a human's pending draft review is never touched.** `tools/mark-superseded` only ever
-  minimizes issue comments authored by the bot login, re-verified against the live PR; it
+  minimizes issue comments authored by the given login, re-verified against the live PR; it
   cannot address a review, a thread, or anyone's unsubmitted draft.
 
-The loop is not done while superseded rounds are still expanded.
+The loop is not done while superseded rounds or request comments are still expanded.
 
 **Why:** same reason as R10, one level up. A ten-round PR carries nine obsolete bot
 reports. Left expanded they bury the current one, and the human reviewer - the entire
 point of the process - has to work out which report is live before they can start. The
-next round's bot reads them too.
+next round's bot reads them too. The same is true, doubled, for the request comments: a
+ten-round PR also carries ten "@claude review" comments that said nothing but "go again" -
+left expanded, they double the noise in the review space for zero information. PR 26204
+is where both were collapsed together: seven bot reports and all seven request comments.
 
 ---
 

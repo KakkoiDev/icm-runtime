@@ -1,0 +1,80 @@
+#!/bin/sh
+# gather-requests: R11 (extended) - collects every review-request comment the loop itself
+# posted across all rounds, with live minimized state, so the closing cleanup can collapse
+# ALL of them, including the last one.
+#
+# Captain's ruling (2026-09-09): a request comment is pure machinery - it says only
+# "@claude review, round N, head is X" - and carries nothing a human reviewer or a later
+# round needs. Unlike a bot report (which stays visible when it is the newest), a request
+# comment is never worth keeping expanded, not even the final one. Proven and executed on
+# meetsone PR 26204: seven bot reports and all seven request comments were collapsed.
+#
+# Usage: gather-requests <owner/repo> <pr#> <rounds-dir> <out-tsv>
+#   <rounds-dir> is 02-round's output/ - the directory holding request-<n>.tsv, one per
+#   round, each written by tools/verify-request-fired.
+#
+# Writes <out-tsv>: id<TAB>created_at<TAB>minimized<TAB>superseded
+#   superseded is always "yes" on every row - a request comment has no "current version"
+#   to protect, so every one is eligible, including the newest. Feed this file straight to
+#   tools/mark-superseded (unchanged: it already only checks superseded=yes, author, and
+#   idempotency) with --bot set to the login the loop posted requests as (read
+#   request_author out of any request-<n>.tsv - they are all the same account).
+#
+# Rows whose request_comment_id is "-" are skipped: R1 already reports those as
+# UNFIRED(no-request), and they never produced a request comment to collapse.
+#
+# GitHub CLI: `$GHBIN` (default gh-axi, the sanctioned wrapper). One GraphQL read for live
+# minimized state, allowed to fail -> "unknown" (mark-superseded's own live re-verification
+# is the real gate; this is only used for the idempotent skip). Parses under bash 3.2 / POSIX sh.
+set -eu
+
+GHBIN=${GHBIN:-gh-axi}
+
+OR=${1:-}; PR=${2:-}; RDIR=${3:-}; OUT=${4:-}
+[ -n "$OR" ] && [ -n "$PR" ] && [ -n "$RDIR" ] && [ -n "$OUT" ] \
+    || { echo "usage: gather-requests <owner/repo> <pr#> <rounds-dir> <out-tsv>" >&2; exit 2; }
+[ -d "$RDIR" ] || { echo "gather-requests: $RDIR not found" >&2; exit 2; }
+command -v "$GHBIN" >/dev/null 2>&1 || { echo "gather-requests: $GHBIN not found" >&2; exit 3; }
+command -v jq >/dev/null 2>&1 || { echo "gather-requests: jq not found" >&2; exit 3; }
+
+OWNER=${OR%%/*}; REPO=${OR#*/}
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+
+: > "$TMP/ids.tsv"
+for f in "$RDIR"/request-*.tsv; do
+    [ -f "$f" ] || continue
+    id=$(awk -F'\t' '$1=="request_comment_id"{print $2; exit}' "$f")
+    at=$(awk -F'\t' '$1=="request_at"{print $2; exit}' "$f")
+    [ -n "${id:-}" ] && [ "$id" != "-" ] || continue
+    printf '%s\t%s\n' "$id" "${at:--}" >> "$TMP/ids.tsv"
+done
+
+: > "$OUT"
+if [ ! -s "$TMP/ids.tsv" ]; then
+    exit 0
+fi
+
+GQL='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){comments(last:100){nodes{databaseId isMinimized}}}}}'
+if "$GHBIN" api POST /graphql \
+        --field query="$GQL" \
+        --field owner="$OWNER" --field name="$REPO" --field number="$PR" \
+        > "$TMP/gql.json" 2>/dev/null; then
+    jq -r '
+      [.data.repository.pullRequest.comments.nodes[]?
+       | select((.databaseId // null) != null)
+       | { id: (.databaseId|tostring), minimized: (if .isMinimized then "yes" else "no" end) }]
+      | map({ (.id): .minimized }) | add // {}
+    ' "$TMP/gql.json" > "$TMP/min.json" 2>/dev/null || echo '{}' > "$TMP/min.json"
+else
+    echo '{}' > "$TMP/min.json"
+fi
+[ -s "$TMP/min.json" ] || echo '{}' > "$TMP/min.json"
+
+# Dedup by id (verify-request-fired can be re-run against the same request comment while
+# waiting for it to fire); keep the first created_at seen.
+awk -F'\t' '!seen[$1]++' "$TMP/ids.tsv" > "$TMP/uniq.tsv"
+while IFS="$(printf '\t')" read -r id at; do
+    [ -n "${id:-}" ] || continue
+    min=$(jq -r --arg id "$id" '.[$id] // "unknown"' "$TMP/min.json")
+    printf '%s\t%s\t%s\tyes\n' "$id" "${at:--}" "$min" >> "$OUT"
+done < "$TMP/uniq.tsv"
