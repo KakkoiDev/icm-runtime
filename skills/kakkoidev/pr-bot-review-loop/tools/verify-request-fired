@@ -1,0 +1,135 @@
+#!/bin/sh
+# verify-request-fired: R1 - a request comment without an @claude mention never fires.
+#
+# Usage: verify-request-fired <owner/repo> <pr#> <round> <out-dir> [bot-login] [request-comment-id]
+#   bot-login          defaults to "claude", matched as a substring of the login, so
+#                      claude / claude[bot] / claude-review[bot] all match.
+#   request-comment-id the id of the comment you just posted. Omitted = the newest
+#                      non-bot issue comment on the PR. Pass it when other people are
+#                      commenting on the PR at the same time.
+#
+# Writes <out-dir>/request-<round>.tsv - key<TAB>value rows:
+#   round, request_comment_id, request_at, request_author, request_body_chars,
+#   mention, bot_login, bot_review_after, bot_comment_after, workflow_run_after,
+#   run_started, verdict
+#
+# verdict is one of:
+#   FIRED                    - mention present AND at least one bot signal after it
+#   UNFIRED(no-mention)      - definitive: the comment cannot have triggered anything.
+#                              Re-post WITH the mention; do not advance the round.
+#   UNCONFIRMED(no-activity) - mention present, no bot signal yet. NOT a pass: wait and
+#                              re-run. Never record it as FIRED.
+#   UNFIRED(no-request)      - no candidate request comment found at all.
+#
+# Two independent signals, because a posted comment is not a triggered review: PR 26205
+# round 9 sat unanswered on a mention-less comment, and PR 26204 had the same shape.
+#
+# GitHub CLI: `$GHBIN` (default gh-axi, the sanctioned wrapper; set GHBIN=gh for gh, or
+# to a stub in tests). Read-only, plain GETs. Parses under bash 3.2 / POSIX sh.
+set -eu
+
+GHBIN=${GHBIN:-gh-axi}
+
+OR=${1:-}; PR=${2:-}; RND=${3:-}; OUT=${4:-}; BOT=${5:-claude}; CID=${6:-}
+[ -n "$OR" ] && [ -n "$PR" ] && [ -n "$RND" ] && [ -n "$OUT" ] \
+    || { echo "usage: verify-request-fired <owner/repo> <pr#> <round> <out-dir> [bot-login] [request-comment-id]" >&2; exit 2; }
+command -v "$GHBIN" >/dev/null 2>&1 || { echo "verify-request-fired: $GHBIN not found" >&2; exit 3; }
+command -v jq >/dev/null 2>&1 || { echo "verify-request-fired: jq not found" >&2; exit 3; }
+mkdir -p "$OUT"
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+
+flatten() {
+    jq -s 'if length == 0 then [] else (map(if type=="array" then . else [.] end) | add) end' \
+        "$1" 2>/dev/null || echo '[]'
+}
+
+"$GHBIN" api "/repos/$OR/issues/$PR/comments" --paginate > "$TMP/c.raw" 2>/dev/null \
+    || echo '[]' > "$TMP/c.raw"
+"$GHBIN" api "/repos/$OR/pulls/$PR/reviews" --paginate > "$TMP/r.raw" 2>/dev/null \
+    || echo '[]' > "$TMP/r.raw"
+flatten "$TMP/c.raw" > "$TMP/c.json"
+flatten "$TMP/r.raw" > "$TMP/r.json"
+
+# ---- the request comment ----
+if [ -n "$CID" ]; then
+    req=$(jq -c --arg id "$CID" 'map(select((.id|tostring) == $id)) | last // {}' "$TMP/c.json")
+else
+    req=$(jq -c --arg bot "$BOT" \
+        'map(select((.user.login // "" | ascii_downcase | contains($bot|ascii_downcase)) | not))
+         | sort_by(.created_at // "") | last // {}' "$TMP/c.json")
+fi
+
+if [ "$(printf '%s' "$req" | jq -r 'if (.id // null) == null then "empty" else "ok" end')" = empty ]; then
+    {
+        printf 'round\t%s\n' "$RND"
+        printf 'request_comment_id\t-\nrequest_at\t-\nrequest_author\t-\nrequest_body_chars\t0\n'
+        printf 'mention\tno\n'
+        printf 'bot_login\t%s\n' "$BOT"
+        printf 'bot_review_after\t0\nbot_comment_after\t0\nworkflow_run_after\t0\n'
+        printf 'run_started\tno\nverdict\tUNFIRED(no-request)\n'
+    } > "$OUT/request-$RND.tsv"
+    cat "$OUT/request-$RND.tsv"
+    exit 0
+fi
+
+req_id=$(printf '%s' "$req"  | jq -r '.id // "-"')
+req_at=$(printf '%s' "$req"  | jq -r '.created_at // "-"')
+req_by=$(printf '%s' "$req"  | jq -r '.user.login // "-"')
+req_len=$(printf '%s' "$req" | jq -r '(.body // "") | length')
+# The mention test IS the rule: a literal @<bot> in the body. Case-insensitive, because
+# GitHub mentions are; anything else - a link to the bot, "claude please" with no @ -
+# is not a mention and does not fire.
+mention=$(printf '%s' "$req" | jq -r --arg bot "$BOT" \
+    'if ((.body // "") | ascii_downcase | test("@" + ($bot|ascii_downcase))) then "yes" else "no" end')
+
+# ---- bot activity strictly after the request ----
+rev_after=$(jq -r --arg at "$req_at" --arg bot "$BOT" \
+    '[ .[] | select((.user.login // "" | ascii_downcase | contains($bot|ascii_downcase))
+                    and ((.submitted_at // "") > $at)) ] | length' "$TMP/r.json")
+com_after=$(jq -r --arg at "$req_at" --arg bot "$BOT" \
+    '[ .[] | select((.user.login // "" | ascii_downcase | contains($bot|ascii_downcase))
+                    and ((.created_at // "") > $at)) ] | length' "$TMP/c.json")
+
+branch=$("$GHBIN" api "/repos/$OR/pulls/$PR" --jq '.head.ref' 2>/dev/null || echo "")
+run_after=0
+if [ -n "$branch" ]; then
+    "$GHBIN" api "/repos/$OR/actions/runs?branch=$branch&per_page=50" > "$TMP/runs.json" 2>/dev/null \
+        || echo '{}' > "$TMP/runs.json"
+    run_after=$(jq -r --arg at "$req_at" --arg bot "$BOT" \
+        '[ (.workflow_runs // [])[] | select(((.name // "") | ascii_downcase | contains($bot|ascii_downcase))
+                                             and ((.created_at // "") > $at)) ] | length' \
+        "$TMP/runs.json" 2>/dev/null || echo 0)
+fi
+
+# Written as an if, not `a || b || c && started=yes`: under `set -e` that one-liner exits
+# the script when all three signals are 0 - the exact case the caller must be told about.
+started=no
+if [ "${rev_after:-0}" -gt 0 ] || [ "${com_after:-0}" -gt 0 ] || [ "${run_after:-0}" -gt 0 ]; then
+    started=yes
+fi
+
+if [ "$mention" = no ]; then
+    verdict="UNFIRED(no-mention)"
+elif [ "$started" = yes ]; then
+    verdict="FIRED"
+else
+    verdict="UNCONFIRMED(no-activity)"
+fi
+
+{
+    printf 'round\t%s\n' "$RND"
+    printf 'request_comment_id\t%s\n' "$req_id"
+    printf 'request_at\t%s\n' "$req_at"
+    printf 'request_author\t%s\n' "$req_by"
+    printf 'request_body_chars\t%s\n' "$req_len"
+    printf 'mention\t%s\n' "$mention"
+    printf 'bot_login\t%s\n' "$BOT"
+    printf 'bot_review_after\t%s\n' "${rev_after:-0}"
+    printf 'bot_comment_after\t%s\n' "${com_after:-0}"
+    printf 'workflow_run_after\t%s\n' "${run_after:-0}"
+    printf 'run_started\t%s\n' "$started"
+    printf 'verdict\t%s\n' "$verdict"
+} > "$OUT/request-$RND.tsv"
+
+cat "$OUT/request-$RND.tsv"

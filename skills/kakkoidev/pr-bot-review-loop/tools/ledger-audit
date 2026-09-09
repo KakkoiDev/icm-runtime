@@ -1,0 +1,223 @@
+#!/bin/sh
+# ledger-audit: the mechanical half of the loop rules. Everything a script can check about
+# whether the loop was actually run - as opposed to whether the judgments inside it were
+# good, which no script decides.
+#
+# Usage:
+#   ledger-audit --rounds <rounds.tsv> --ledger <ledger.tsv> --pr-body <file>
+#                [--exit-head <exit-head.tsv>] [--final-round <round-<n>.tsv>]
+#                [--final-bot-comments <bot-comments-<n>.tsv>]
+#                --mode audit|converged|closed
+#
+# Modes:
+#   audit      per-round and per-finding completeness only. Safe to run mid-loop.
+#   converged  audit + the exit condition: the last round was quiet, on the current head,
+#              with every thread answered and resolved, and nothing pushed after it.
+#              This is what gates entry to 03-close.
+#   closed     converged + the R11 cleanup actually happened: every superseded bot report
+#              collapsed, the final one still visible. Run at the END of 03-close, after
+#              mark-superseded --apply. Cleanup is a closing step, never a per-round one -
+#              while rounds are still coming, the history is what the next round and the
+#              human read.
+#
+# rounds.tsv columns (no header, one row per round):
+#   1 round  2 request_verdict  3 reviewed_sha  4 head_sha  5 stale
+#   6 findings  7 actionable  8 threads_open  9 threads_unanswered
+#   10 pushed_sha ('-' when the round pushed nothing)  11 defect_class_recheck (done|skipped|n/a)
+#
+# ledger.tsv columns (no header, one row per finding):
+#   1 round  2 finding_id  3 severity  4 disposition  5 reason  6 evidence
+#   disposition is one of: fixed | refused-finding-wrong | refused-fix-wrong |
+#                          out-of-scope | duplicate
+#
+# Lines starting with # and blank lines are ignored in both files.
+#
+# Emits TSV: PASS|FAIL <TAB> check <TAB> rule <TAB> detail
+# Exit 0 = every check passed. 1 = at least one FAIL. 2 = unusable input.
+# Parses under bash 3.2 / POSIX sh.
+set -eu
+
+ROUNDS=""; LEDGER=""; PRBODY=""; EXITHEAD=""; FINALROUND=""; FINALBC=""; MODE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --rounds) ROUNDS=${2:-}; shift 2 ;;
+        --ledger) LEDGER=${2:-}; shift 2 ;;
+        --pr-body) PRBODY=${2:-}; shift 2 ;;
+        --exit-head) EXITHEAD=${2:-}; shift 2 ;;
+        --final-round) FINALROUND=${2:-}; shift 2 ;;
+        --final-bot-comments) FINALBC=${2:-}; shift 2 ;;
+        --mode) MODE=${2:-}; shift 2 ;;
+        *) echo "ledger-audit: unknown argument $1" >&2; exit 2 ;;
+    esac
+done
+[ -n "$ROUNDS" ] && [ -n "$LEDGER" ] && [ -n "$PRBODY" ] && [ -n "$MODE" ] \
+    || { echo "usage: ledger-audit --rounds <f> --ledger <f> --pr-body <f> [--exit-head <f>] [--final-round <f>] [--final-bot-comments <f>] --mode audit|converged|closed" >&2; exit 2; }
+case "$MODE" in audit|converged|closed) : ;; *) echo "ledger-audit: --mode must be audit, converged or closed" >&2; exit 2 ;; esac
+for f in "$ROUNDS" "$LEDGER" "$PRBODY"; do
+    [ -f "$f" ] || { echo "ledger-audit: $f not found" >&2; exit 2; }
+done
+# An empty rounds file is not a clean loop, it is no loop. Refuse rather than emit an
+# all-PASS report over nothing.
+if ! grep -qv '^[[:space:]]*\(#.*\)\?$' "$ROUNDS"; then
+    echo "ledger-audit: $ROUNDS has no round rows - refusing to report on an empty loop" >&2
+    exit 2
+fi
+
+rc=0
+pass() { printf 'PASS\t%s\t%s\t%s\n' "$1" "$2" "$3"; }
+fail() { printf 'FAIL\t%s\t%s\t%s\n' "$1" "$2" "$3"; rc=1; }
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+grep -v '^[[:space:]]*\(#.*\)\?$' "$ROUNDS" > "$TMP/rounds" || true
+grep -v '^[[:space:]]*\(#.*\)\?$' "$LEDGER" > "$TMP/ledger" || true
+
+last=$(tail -1 "$TMP/rounds")
+lr_num=$(printf '%s' "$last" | awk -F'\t' '{print $1}')
+lr_sha=$(printf '%s' "$last" | awk -F'\t' '{print $3}')
+lr_stale=$(printf '%s' "$last" | awk -F'\t' '{print $5}')
+lr_act=$(printf '%s' "$last" | awk -F'\t' '{print $7}')
+lr_open=$(printf '%s' "$last" | awk -F'\t' '{print $8}')
+lr_unans=$(printf '%s' "$last" | awk -F'\t' '{print $9}')
+lr_push=$(printf '%s' "$last" | awk -F'\t' '{print $10}')
+
+# ---------- R1: every round fired ----------
+bad=$(awk -F'\t' '$2 != "FIRED" {printf "round %s: %s; ", $1, ($2=="" ? "<empty>" : $2)}' "$TMP/rounds")
+if [ -n "$bad" ]; then
+    fail "request-fired" R1 "a round is recorded whose request never fired - $bad"
+else
+    pass "request-fired" R1 "every round has request_verdict=FIRED"
+fi
+
+# ---------- R7: a stale round is never the last word ----------
+if [ "$lr_stale" = yes ]; then
+    fail "stale-round" R7 "the last round (#$lr_num) reviewed $lr_sha, not the head - it is evidence about a superseded revision"
+elif [ "$lr_stale" = unknown ]; then
+    fail "stale-round" R7 "the last round (#$lr_num) has stale=unknown - no bot review with a commit id was found; the round cannot be counted"
+else
+    pass "stale-round" R7 "the last round reviewed the head it claims"
+fi
+
+# ---------- R5: a round that pushed re-checked the PR's own defect class ----------
+bad=$(awk -F'\t' '$10 != "-" && $10 != "" && $11 != "done" {printf "round %s (pushed %s, recheck=%s); ", $1, $10, ($11=="" ? "<empty>" : $11)}' "$TMP/rounds")
+if [ -n "$bad" ]; then
+    fail "defect-class-recheck" R5 "a round pushed a fix without re-checking the PR's own defect class - $bad"
+else
+    pass "defect-class-recheck" R5 "every pushing round re-checked the PR's own defect class"
+fi
+
+# ---------- R3: every finding has a disposition from the set, and a reason ----------
+bad=$(awk -F'\t' '
+  { d=$4; r=$5
+    ok = (d=="fixed" || d=="refused-finding-wrong" || d=="refused-fix-wrong" || d=="out-of-scope" || d=="duplicate")
+    if (!ok) printf "%s(round %s): disposition=%s; ", $2, $1, (d=="" ? "<empty>" : d)
+    else if (r == "") printf "%s(round %s): no reason; ", $2, $1
+  }' "$TMP/ledger")
+if [ -n "$bad" ]; then
+    fail "disposition" R3 "a finding has no valid disposition or no reason - $bad"
+else
+    n=$(awk 'END{print NR+0}' "$TMP/ledger")
+    pass "disposition" R3 "$n findings, each with a disposition and a reason"
+fi
+
+# ---------- R4: a fixed finding carries execution evidence ----------
+# PROVEN comes from check-revert-proof. no-behaviour-change is the explicit escape for a
+# fix that changes nothing observable (a comment, a rename); it must be stated, not assumed.
+bad=$(awk -F'\t' '$4=="fixed" && $6 !~ /PROVEN/ && $6 !~ /no-behaviour-change/ {printf "%s(round %s): evidence=%s; ", $2, $1, ($6=="" ? "<empty>" : $6)}' "$TMP/ledger")
+if [ -n "$bad" ]; then
+    fail "revert-proof" R4 "a fix has no two-direction test evidence - $bad"
+else
+    pass "revert-proof" R4 "every fix carries PROVEN or an explicit no-behaviour-change"
+fi
+
+# ---------- R6: out-of-scope needs a ticket, and the ticket needs to be in the PR body ----------
+bad=$(awk -F'\t' '$4=="out-of-scope" && $5 !~ /ticket=[A-Za-z0-9]/ {printf "%s(round %s); ", $2, $1}' "$TMP/ledger")
+if [ -n "$bad" ]; then
+    fail "out-of-scope-ticket" R6 "an out-of-scope refusal has no ticket=<ID> in its reason - $bad"
+else
+    pass "out-of-scope-ticket" R6 "every out-of-scope refusal names a ticket"
+fi
+
+missing=""
+for t in $(awk -F'\t' '$4=="out-of-scope"{ if (match($5, /ticket=[A-Za-z0-9_-]+/)) print substr($5, RSTART+7, RLENGTH-7) }' "$TMP/ledger" | sort -u); do
+    grep -Fq "$t" "$PRBODY" || missing="$missing $t"
+done
+if [ -n "$missing" ]; then
+    fail "out-of-scope-in-pr-body" R6 "an out-of-scope ticket never reached the PR description -$missing"
+else
+    pass "out-of-scope-in-pr-body" R6 "every out-of-scope ticket is referenced in the PR description"
+fi
+
+# ---------- R3: refusals are written down in the PR body ----------
+missing=""
+for fid in $(awk -F'\t' '$4=="refused-finding-wrong" || $4=="refused-fix-wrong" {print $2}' "$TMP/ledger" | sort -u); do
+    grep -Fq "$fid" "$PRBODY" || missing="$missing $fid"
+done
+if [ -n "$missing" ]; then
+    fail "refusals-in-pr-body" R3 "a refusal is not recorded in the PR description -$missing"
+else
+    pass "refusals-in-pr-body" R3 "every refusal is recorded in the PR description"
+fi
+
+# ---------- convergence ----------
+if [ "$MODE" = converged ] || [ "$MODE" = closed ]; then
+    if [ "${lr_act:-x}" = 0 ]; then
+        pass "quiet-round" R2 "the last round (#$lr_num) returned nothing actionable"
+    else
+        fail "quiet-round" R2 "the last round (#$lr_num) returned $lr_act actionable finding(s) - the loop is not done"
+    fi
+
+    if [ "${lr_push:--}" = "-" ] || [ -z "${lr_push:-}" ]; then
+        pass "push-then-review" R9 "the loop's last action was a review, not a push"
+    else
+        fail "push-then-review" R9 "the last round pushed $lr_push - every push needs a fresh round on the new head"
+    fi
+
+    if [ "${lr_open:-x}" = 0 ] && [ "${lr_unans:-x}" = 0 ]; then
+        pass "threads-closed" R10 "every thread is answered and resolved"
+    else
+        fail "threads-closed" R10 "the last round leaves ${lr_open:-?} open and ${lr_unans:-?} unanswered thread(s) for the human to triage"
+    fi
+
+    if [ -n "$EXITHEAD" ] && [ -f "$EXITHEAD" ]; then
+        eh=$(awk -F'\t' '$1=="head_sha"{print $2; exit}' "$EXITHEAD")
+        if [ -z "$eh" ]; then
+            fail "reviewed-is-head" R9 "$EXITHEAD carries no head_sha"
+        elif [ "$eh" = "$lr_sha" ]; then
+            pass "reviewed-is-head" R9 "the last round reviewed the current head ($eh)"
+        else
+            fail "reviewed-is-head" R9 "the head is $eh but the last round reviewed $lr_sha - the current code has never been reviewed"
+        fi
+    else
+        fail "reviewed-is-head" R9 "--exit-head is required in $MODE mode (gather-round --head-only writes it)"
+    fi
+fi
+
+# ---------- R11 cleanup, checked only after it is supposed to have happened ----------
+if [ "$MODE" = closed ]; then
+    if [ -n "$FINALROUND" ] && [ -f "$FINALROUND" ]; then
+        exp=$(awk -F'\t' '$1=="bot_comments_superseded_expanded"{print $2; exit}' "$FINALROUND")
+        if [ "${exp:-x}" = 0 ]; then
+            pass "superseded-collapsed" R11 "no superseded bot report is still expanded"
+        else
+            fail "superseded-collapsed" R11 "${exp:-?} superseded bot report(s) still expanded - collapse them before handing the PR to a human"
+        fi
+    else
+        fail "superseded-collapsed" R11 "--final-round is required in closed mode (gather-round writes round-<n>.tsv)"
+    fi
+
+    if [ -n "$FINALBC" ] && [ -f "$FINALBC" ]; then
+        hidden=$(awk -F'\t' '$4=="no" && $3=="yes"{n++} END{print n+0}' "$FINALBC")
+        visible=$(awk -F'\t' '$4=="no"{n++} END{print n+0}' "$FINALBC")
+        if [ "$visible" -eq 0 ]; then
+            fail "final-report-visible" R11 "no current bot report found in $FINALBC - the final round's report must exist and stay visible"
+        elif [ "$hidden" -eq 0 ]; then
+            pass "final-report-visible" R11 "the final round's report is still visible"
+        else
+            fail "final-report-visible" R11 "the final round's report was minimized - the human needs it"
+        fi
+    else
+        fail "final-report-visible" R11 "--final-bot-comments is required in closed mode"
+    fi
+fi
+
+exit $rc
