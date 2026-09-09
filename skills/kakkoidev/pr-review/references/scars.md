@@ -30,6 +30,7 @@ actively check, not a box to tick.
 ## Tests
 - A behavior-changing fix needs a regression test that fails on revert. No such test = not done.
 - A test that locks incorrect behavior is worse than no test - read the AC before the assertion.
+- Flag dead tests: a test asserting behavior for a state no code path can produce (guarding a door that doesn't exist). Ask "what real caller creates this input?" - if the answer is none, the test is confusing noise that outlives the assumption it froze. Precedent: meetsone PR 25572, an archive-on-termination test for orders that no endpoint could ever create; a senior reviewer had both the code and its test removed.
 
 ## Scope to what is actually new
 - Before reviewing, check whether the branch/PR just aggregates already-reviewed or merged sub-PRs; match effort to what is genuinely new since the last review.

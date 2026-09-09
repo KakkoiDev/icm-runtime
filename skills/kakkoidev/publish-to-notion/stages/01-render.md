@@ -5,15 +5,18 @@
      and the output (page.md) is the receipt; audit notes tools/render via prose scrape. -->
 
 Take the content the user brings and produce a Notion-flavored markdown body that will render
-correctly, plus a target spec saying where it goes and who must read it. This stage is pure
-mechanics - do not change the meaning, argument, or wording of the content. Convert syntax
-only.
+correctly, plus a target spec saying where it goes and who must read it. Never change the
+meaning, argument, or facts of the content.
+
+FORM, however, is this stage's business. The captain's standing density rule (2026-09-08)
+requires prose to be recast as bullets, tables, and mermaid diagrams, and pure restatement to
+be cut. That is step 3 and it is not optional. Same facts in and out, far fewer words.
 
 The deterministic syntax conversion (GitHub pipe tables to Notion `<table>` blocks, code
-fences left literal) is done by the `tools/render` script, NOT by hand. Your only remaining
-job is the content judgement the script cannot make: making mermaid node labels quote-safe,
-escaping stray literal special characters outside code fences, and laying out any bilingual prose
-in two columns.
+fences left literal) is done by the `tools/render` script, NOT by hand. Your remaining job is
+the judgement the script cannot make: the density pass, making mermaid node labels quote-safe,
+escaping stray literal special characters outside code fences, marking bilingual tables
+full-width, and laying out any surviving bilingual prose in two columns.
 
 ## Inputs
 | Source | Location | Scope |
@@ -30,7 +33,22 @@ in two columns.
    ```bash
    ~/.agents/skills/kakkoidev/publish-to-notion/tools/render output/source.md > output/page.md
    ```
-3. Review `output/page.md` for the content-level items the renderer does not judge: wrap
+3. **Density pass (MANDATORY, and before every other judgement step).** Captain's standing rule,
+   2026-09-08. His words: "The thing is to not make people waste time on prose. time and
+   attention are very limited."
+   Read the whole of `output/page.md` and cut it down. This is a form change only: no fact is
+   added, removed, or reinterpreted.
+   - Every flow, branch, lifecycle or state set becomes a ```mermaid diagram, then a table for
+     the detail. Diagram first.
+   - Multi-point prose paragraphs become bullet lists. One line per bullet; if it needs two, it
+     is two bullets or a table cell.
+   - Delete every sentence that only restates the previous one, and every rhetorical framing
+     ("the one thing everyone gets wrong", "stated plainly rather than hidden", "and both are
+     legitimate"). Technical information, not poetry.
+   - Test each remaining paragraph: does deleting it lose a fact? If not, delete it.
+   - Record in `output/target.md` what was condensed, so the diff from `source.md` is auditable.
+   If the source is already dense (bullets, tables, diagrams), say so and change nothing.
+4. Review `output/page.md` for the content-level items the renderer does not judge: wrap
    mermaid node labels containing special characters (e.g. parentheses) in double quotes and
    use `<br>` not `\n` inside labels; escape stray literal special characters that appear
    OUTSIDE code fences. Read `notion://docs/enhanced-markdown-spec` via `ReadMcpResourceTool`
@@ -38,14 +56,15 @@ in two columns.
    keyword, or literal that appears in prose (e.g. `expenseLineId`, `undefined`) gets backticks;
    leave display labels and feature names (経費, 予実比較) plain. Edit `output/page.md` in place. Do
    NOT alter meaning or phrasing.
-4. Readability spacing (default, not an option to ask about): in PROSE paragraphs that pack
+5. Readability spacing, for the little prose that survives step 3 (default, not an option to ask
+   about): in PROSE paragraphs that pack
    several distinct points, separate the logical segments with `<br><br>` (a double in-block
    break). An ordinary newline would split the paragraph into separate blocks; `<br><br>` keeps
    it ONE block with a blank line between segments, turning a dense wall of text into scannable
    groups. Apply ONLY to multi-point prose paragraphs. Do NOT add breaks inside single-point or
    short paragraphs, list items, `<table>` cells, code / ```mermaid fences, or headings. This is
    layout only - never change wording, order, or meaning.
-5. Bilingual layout: if the content pairs the same text in two languages, wrap EACH pair in its
+6. Bilingual layout: if the content pairs the same text in two languages, wrap EACH pair in its
    OWN `<columns>` block - `<columns><column>` lang A `</column><column>` lang B `</column></columns>`,
    first language left, tab-indented children with REAL tabs. One block per pair is what keeps the
    two languages aligned: Notion anchors columns at the TOP of each `<columns>` block, so a single
@@ -58,7 +77,23 @@ in two columns.
    ask about. Leave diagrams, ```mermaid fences, code blocks, and `<table>` blocks FULL-WIDTH
    (outside any column); leave bilingual diagram labels (`JA<br>EN`) inline. Skip this step entirely
    for monolingual content.
-6. Provenance callout (default, not an option to ask about): every page published through this
+   **Full width (captain's standing rule, 2026-09-08).** On a bilingual page, EVERY `<table>` gets
+   `fit-page-width="true"` AND an explicit `<colgroup>`. The attribute alone does NOT widen the
+   table; the explicit column widths are what Notion honors (verified against a table the captain
+   widened by hand). Content width is ~1034px: divide by the column count and give every column
+   that width. 3 cols -> `344.6666666666667`, 4 -> `258.5`, 5 -> `206.8`.
+   ```
+   <table fit-page-width="true" header-row="true">
+   <colgroup>
+   <col width="344.6666666666667">
+   <col width="344.6666666666667">
+   <col width="344.6666666666667">
+   </colgroup>
+   ```
+   Page-level full width and mermaid preview-only display are permanently MANUAL by the captain's
+   ruling of 2026-09-08; do not attempt a workaround. Record BOTH in `output/target.md` as
+   outstanding MANUAL steps and carry them into the verify receipt next to the sharing gate.
+7. Provenance callout (default, not an option to ask about): every page published through this
    skill is AI-authored, so stamp it. Make the FIRST block of `output/page.md` a callout with the
    robot icon and a gray background declaring AI authorship + human review:
    ```
@@ -71,7 +106,7 @@ in two columns.
    first); a monolingual doc gets only the matching line. On CREATE, prepend it as the first block.
    On UPDATE, fetch the page first and add it ONLY if no such callout already exists at the top -
    never duplicate it, and never add it to a page that was not authored through this skill.
-7. Cross-references and code examples (add what the source is missing - do not just pass content
+8. Cross-references and code examples (add what the source is missing - do not just pass content
    through):
    - Links: hyperlink EVERY page, ticket, document, PR, or spec the content names - not only
      internal Notion pages but EXTERNAL references too (Figma, GitHub, Slack, requirement/spec
@@ -91,7 +126,7 @@ in two columns.
      full-width line, then the bilingual explanation in its OWN per-pair `<columns>` block (JA left,
      EN right, real tabs), then the full-width block. The caption reads side by side; the block it
      labels stays full-width.
-8. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
+9. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
    "none = private workspace page") and the title; for update, the existing `page_id`; and the
    `audience` (who must be able to read it).
 

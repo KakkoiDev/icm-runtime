@@ -31,11 +31,21 @@ PreToolUse gate cannot inspect a result that does not exist until after the fetc
    - Audience is a team or anyone at the org: the page must be shared. There is no MCP
      permission API, so instruct the human to set it in the Notion UI (move to the teamspace,
      or Share -> "anyone at <org> can view"), and WAIT for them to confirm.
-4. Write `output/verify-receipt.md`: page URL, a per-check list (body / tables / mermaid /
-   links), the sharing state ("private - intended" or "shared - confirmed by human"), and a
+4. Full width and mermaid display, for a bilingual page (captain's standing rule, 2026-09-08).
+   Confirm from the fetched body that every `<table>` carries BOTH `fit-page-width="true"` and a
+   `<colgroup>` of explicit `<col width="...">`. A table missing the `<colgroup>` renders narrow
+   even with the attribute set; that is a defect and sends you back to stage 01.
+   Page-level full width and mermaid preview-only display are permanently MANUAL by the captain's
+   ruling of 2026-09-08. Neither is settable through the API and neither is reported back by
+   `notion-fetch`. Do not attempt a workaround. Never assert either is set. Just record both in
+   the receipt as outstanding manual steps for the human: page `...` menu "Full width", and the
+   per-block display toggle on each mermaid diagram.
+5. Write `output/verify-receipt.md`: page URL, a per-check list (body / tables / mermaid /
+   links), the sharing state ("private - intended" or "shared - confirmed by human"), the
+   full-width state for a bilingual page, and a
    final line that is exactly `VERIFIED: PASS` (content landed AND sharing matches audience)
    or `VERIFIED: FAIL` with what is missing.
-5. Only after `VERIFIED: PASS`, give the user the final link, stating its access level. If a
+6. Only after `VERIFIED: PASS`, give the user the final link, stating its access level. If a
    Slack/broadcast announcement is intended, remind them the link resolves only at the
    confirmed access level.
 
