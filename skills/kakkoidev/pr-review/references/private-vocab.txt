@@ -1,0 +1,50 @@
+# private-vocab.txt - the private lexicon `tools/gather-local-leakage` reads.
+#
+# One term per line. A term here means something inside ONE person's setup and nothing
+# to a reader who is not us: a role name from a private agent contract, a locally
+# installed tool, a machine-local directory convention. Shipping one is not a style
+# slip - it is documentation that is false outside this machine, which is why stage 04
+# treats a hit as a correctness-of-documentation finding.
+#
+# This file lives in the REVIEW tooling and must never be copied into a reviewed repo.
+# meetsmore/claude-plugins#258 learned that the expensive way: the first guard against
+# this class hardcoded the banned names inside a file that shipped, so the guard
+# published the list it existed to suppress. It was replaced by asserting the property
+# instead of naming the words. The tool excludes this file from its own scan for the
+# same reason.
+#
+# Matching: case-insensitive, whole-token, with `-` treated as a token boundary, so
+# `lavish` matches `lavish-axi` and `axi` matches `gh-axi`, while `axis` and `maxi`
+# match nothing. `#` starts a comment; blank lines are ignored.
+#
+# Adding a term: it must be genuinely meaningless elsewhere. A term that is ALSO an
+# ordinary English word, or the reviewed repo's own name, produces a row on every added
+# line and makes stage 04's "account for every row" rule unaffordable - that cost is
+# what keeps this list short. Teaching it a per-repo extension is a known follow-up;
+# today it is one global list.
+
+# --- private role vocabulary (an agent contract's cast, not any team's job titles)
+captain
+firstmate
+crewmate
+secondmate
+scout
+
+# --- locally installed tools and their wrappers
+lavish
+aidb
+ego-browser
+ego-lite
+no-mistakes
+gh-axi
+chrome-devtools-axi
+db-helper
+git-dispatch
+tmux-agent-mesh
+tmux-agent-tracker
+graphify
+herdr
+axi
+
+# --- machine-local directory conventions
+treehouse

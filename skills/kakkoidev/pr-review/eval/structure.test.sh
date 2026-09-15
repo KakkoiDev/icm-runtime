@@ -41,9 +41,22 @@ grep -qE 'gather-impact .*output <abs-reviewed-checkout>' stages/03-runtime-evid
 test -x eval/impact-root-guard.test.sh || { echo "FAIL: eval/impact-root-guard.test.sh missing or not executable (the wrong-root false-clear freeze)"; exit 1; }
 
 # Deterministic tools present and executable.
-for t in tools/gather-pr tools/fetch-web tools/gather-runtime-evidence tools/gather-impact tools/extract-checklist tools/build-review-comments tools/post-review; do
+for t in tools/gather-pr tools/fetch-web tools/gather-runtime-evidence tools/gather-impact tools/extract-checklist tools/build-review-comments tools/post-review tools/gather-house-rules tools/gather-deprecations tools/gather-local-leakage; do
     test -x "$t" || { echo "FAIL: $t missing or not executable"; exit 1; }
 done
+
+# C-local-context (#258): the local-context signals are gathered in 01 and audited in 04.
+# The class is invisible to every other dimension because the diff is CORRECT - it just is
+# not true off the author's machine - so both ends have to be wired or the stage silently
+# skips it. The lexicon lives in the review tooling and must never be copied into a
+# reviewed repo (a guard that ships the words it bans publishes them).
+grep -q 'gather-local-leakage' stages/01-context.md || { echo "FAIL: 01-context must invoke gather-local-leakage"; exit 1; }
+grep -q 'local-leakage.tsv' stages/04-review.md || { echo "FAIL: 04-review must audit local-leakage.tsv - a gathered artifact nothing reads is not a dimension"; exit 1; }
+grep -q 'local-leakage-audit.md' stages/04-review.md || { echo "FAIL: 04-review must write the local-context accounting so coverage is visible, not implied"; exit 1; }
+test -f references/private-vocab.txt || { echo "FAIL: references/private-vocab.txt missing - the lexicon must live in the review tooling"; exit 1; }
+grep -q 'private-vocab' tools/gather-local-leakage || { echo "FAIL: gather-local-leakage must read the lexicon from references/private-vocab.txt, not inline the terms"; exit 1; }
+test -x eval/local-leakage.test.sh || { echo "FAIL: eval/local-leakage.test.sh missing or not executable (the local-context freeze)"; exit 1; }
+test -f eval/fixtures/local-leakage/pr.diff || { echo "FAIL: local-leakage fixture pr.diff missing"; exit 1; }
 
 # C-inline-review: 06 posts findings inline as a PENDING review, anchored deterministically
 # and NEVER submitted. The line anchoring is a tool (snippet -> real RIGHT-side line, so a

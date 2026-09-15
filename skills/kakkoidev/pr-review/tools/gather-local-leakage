@@ -1,0 +1,227 @@
+#!/bin/sh
+# gather-local-leakage: deterministic detection of LOCAL context the diff would SHIP -
+# files and values that mean something only inside the author's own environment.
+#
+# Why this exists: meetsmore/claude-plugins#258. A skill was written by one person on one
+# machine and the diff carried that machine with it - a real page id and user id offered as
+# copyable recipe values, one person's private role vocabulary in rulings a stranger would
+# read, one personal browser tool named where the requirement belonged, a personal tool's
+# ignore rule added to the shared .gitignore, four throwaway scratch scripts committed by
+# mistake, and a draft written for one audience shipped inside the plugin. Every one of
+# those compiled, passed lint, passed tests, and passed several review rounds: nothing in
+# the change looks wrong, it just is not true anywhere but here. Reviewers miss this class
+# because they read the diff as the author, from inside the environment that makes it read
+# fine.
+#
+# Direction matters. We do NOT try to decide what is private - that needs the reader's
+# context and it is the model's job. We extract the mechanical signals (the absolute home
+# path, the identity-shaped literal, the scratch location, the personal ignore rule, the
+# private-lexicon term) from the diff's ADDED lines and added file paths, and hand them to
+# stage 04, which judges whether each one is load-bearing for a reader who is not us.
+#
+# Usage: gather-local-leakage <pr-diff-file> <out-dir> [vocab-file]
+#   vocab-file defaults to <skill>/references/private-vocab.txt.
+# Writes:
+#   <out-dir>/local-leakage.tsv - one row per hit:
+#       <class>\t<path>\t<line>\t<evidence>
+#     `<line>` is `-` for a whole-file hit. An empty result writes an explicit CLEAR
+#     line, so "no rows" reads as "searched and found none" rather than "not checked".
+#
+# Classes emitted:
+#   home-path        an absolute path under a personal home directory
+#   identity-value   an email, or a workspace/user/page id literal (32-hex, uuid, Slack)
+#   scratch-path     an added file whose path is a scratch, sandbox or draft location
+#   personal-ignore  an ignore rule for a personal tool added to a shared ignore file
+#   private-vocab    a term from the private lexicon, meaningless in another environment
+#
+# NO judgment: this script does not decide severity, and a hit is not automatically a
+# finding. A fixture email, a documented tenant uuid, a deliberately public link - all
+# legitimately appear. Stage 04 decides; that is why the evidence column carries the
+# whole line.
+#
+# The lexicon lives in the REVIEW tooling (references/private-vocab.txt), never in the
+# reviewed repo: #258's first guard against this class hardcoded the very names it was
+# banning inside a file that shipped, and so published the list it was meant to suppress.
+# The scan excludes that file from itself for the same reason.
+#
+# Read-only. No gh, no network. POSIX sh / bash 3.2. One awk pass: no per-term x per-line
+# loop, so a 5000-line diff against a 30-term lexicon costs one process, not 150000.
+# The scan is one awk program rather than a chain of greps precisely so it never leans on
+# `\b` or a `\t` escape inside `grep -E`, neither of which is POSIX ERE and both of which
+# behave differently on GNU and BSD.
+#
+# Known residual misses (documented, not solved):
+#   - an environment ASSUMPTION with no literal: a variable only one install sets, a
+#     command only on one machine, a default that is right in one workspace. #258's
+#     CLAUDE_PLUGIN_ROOT path bug is exactly this shape and no grep finds it. Stage 04
+#     owns it as an explicit reviewer pass; this tool cannot help there.
+#   - a real person's name in prose ("ask Hiroki to re-run it") has no marker.
+#   - a lexicon term this list has not learned yet. A CLEAR is bounded by the list, so
+#     never report it as proof the diff is portable.
+#   - `.claude/` and `.cursor/` are NOT treated as scratch: they are shared, committed
+#     repo config as often as personal state, and flagging every one drowns the result.
+#     A personal file under them reaches this tool only via its own `.local` suffix.
+#   - a pure rename or mode change INTO a scratch location: it has no added line, so the
+#     path class never sees the file. A rename that also edits content is caught.
+#   - deleted lines. This class is about what SHIPS, so removals are out of scope by
+#     design, and the parser can never emit one.
+set -eu
+
+DIFF=${1:-}; OUT=${2:-}; VOCAB=${3:-}
+[ -n "$DIFF" ] && [ -n "$OUT" ] || { echo "usage: gather-local-leakage <pr-diff-file> <out-dir> [vocab-file]" >&2; exit 2; }
+[ -f "$DIFF" ] || { echo "gather-local-leakage: diff file not found: $DIFF" >&2; exit 2; }
+if [ -z "$VOCAB" ]; then
+    VOCAB=$(cd "$(dirname "$0")/.." && pwd)/references/private-vocab.txt
+fi
+mkdir -p "$OUT"
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+OUTFILE=$OUT/local-leakage.tsv
+
+# ------------------------------------------------------------------- 1. the lexicon
+# One alternation, built once. Terms are lowercased (the match is case-insensitive via
+# tolower) and their dots escaped, so a term like `ego-lite` cannot match `egoXlite`.
+VOCABRE=''
+if [ -f "$VOCAB" ]; then
+    VOCABRE=$(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$VOCAB" \
+        | tr 'A-Z' 'a-z' | sed -e '/^$/d' -e 's/\./\\./g' \
+        | sort -u | tr '\n' '|' | sed 's/|$//')
+fi
+
+# ------------------------------------------------------------------- 2. the one pass
+# `+++ b/<path>` sets the file, but ONLY when the previous line was `--- `: an added line
+# whose own content starts with `++ ` is otherwise read as a file header. `+++ /dev/null`
+# (a deleted file) clears the path rather than being sliced into `ev/null`.
+# Each `@@ -a,b +c,d @@` resets the RIGHT-side counter; `+` and context lines advance it,
+# `-` lines do not - which is also why a value the diff DELETES can never produce a hit.
+VOCABRE="$VOCABRE" awk '
+function ev(s,   t) { t = s; sub(/^[ \t]*/, "", t); gsub(/\t/, " ", t); return substr(t, 1, 200) }
+function emit(cls, p, ln, text) { print cls "\t" p "\t" ln "\t" ev(text) }
+
+BEGIN {
+    vre = ENVIRON["VOCABRE"]
+    nterm = (vre == "") ? 0 : split(vre, term, "|")
+
+    # Generated, vendored and lockfile trees carry third-party literals by design, and an
+    # integrity hash is not a personal id. Excluded here so every surviving row is worth
+    # reading.
+    SKIPPATH = "(^|/)(node_modules|vendor|dist|build|coverage|target|\\.next|\\.nuxt|__snapshots__)/" \
+             "|(^|/)[^/]*(-lock\\.json|\\.lock|\\.min\\.js|\\.min\\.css|\\.map|\\.snap)$" \
+             "|(^|/)(go\\.sum|yarn\\.lock|pnpm-lock\\.yaml|Gemfile\\.lock|Cargo\\.lock|composer\\.lock|poetry\\.lock)$"
+
+    HOMEPATH = "(/Users/|/home/)[A-Za-z0-9._-]+|[A-Za-z]:\\\\Users\\\\[A-Za-z0-9._-]+"
+    # runner/ubuntu/root and friends are CI and container home directories, not a machine
+    # that belongs to anyone.
+    HOMESKIP = "(/Users/|/home/)(runner|ubuntu|root|user|username|vagrant|node|app|admin|circleci|jenkins|gitpod|codespace)([/\"'"'"' ]|$)"
+
+    EMAIL     = "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z][A-Za-z]+"
+    EMAILSKIP = "noreply|no-reply|example\\.(com|org|net)|@test\\.|@localhost|sentry\\.io"
+
+    # Bounded tokens: a 32-hex that is really the middle of a 40-hex git sha or a 64-hex
+    # digest fails the trailing boundary, so the digest skip-list does not have to name it.
+    HEX32 = "(^|[^0-9A-Za-z])[0-9a-f]{32}([^0-9A-Za-z]|$)"
+    UUID  = "(^|[^0-9A-Za-z])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}([^0-9A-Za-z]|$)"
+    SLACK = "(^|[^0-9A-Za-z])[UWCGBT][A-Z0-9]{7,9}([^0-9A-Za-z]|$)"
+    IDSKIP = "sha256|sha512|integrity|checksum|md5|00000000-0000"
+
+    IGNOREFILE = "(^|/)\\.[a-z]*ignore$"
+    # An ignore rule for a tool only one person runs belongs in the global ignore file of
+    # whoever runs it, not in the repository every contributor clones. Project-level build
+    # and cache dirs are the legitimate case and are skipped; a personal EDITOR dir is not,
+    # because it is the same class as a personal tool dir.
+    IGNORESKIP = "^\\.(env|next|nuxt|turbo|cache|venv|yarn|pnp|gradle|terraform|svelte-kit|astro|parcel-cache|eslintcache|mypy_cache|pytest_cache|ruff_cache|tox|nyc_output|direnv|husky|git|hg|svn|DS_Store)([.\\/]|$)"
+
+    SCRATCH = "(^|/)(\\.ego-lite|\\.no-mistakes|\\.icm|\\.lavish|\\.treehouse|scratch|scratchpad|sandbox|playground|untitled|unnamed|tmp|temp)(/|$)" \
+            "|(^|/)[^/]*[-._](draft|notes|scratch|local|personal)\\.[A-Za-z0-9]+$"
+
+    VOCABFILE = "(^|/)private-vocab\\.txt$"
+}
+
+{
+    if (substr($0, 1, 4) == "+++ " && prev ~ /^--- /) {
+        p = substr($0, 5); sub(/[[:space:]]+$/, "", p)
+        if (p == "/dev/null") path = ""
+        else if (substr(p, 1, 2) == "b/") path = substr(p, 3)
+        else path = p
+        prev = $0; next
+    }
+    if (substr($0, 1, 3) == "@@ ") {
+        match($0, /\+[0-9]+/); n = substr($0, RSTART + 1, RLENGTH - 1) + 0
+        prev = $0; next
+    }
+    c = substr($0, 1, 1)
+    if (c == "+") {
+        if (path != "") classify(path, n, substr($0, 2))
+        n++
+    } else if (c == "-" || c == "\\") {
+        # a removed line, or the "\ No newline at end of file" marker: neither ships,
+        # and neither advances the right-side counter.
+    } else {
+        n++   # context line, including a bare empty line inside a hunk
+    }
+    prev = $0
+}
+
+function classify(p, ln, text,   low, tok, i) {
+    if (p ~ SKIPPATH || p ~ VOCABFILE) return
+    if (!(p in seen)) { seen[p] = 1; order[++norder] = p }
+    low = tolower(text)
+
+    if (text ~ HOMEPATH && text !~ HOMESKIP) emit("home-path", p, ln, text)
+
+    if (text ~ EMAIL && low !~ EMAILSKIP) emit("identity-value", p, ln, text)
+    else if (low !~ IDSKIP) {
+        if (text ~ HEX32 || text ~ UUID) emit("identity-value", p, ln, text)
+        else if (match(text, SLACK)) {
+            tok = substr(text, RSTART, RLENGTH)
+            # A Slack id mixes letters and digits; TIMESTAMP and CANCELLED do not, and
+            # without this they are the loudest false positives this class can produce.
+            if (tok ~ /[0-9]/ && tok ~ /[A-Z][A-Z]/) emit("identity-value", p, ln, text)
+        }
+    }
+
+    if (p ~ IGNOREFILE && text ~ /^\.[A-Za-z0-9_.-]+\/?$/ && text !~ IGNORESKIP)
+        emit("personal-ignore", p, ln, text)
+
+    if (nterm > 0) {
+        for (i = 1; i <= nterm; i++) {
+            if (low ~ ("(^|[^a-z0-9_])" term[i] "([^a-z0-9_]|$)")) {
+                # The matched term leads the evidence: without it a reviewer reading the
+                # row has to re-derive which word fired, and the lexicon is not in the
+                # repo they are reading.
+                emit("private-vocab", p, ln, "[" term[i] "] " text)
+                break   # one row per line, whatever else on it also matches
+            }
+        }
+    }
+}
+
+END {
+    # Path class: judged once per added file, not once per line. #258 shipped
+    # .ego-lite/unnamed/*.js and a docs/*-draft.md exactly this way.
+    for (i = 1; i <= norder; i++)
+        if (order[i] ~ SCRATCH)
+            emit("scratch-path", order[i], "-", "added file lives in a scratch, sandbox or draft location")
+}
+' "$DIFF" > "$TMP/hits" || { echo "gather-local-leakage: scan failed on $DIFF" >&2; exit 1; }
+
+# -------------------------------------------------------------------- 3. the report
+sort -u "$TMP/hits" > "$TMP/hits.sorted"
+n=$(awk 'END {print NR+0}' "$TMP/hits.sorted")
+
+{
+    printf '# local-leakage.tsv - local context this diff would SHIP (added lines and added paths)\n'
+    printf '# class\tpath\tline\tevidence\n'
+    cat "$TMP/hits.sorted"
+    if [ "$n" -eq 0 ]; then
+        printf '# CLEAR: searched every added line and added path for home paths, identity values,\n'
+        printf '# scratch locations, personal ignore rules and private-lexicon terms, and found\n'
+        printf '# none. This is a searched-and-clear result, not an unchecked one - and it is\n'
+        printf '# bounded by the lexicon and by the residual misses in this tool'"'"'s header.\n'
+    else
+        printf '# TOTAL: %s local-context signals. A hit is a SIGNAL, not a finding: stage 04\n' "$n"
+        printf '# accounts for every row as a finding or as a diff-grounded dismissal.\n'
+    fi
+} > "$OUTFILE"
+
+echo "gather-local-leakage: $n signals -> $OUTFILE"
