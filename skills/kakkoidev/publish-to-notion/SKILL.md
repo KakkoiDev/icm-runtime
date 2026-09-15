@@ -112,11 +112,12 @@ they are set, and never block on them beyond saying they are outstanding.
   (`file:line`/path) on its own full-width line, then the JA/EN explanation in a per-pair
   `<columns>` block above the block - never `JA / EN` on one line. Details in stage 01-render step 7.
 - Provenance callout: every page published through this skill is AI-authored, so the FIRST block
-  is a callout with the robot icon stating AI authorship + human review -
-  `<callout icon="🤖" color="gray_bg">` + `この資料はAIが生成し、人間がレビューしています。` +
-  `This document was AI-generated and reviewed by a human.` + `</callout>` (match the doc's
-  language(s); one line if monolingual). Prepend on CREATE; on UPDATE add only if absent - never
-  duplicate, never stamp a page not authored through this skill. Details in stage 01-render step 6.
+  states AI authorship + human review with the robot icon. On a bilingual page that is TWO
+  callouts in ONE `<columns>` block (JA `この資料はAIが生成し、人間がレビューしています。` left,
+  EN `This document was AI-generated and reviewed by a human.` right), both
+  `<callout icon="🤖" color="gray_bg">`; a monolingual page gets one plain callout.
+  Prepend on CREATE; on UPDATE add only if absent - never duplicate, never stamp a page not
+  authored through this skill. Details in stage 01-render step 6.
 - Tables use `<table>/<tr>/<td>`, NEVER pipe tables. Cells hold rich text only - use
   `**bold**`, not HTML tags.
 - Mermaid goes in a ```mermaid code fence. Keep node labels quote-free where possible; if a
@@ -133,7 +134,11 @@ they are set, and never block on them beyond saying they are outstanding.
   columns. Prefer per-pair `<columns>` over a two-column `<table>` for paired prose. Diagrams,
   code fences, and tables stay FULL-WIDTH - never nest them in a column (mermaid in a half-width
   column renders cramped and can fail to parse). Bilingual diagram labels (`JA<br>EN` inside a
-  node) stay inline as-is. Monolingual content: no columns. Column children are tab-indented; pass
+  node) stay inline as-is. A bilingual CALLOUT splits the same way: ONE `<columns>` block holding
+  TWO callouts, same icon and colour, language A left. NEVER stack both languages inside a single
+  callout - a stacked bilingual callout is a defect, not a style choice (captain's standing rule,
+  2026-09-14). The ONLY blocks that stay joined and full-width are ```mermaid fences, images,
+  code fences, and `<table>` blocks. Monolingual content: no columns. Column children are tab-indented; pass
   REAL tabs, not `\t`.
 - Wrap paths, globs, and code tokens in backticks. Bare `*` and `~` are markdown delimiters
   and will eat your text. Outside code blocks, escape: backslash asterisk tilde backtick

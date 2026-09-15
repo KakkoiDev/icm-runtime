@@ -75,7 +75,10 @@ full-width, and laying out any surviving bilingual prose in two columns.
    per-pair `<columns>` over a two-column `<table>` for paired prose - the table aligns too, but
    columns are the native bilingual layout and read cleaner. This is the default, not an option to
    ask about. Leave diagrams, ```mermaid fences, code blocks, and `<table>` blocks FULL-WIDTH
-   (outside any column); leave bilingual diagram labels (`JA<br>EN`) inline. Skip this step entirely
+   (outside any column); leave bilingual diagram labels (`JA<br>EN`) inline. A bilingual CALLOUT is
+   NOT an exception: split it into TWO callouts, same icon and colour, inside ONE `<columns>`
+   block. A callout holding both languages stacked is a defect (captain's standing rule,
+   2026-09-14). Skip this step entirely
    for monolingual content.
    **Full width (captain's standing rule, 2026-09-08).** On a bilingual page, EVERY `<table>` gets
    `fit-page-width="true"` AND an explicit `<colgroup>`. The attribute alone does NOT widen the
@@ -97,13 +100,22 @@ full-width, and laying out any surviving bilingual prose in two columns.
    skill is AI-authored, so stamp it. Make the FIRST block of `output/page.md` a callout with the
    robot icon and a gray background declaring AI authorship + human review:
    ```
-   <callout icon="🤖" color="gray_bg">
-   	この資料はAIが生成し、人間がレビューしています。
-   	This document was AI-generated and reviewed by a human.
-   </callout>
+   <columns>
+   	<column>
+   		<callout icon="🤖" color="gray_bg">
+   			この資料はAIが生成し、人間がレビューしています。
+   		</callout>
+   	</column>
+   	<column>
+   		<callout icon="🤖" color="gray_bg">
+   			This document was AI-generated and reviewed by a human.
+   		</callout>
+   	</column>
+   </columns>
    ```
-   Match the document's language(s): a bilingual doc gets both lines (the doc's first language
-   first); a monolingual doc gets only the matching line. On CREATE, prepend it as the first block.
+   Match the document's language(s): a bilingual doc gets the two-column form above (the doc's
+   first language left); a monolingual doc gets ONE plain callout with the matching line and no
+   `<columns>` wrapper. On CREATE, prepend it as the first block.
    On UPDATE, fetch the page first and add it ONLY if no such callout already exists at the top -
    never duplicate it, and never add it to a page that was not authored through this skill.
 8. Cross-references and code examples (add what the source is missing - do not just pass content
