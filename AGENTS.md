@@ -13,6 +13,11 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   character classes.
 - macOS `awk` is version 20200816 and does support `{n,m}` intervals; older one-true-awk builds do
   not, so keep intervals to awk, not to `sed`.
+- `set -e` does NOT fire when a loop body ends in a failing `&&` list (`cmd && act`):
+  bash 3.2 suppresses -e for every command of an AND-OR list but the last, and does not
+  re-check the loop. A bare failing command as the body's last statement DOES exit. So a
+  guard written as `match && emit` never aborts, and the same guard written bare aborts
+  the whole script - verify which shape a script has before blaming either.
 
 ## Maintaining this file
 
