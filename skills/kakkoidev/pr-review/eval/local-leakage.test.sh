@@ -31,6 +31,8 @@
 #   - drop the "a Slack id contains a digit" guard                       -> P6
 #   - stop excluding the lexicon file from its own scan                  -> C2
 #   - swallow an awk error with `|| :` (a silent false all-clear)         -> C4
+#   - drop the collected rows, or skip the report entirely, when the path pass
+#     matches nothing last (the abort this tool replaced)                -> C5
 # Runs from anywhere - it locates itself. Exit 0 = pass.
 set -eu
 
@@ -174,4 +176,27 @@ test -f "$BROKE/out/local-leakage.tsv" \
     && { echo "FAIL(C4): a broken scan still wrote local-leakage.tsv - an error can be read as a CLEAR"; rm -rf "$BROKE"; exit 1; }
 rm -rf "$BROKE"
 
-echo "PASS: planted home path, recipe id, address, scratch files, personal ignore rule and lexicon term all found at the right lines; CI paths, bot/placeholder addresses, lockfile hashes, build-dir ignores, all-caps constants and every removed line stayed silent"
+# C5 - a hit collected EARLY, then a last added path that is NOT a scratch path. The path
+#      class is judged last, over every added path at once. The commit that added this tool
+#      says the draft it replaced "exited via set -e before writing any report whenever the
+#      last added path was not a scratch path", so a diff of this shape lost every hit
+#      already in hand and wrote no CLEAR either. C1 is not this assertion: C1 proves an
+#      EMPTY result still records a CLEAR, and a run that drops real rows and then writes
+#      that same CLEAR passes C1 while reporting a leaking diff as clean - the most
+#      expensive failure this dimension has. This is the only check here that plants a hit
+#      and then ends the diff outside the scratch class.
+LATE=$(mktemp -d)
+printf 'diff --git a/docs/setup.md b/docs/setup.md\n--- a/docs/setup.md\n+++ b/docs/setup.md\n@@ -1,1 +1,2 @@\n # Setup\n+run it from /Users/someone/Code/icm/bin/tool\ndiff --git a/src/util.ts b/src/util.ts\n--- a/src/util.ts\n+++ b/src/util.ts\n@@ -1,1 +1,2 @@\n export const a = 1\n+export const b = a + 1\n' > "$LATE/pr.diff"
+sh "$LL" "$LATE/pr.diff" "$LATE/out" >/dev/null 2>&1 \
+    || { echo "FAIL(C5): exited non-zero when the last added path was not a scratch path"; rm -rf "$LATE"; exit 1; }
+test -s "$LATE/out/local-leakage.tsv" \
+    || { echo "FAIL(C5): no report written when the last added path was not a scratch path - the run aborted and took its hits with it"; rm -rf "$LATE"; exit 1; }
+grep -q '^home-path	docs/setup\.md	2	' "$LATE/out/local-leakage.tsv" \
+    || { echo "FAIL(C5): the home path from the FIRST file is missing - a later non-matching path must never discard an earlier hit"; rm -rf "$LATE"; exit 1; }
+grep -q '^scratch-path	' "$LATE/out/local-leakage.tsv" \
+    && { echo "FAIL(C5): a scratch-path row appeared - this fixture must end on a path OUTSIDE the class or it stops testing the abort"; rm -rf "$LATE"; exit 1; }
+grep -q '^# TOTAL: 1 ' "$LATE/out/local-leakage.tsv" \
+    || { echo "FAIL(C5): expected a TOTAL of 1, not a CLEAR - a report that loses the row still has to stop claiming clear"; rm -rf "$LATE"; exit 1; }
+rm -rf "$LATE"
+
+echo "PASS: planted home path, recipe id, address, scratch files, personal ignore rule and lexicon term all found at the right lines; CI paths, bot/placeholder addresses, lockfile hashes, build-dir ignores, all-caps constants and every removed line stayed silent; a hit found before a non-scratch final path survived into the report"
