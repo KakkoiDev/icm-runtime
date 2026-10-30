@@ -1,0 +1,153 @@
+#!/bin/sh
+# mark-superseded: R11 - collapse the bot reports a later round has superseded, so the
+# human reviewer at the end of the loop sees the current report and not ten of them.
+#
+# Usage: mark-superseded <owner/repo> <pr#> <bot-comments-tsv> [--bot <login>] [--apply]
+#
+# <bot-comments-tsv> is the `bot-comments-<n>.tsv` gather-round wrote for the LATEST
+# round: id<TAB>created_at<TAB>minimized<TAB>superseded.
+#
+# Without --apply this is a DRY RUN: it prints what it would minimize and changes nothing.
+#
+# MECHANISM (proven and executed on a live PR). An ordinary bot PR comment is an issue
+# comment: GitHub gives it no "resolve" affordance, only `minimizeComment` with
+# `classifier: OUTDATED`, which exists solely in GraphQL. Two things follow, and both are
+# load-bearing:
+#   * The call goes through the approved wrapper at its `/graphql` path
+#     (`gh-axi api POST /graphql`). The plain GitHub CLI route for the same mutation is
+#     refused as a write.
+#   * ALL targets go in ONE call, as GraphQL aliases (m0:, m1:, ...), so the whole cleanup
+#     costs one approval instead of one per comment.
+#
+# Invariants (each is a refusal, not a warning):
+#   NEVER-LATEST   rows with superseded=no are skipped. The newest bot report is the
+#                  current round's and stays visible.
+#   NEVER-HUMAN    every target is re-verified against the live PR as an issue comment
+#                  authored by the bot login. Anything else is refused - a human's comment
+#                  is never collapsed by this loop.
+#   NEVER-REVIEW   the only mutation is minimizeComment on an IssueComment node. It cannot
+#                  reach a review, a review thread, or anyone's PENDING DRAFT review -
+#                  those are not issue comments and are never addressed here.
+#   IDEMPOTENT     rows already minimized=yes are skipped.
+#
+# Threads are NOT minimized - a thread is answered and then resolved (R10). This tool is
+# only for the issue comments GitHub gives no resolve affordance to.
+#
+# TIMING: run this in 03-close, after the loop has converged. Never between rounds - while
+# rounds are still coming, that history is what the next round and the human read.
+#
+# GitHub CLI: `$GHBIN` (default gh-axi). Writes only under --apply.
+# Parses under bash 3.2 / POSIX sh.
+set -eu
+
+GHBIN=${GHBIN:-gh-axi}
+
+OR=""; PR=""; TSV=""; BOT=claude; APPLY=no
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --apply) APPLY=yes; shift ;;
+        --bot) BOT=${2:-}; shift 2 ;;
+        -*) echo "mark-superseded: unknown flag $1" >&2; exit 2 ;;
+        *)
+            if [ -z "$OR" ]; then OR=$1
+            elif [ -z "$PR" ]; then PR=$1
+            elif [ -z "$TSV" ]; then TSV=$1
+            else echo "mark-superseded: unexpected argument $1" >&2; exit 2
+            fi
+            shift ;;
+    esac
+done
+[ -n "$OR" ] && [ -n "$PR" ] && [ -n "$TSV" ] \
+    || { echo "usage: mark-superseded <owner/repo> <pr#> <bot-comments-tsv> [--bot <login>] [--apply]" >&2; exit 2; }
+[ -f "$TSV" ] || { echo "mark-superseded: $TSV not found" >&2; exit 2; }
+command -v "$GHBIN" >/dev/null 2>&1 || { echo "mark-superseded: $GHBIN not found" >&2; exit 3; }
+command -v jq >/dev/null 2>&1 || { echo "mark-superseded: jq not found" >&2; exit 3; }
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+
+# Live issue comments: the authority for author + node id. The TSV says what to do; the
+# live PR says whether it is allowed (NEVER-HUMAN).
+"$GHBIN" api "/repos/$OR/issues/$PR/comments" --paginate > "$TMP/ic.raw" 2>/dev/null \
+    || echo '[]' > "$TMP/ic.raw"
+jq -s 'if length == 0 then [] else (map(if type=="array" then . else [.] end) | add) end' \
+    "$TMP/ic.raw" > "$TMP/ic.json" 2>/dev/null || echo '[]' > "$TMP/ic.json"
+
+rc=0
+targets=0; skipped=0; refused=0
+: > "$TMP/plan"
+
+while IFS="$(printf '\t')" read -r id created minimized superseded; do
+    [ -n "${id:-}" ] || continue
+    case "$id" in \#*) continue ;; esac
+
+    if [ "${superseded:-}" != yes ]; then
+        printf 'SKIP\t%s\tlatest-report-stays-visible\n' "$id"; skipped=$((skipped + 1)); continue
+    fi
+    if [ "${minimized:-}" = yes ]; then
+        printf 'SKIP\t%s\talready-minimized\n' "$id"; skipped=$((skipped + 1)); continue
+    fi
+
+    live=$(jq -c --arg id "$id" 'map(select((.id|tostring) == $id)) | last // {}' "$TMP/ic.json")
+    author=$(printf '%s' "$live" | jq -r '.user.login // "-"')
+    node=$(printf '%s' "$live" | jq -r '.node_id // "-"')
+
+    if [ "$node" = "-" ]; then
+        printf 'REFUSE\t%s\tnot-an-issue-comment-on-this-PR\n' "$id"; refused=$((refused + 1)); rc=1; continue
+    fi
+    if ! printf '%s' "$author" | tr 'A-Z' 'a-z' | grep -q "$(printf '%s' "$BOT" | tr 'A-Z' 'a-z')"; then
+        printf 'REFUSE\t%s\tauthored-by-%s-not-the-bot\n' "$id" "$author"; refused=$((refused + 1)); rc=1; continue
+    fi
+    # The node id is interpolated into the mutation text, so it is charset-checked first.
+    case "$node" in
+        *[!A-Za-z0-9_=-]*) printf 'REFUSE\t%s\tnode-id-has-unexpected-characters\n' "$id"; refused=$((refused + 1)); rc=1; continue ;;
+    esac
+
+    targets=$((targets + 1))
+    printf '%s\t%s\t%s\t%s\n' "$id" "$node" "$author" "${created:--}" >> "$TMP/plan"
+done < "$TSV"
+
+if [ "$APPLY" != yes ]; then
+    while IFS="$(printf '\t')" read -r id node author created; do
+        [ -n "${id:-}" ] || continue
+        printf 'WOULD-MINIMIZE\t%s\t%s\t%s\n' "$id" "$author" "$created"
+    done < "$TMP/plan"
+    printf '# mode=dry-run targets=%s minimized=0 skipped=%s refused=%s\n' "$targets" "$skipped" "$refused"
+    exit $rc
+fi
+
+if [ "$targets" -eq 0 ]; then
+    printf '# mode=apply targets=0 minimized=0 skipped=%s refused=%s\n' "$skipped" "$refused"
+    exit $rc
+fi
+
+# ---- one aliased mutation for every target: one call, one approval ----
+i=0
+mut="mutation{"
+while IFS="$(printf '\t')" read -r id node author created; do
+    [ -n "${id:-}" ] || continue
+    mut="$mut m$i: minimizeComment(input:{subjectId:\"$node\",classifier:OUTDATED}){minimizedComment{isMinimized}}"
+    i=$((i + 1))
+done < "$TMP/plan"
+mut="$mut }"
+
+if ! "$GHBIN" api POST /graphql --field query="$mut" > "$TMP/res.json" 2>"$TMP/err"; then
+    printf 'FAILED\tall\t%s targets\tminimizeComment-call-rejected: %s\n' "$targets" "$(head -3 "$TMP/err" | tr '\n' ' ')"
+    printf '# mode=apply targets=%s minimized=0 skipped=%s refused=%s\n' "$targets" "$skipped" "$refused"
+    exit 1
+fi
+
+done_n=0
+i=0
+while IFS="$(printf '\t')" read -r id node author created; do
+    [ -n "${id:-}" ] || continue
+    ok=$(jq -r --arg a "m$i" '(.data[$a].minimizedComment.isMinimized // false) | tostring' "$TMP/res.json" 2>/dev/null || echo false)
+    if [ "$ok" = true ]; then
+        printf 'MINIMIZED\t%s\t%s\t%s\n' "$id" "$author" "$created"; done_n=$((done_n + 1))
+    else
+        printf 'FAILED\t%s\t%s\talias m%s did not report isMinimized\n' "$id" "$author" "$i"; rc=1
+    fi
+    i=$((i + 1))
+done < "$TMP/plan"
+
+printf '# mode=apply targets=%s minimized=%s skipped=%s refused=%s\n' "$targets" "$done_n" "$skipped" "$refused"
+exit $rc

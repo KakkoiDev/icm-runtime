@@ -1,0 +1,138 @@
+#!/bin/sh
+# gather-ci: R8 - read CI honestly.
+#
+# Usage: gather-ci <owner/repo> <pr#> <out-dir> [round]
+#
+# Writes <out-dir>/ci-<round>.tsv (round defaults to "now"):
+#   check<TAB>conclusion<TAB>job<TAB>step<TAB>step_conclusion
+# plus `# SUSPECT:` lines for the two shapes that have actually lied on this repo's PRs,
+# and a `# TOTAL:` accounting line.
+#
+# The two shapes, both real:
+#   GREEN-OVER-FAILED-STEP  a check/job whose conclusion is success while one of its own
+#                           steps failed or was cancelled. A type-check step that OOMs
+#                           leaves an error count of zero in the log while the wrapper
+#                           stays green. A crashed step prints no errors - counting
+#                           errors is not reading CI.
+#   RED-GATE                a failed check whose name looks like a quality gate. The
+#                           analysis can pass with zero issues while the gate job fails
+#                           on a poll race. A red gate is a claim about the gate, not
+#                           yet a claim about the code.
+#
+# The tool does not decide which one a SUSPECT is - that needs the step log. It makes both
+# shapes impossible to miss, and stage 02 must resolve every SUSPECT by reading the actual
+# step and recording "real failure" or "infrastructure". Never report a gate colour as a
+# code fact.
+#
+# Crash markers looked for in a failed/suspect step's log when `--logs` is passed:
+# FATAL ERROR, JavaScript heap out of memory, Killed, exit code 137.
+#
+# GitHub CLI: `$GHBIN` (default gh-axi). Read-only, plain GETs.
+# Parses under bash 3.2 / POSIX sh.
+set -eu
+
+GHBIN=${GHBIN:-gh-axi}
+
+OR=""; PR=""; OUT=""; RND="now"; WANT_LOGS=no
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --logs) WANT_LOGS=yes; shift ;;
+        -*) echo "gather-ci: unknown flag $1" >&2; exit 2 ;;
+        *)
+            if [ -z "$OR" ]; then OR=$1
+            elif [ -z "$PR" ]; then PR=$1
+            elif [ -z "$OUT" ]; then OUT=$1
+            else RND=$1
+            fi
+            shift ;;
+    esac
+done
+[ -n "$OR" ] && [ -n "$PR" ] && [ -n "$OUT" ] \
+    || { echo "usage: gather-ci <owner/repo> <pr#> <out-dir> [round] [--logs]" >&2; exit 2; }
+command -v "$GHBIN" >/dev/null 2>&1 || { echo "gather-ci: $GHBIN not found" >&2; exit 3; }
+command -v jq >/dev/null 2>&1 || { echo "gather-ci: jq not found" >&2; exit 3; }
+mkdir -p "$OUT"
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+
+sha=$("$GHBIN" api "/repos/$OR/pulls/$PR" --jq '.head.sha' 2>/dev/null || echo "")
+# Validate the shape, do not just test for non-empty: a failed fetch can print its error
+# on stdout, and an error string used as a sha produces a report about nothing that still
+# ends in a confident `# CLEAR:`.
+case "$sha" in
+    *[!0-9a-fA-F]* | "") echo "gather-ci: could not read the PR head sha (got: ${sha:-<empty>})" >&2; exit 3 ;;
+esac
+[ "${#sha}" -ge 7 ] || { echo "gather-ci: implausible head sha: $sha" >&2; exit 3; }
+
+"$GHBIN" api "/repos/$OR/commits/$sha/check-runs?per_page=100" > "$TMP/checks.json" 2>/dev/null \
+    || echo '{}' > "$TMP/checks.json"
+"$GHBIN" api "/repos/$OR/commits/$sha/status" > "$TMP/status.json" 2>/dev/null \
+    || echo '{}' > "$TMP/status.json"
+
+out="$OUT/ci-$RND.tsv"
+: > "$out"
+: > "$TMP/suspect"
+
+# ---- check runs, with their steps ----
+jq -r '
+  (.check_runs // [])[]
+  | . as $c
+  | ( ($c.steps // []) | if length == 0 then [{name:"-", conclusion:"-"}] else . end )[]
+  | [ ($c.name // "-"),
+      ($c.conclusion // $c.status // "-"),
+      (($c.app.slug // "-")),
+      (.name // "-"),
+      (.conclusion // "-") ] | @tsv
+' "$TMP/checks.json" >> "$out" 2>/dev/null || true
+
+# ---- commit statuses (non-Actions integrations post here, e.g. Sonar) ----
+jq -r '
+  (.statuses // [])[]
+  | [ (.context // "-"), (.state // "-"), "(commit-status)", "-", (.state // "-") ] | @tsv
+' "$TMP/status.json" >> "$out" 2>/dev/null || true
+
+# ---- SUSPECT 1: a green wrapper over a failed/cancelled step ----
+awk -F'\t' '
+  ($2=="success" || $2=="neutral") && ($5=="failure" || $5=="cancelled" || $5=="timed_out") {
+      printf "# SUSPECT: GREEN-OVER-FAILED-STEP\t%s\tstep=%s\tstep_conclusion=%s\n", $1, $4, $5
+  }
+' "$out" >> "$TMP/suspect" || true
+
+# ---- SUSPECT 2: a red gate whose redness may be the gate, not the code ----
+awk -F'\t' '
+  ($2=="failure" || $2=="error" || $2=="timed_out") {
+      n=tolower($1)
+      if (index(n,"gate") || index(n,"sonar") || index(n,"quality") || index(n,"coverage")) {
+          if (!seen[$1]++) printf "# SUSPECT: RED-GATE\t%s\tconclusion=%s\n", $1, $2
+      }
+  }
+' "$out" >> "$TMP/suspect" || true
+
+# ---- optional: crash markers in the logs of failed or suspect checks ----
+if [ "$WANT_LOGS" = yes ]; then
+    awk -F'\t' '$2=="failure" || $5=="failure" || $5=="cancelled" || $5=="timed_out" {print $1}' "$out" \
+        | sort -u > "$TMP/failing" || true
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        rid=$(jq -r --arg n "$name" '(.check_runs // [])[] | select(.name == $n)
+              | (.details_url // "") | capture("/runs/(?<id>[0-9]+)")?.id // empty' \
+              "$TMP/checks.json" 2>/dev/null | head -1)
+        [ -n "$rid" ] || continue
+        if "$GHBIN" api "/repos/$OR/actions/runs/$rid/logs" > "$TMP/log.bin" 2>/dev/null; then
+            if LC_ALL=C grep -aqE 'FATAL ERROR|JavaScript heap out of memory|Killed|exit code 137' "$TMP/log.bin"; then
+                printf '# SUSPECT: CRASH-MARKER\t%s\tlog matched FATAL ERROR|heap out of memory|Killed|exit code 137\n' \
+                    "$name" >> "$TMP/suspect"
+            fi
+        fi
+    done < "$TMP/failing"
+fi
+
+rows=$(awk 'END{print NR+0}' "$out")
+sus=$(awk 'END{print NR+0}' "$TMP/suspect")
+cat "$TMP/suspect" >> "$out"
+if [ "$sus" -eq 0 ]; then
+    printf '# CLEAR: no green-over-failed-step and no red gate detected among %s rows\n' "$rows" >> "$out"
+fi
+printf '# TOTAL:\tsha=%s\trows=%s\tsuspects=%s\n' "$sha" "$rows" "$sus" >> "$out"
+
+cat "$out"

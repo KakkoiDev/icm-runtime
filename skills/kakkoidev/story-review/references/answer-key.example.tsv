@@ -1,0 +1,2 @@
+id	lens	primary_regex	secondary_regex	description
+T1	L1-jargon	(example term)	(not defined|undefined)	an example row: a term used without a definition on first use

@@ -1,0 +1,13 @@
+flowchart TD
+  I["icm.sh init: creates .icm/ns/skill/timestamp/"]
+  C["read CONTEXT.md (frozen)"]
+  W["do work into stage/output/"]
+  D["icm.sh stage-done: snapshots tokens"]
+  A["icm.sh audit: events match expected tools?"]
+  SE["icm.sh seal: sha256 digest into .icm-seals.log"]
+  I --> C
+  C --> W
+  W --> D
+  D -->|"more stages"| C
+  D -->|"last stage"| A
+  A --> SE

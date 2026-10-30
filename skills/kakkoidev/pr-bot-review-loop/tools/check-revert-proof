@@ -1,0 +1,125 @@
+#!/bin/sh
+# check-revert-proof: R4 - a behavioural fix needs a test that FAILS on revert, and the
+# only way to know is to run it both ways.
+#
+# Usage:
+#   check-revert-proof --repo <root> --base <ref> --test <cmd> --test-file <path>
+#                      [--out <file>] <source-file>...
+#
+#   --base        the ref holding the pre-fix state of <source-file>... (the PR base, or
+#                 the commit before this round's fix).
+#   --test        the command that runs the new test, executed from the worktree root.
+#   --test-file   the test file itself. Refused if it also appears in <source-file>...:
+#                 reverting the test along with the source makes the run fail for the
+#                 wrong reason and reads as proof.
+#   <source-file> the fix's source files, reverted to <base> for the second run.
+#
+# Runs the test twice in a throwaway `git worktree` (the tracked tree is never modified,
+# and no stash is taken - the stash stack is shared with every other worktree on this
+# machine):
+#   1. on the fix         -> must PASS
+#   2. with the source reverted, the test kept -> must FAIL
+#
+# Verdict:
+#   PROVEN                          pass then fail. This is the only result that counts.
+#   NOT-PROVEN(fails-on-head)       the test does not pass on the fix - fix or test is wrong.
+#   NOT-PROVEN(passes-on-revert)    the test asserts nothing about this change. An
+#                                   assertion can sit in the suite looking like
+#                                   coverage because `toHaveBeenCalledWith` ignores
+#                                   keys whose value is undefined, so it passed on the
+#                                   reverted code too. `toStrictEqual` on the captured
+#                                   argument is the fix.
+#
+# Also scans the added lines between <base> and HEAD for `toHaveBeenCalledWith` and emits
+# a `# TRAP:` row per hit - advisory, because the trap only bites when the assertion is
+# about a key the fix adds, which is a judgment.
+#
+# Parses under bash 3.2 / POSIX sh.
+set -eu
+
+ROOT=""; BASE=""; TESTCMD=""; TESTFILE=""; OUTFILE=""
+SRC=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --repo) ROOT=${2:-}; shift 2 ;;
+        --base) BASE=${2:-}; shift 2 ;;
+        --test) TESTCMD=${2:-}; shift 2 ;;
+        --test-file) TESTFILE=${2:-}; shift 2 ;;
+        --out) OUTFILE=${2:-}; shift 2 ;;
+        -*) echo "check-revert-proof: unknown flag $1" >&2; exit 2 ;;
+        *) SRC="$SRC $1"; shift ;;
+    esac
+done
+[ -n "$ROOT" ] && [ -n "$BASE" ] && [ -n "$TESTCMD" ] && [ -n "$TESTFILE" ] && [ -n "$SRC" ] \
+    || { echo "usage: check-revert-proof --repo <root> --base <ref> --test <cmd> --test-file <path> [--out <file>] <source-file>..." >&2; exit 2; }
+[ -d "$ROOT/.git" ] || [ -f "$ROOT/.git" ] \
+    || { echo "check-revert-proof: $ROOT is not a git checkout" >&2; exit 2; }
+
+for f in $SRC; do
+    if [ "$f" = "$TESTFILE" ]; then
+        echo "check-revert-proof: REFUSED - the test file ($TESTFILE) is in the reverted source list." >&2
+        echo "  Reverting the test with the source makes run 2 fail for the wrong reason and reads as proof." >&2
+        exit 2
+    fi
+done
+
+emit() { if [ -n "$OUTFILE" ]; then printf '%s\n' "$1" >> "$OUTFILE"; fi; printf '%s\n' "$1"; }
+[ -n "$OUTFILE" ] && : > "$OUTFILE"
+
+WT=$(mktemp -d)
+cleanup() {
+    git -C "$ROOT" worktree remove --force "$WT/w" >/dev/null 2>&1 || true
+    rm -rf "$WT"
+}
+trap cleanup EXIT
+
+git -C "$ROOT" worktree add --detach "$WT/w" HEAD >/dev/null 2>&1 \
+    || { echo "check-revert-proof: could not create a worktree at HEAD" >&2; exit 3; }
+
+run_test() {
+    ( cd "$WT/w" && sh -c "$TESTCMD" ) > "$WT/log" 2>&1 && echo pass || echo fail
+}
+
+head_res=$(run_test)
+cp "$WT/log" "$WT/head.log" 2>/dev/null || true
+
+# Revert the fix's source to <base>, keeping the test. A file the fix ADDED does not
+# exist at <base>: remove it instead of failing the checkout.
+for f in $SRC; do
+    if git -C "$WT/w" cat-file -e "$BASE:$f" 2>/dev/null; then
+        git -C "$WT/w" checkout "$BASE" -- "$f" >/dev/null 2>&1 \
+            || { echo "check-revert-proof: could not revert $f to $BASE" >&2; exit 3; }
+    else
+        rm -f "$WT/w/$f"
+    fi
+done
+
+rev_res=$(run_test)
+cp "$WT/log" "$WT/revert.log" 2>/dev/null || true
+
+if [ "$head_res" = pass ] && [ "$rev_res" = fail ]; then
+    verdict="PROVEN"
+elif [ "$head_res" != pass ]; then
+    verdict="NOT-PROVEN(fails-on-head)"
+else
+    verdict="NOT-PROVEN(passes-on-revert)"
+fi
+
+emit "$(printf 'base\t%s' "$BASE")"
+emit "$(printf 'test_cmd\t%s' "$TESTCMD")"
+emit "$(printf 'test_file\t%s' "$TESTFILE")"
+emit "$(printf 'reverted_files\t%s' "$(echo $SRC | tr ' ' ',')")"
+emit "$(printf 'on_head\t%s' "$head_res")"
+emit "$(printf 'on_revert\t%s' "$rev_res")"
+emit "$(printf 'verdict\t%s' "$verdict")"
+
+# Advisory: the undefined-key trap that makes an assertion pass both ways.
+git -C "$ROOT" diff "$BASE"...HEAD -- "$TESTFILE" 2>/dev/null \
+    | grep -n '^+' | grep 'toHaveBeenCalledWith' > "$WT/trap" 2>/dev/null || true
+if [ -s "$WT/trap" ]; then
+    while IFS= read -r line; do
+        emit "$(printf '# TRAP:\ttoHaveBeenCalledWith ignores undefined-valued keys - use toStrictEqual on the captured argument if this asserts a key the fix adds\t%s' "$line")"
+    done < "$WT/trap"
+fi
+
+case "$verdict" in PROVEN) exit 0 ;; *) exit 1 ;; esac

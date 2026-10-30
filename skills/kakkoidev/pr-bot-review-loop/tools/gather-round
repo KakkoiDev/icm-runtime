@@ -1,0 +1,248 @@
+#!/bin/sh
+# gather-round: R7 (which commit did this round actually review?), R10 (which threads are
+# still open or unanswered?) and R11 (which superseded bot reports are still expanded?).
+#
+# Usage: gather-round <owner/repo> <pr#> <round> <out-dir> [bot-login]
+#        gather-round --head-only <owner/repo> <pr#> <out-dir>
+#
+# The normal form writes, for round <n>:
+#   <out-dir>/round-<n>.md         the bot's review body + every thread comment, verbatim
+#   <out-dir>/round-<n>.tsv        key<TAB>value: round, bot_login, bot_review_id,
+#                                  submitted_at, reviewed_sha, head_sha, stale,
+#                                  threads_total, threads_open, threads_unanswered,
+#                                  bot_comments_total, bot_comments_superseded,
+#                                  bot_comments_superseded_expanded
+#   <out-dir>/threads-<n>.tsv      root_id<TAB>path<TAB>line<TAB>resolved<TAB>outdated<TAB>answered
+#   <out-dir>/bot-comments-<n>.tsv id<TAB>created_at<TAB>minimized<TAB>superseded
+#
+# stale=yes means the bot reviewed a commit that is no longer the head: the round is
+# evidence about a revision nobody will merge. Recorded, never counted as
+# coverage of the current code - request a fresh round instead.
+#
+# superseded = every bot issue comment except the newest. The newest IS the final round's
+# report and stays visible (R11); the older ones must be collapsed or they bury the human
+# reviewer under rounds that were already dealt with.
+#
+# --head-only writes <out-dir>/exit-head.tsv (head_sha, observed_at) for the close gate,
+# which is hermetic and does not re-fetch.
+#
+# GitHub CLI: `$GHBIN` (default gh-axi, the sanctioned wrapper; set GHBIN=gh to use gh
+# directly, or to a stub in tests). Every call is a plain GET except one GraphQL read,
+# which GitHub exposes only over POST: thread resolution state and comment minimization
+# state exist nowhere in REST. That call is ALLOWED TO FAIL - both then read `unknown`,
+# and unknown counts as OPEN / EXPANDED here and in ledger-audit. Fail-closed, because
+# the R10/R11 failure mode is a human inheriting a wall of unhandled bot output; never
+# resolve that ambiguity in the loop's favour.
+#
+# Read-only: this tool never resolves, minimizes, replies or pushes. Writing is
+# `tools/mark-superseded`, which is separately gated.
+# Parses under bash 3.2 / POSIX sh.
+set -eu
+
+GHBIN=${GHBIN:-gh-axi}
+
+usage() {
+    echo "usage: gather-round <owner/repo> <pr#> <round> <out-dir> [bot-login]" >&2
+    echo "       gather-round --head-only <owner/repo> <pr#> <out-dir>" >&2
+    exit 2
+}
+command -v "$GHBIN" >/dev/null 2>&1 || { echo "gather-round: $GHBIN not found" >&2; exit 3; }
+command -v jq >/dev/null 2>&1 || { echo "gather-round: jq not found" >&2; exit 3; }
+
+# gh/gh-axi --paginate can emit one JSON array per page; flatten to a single array.
+flatten() {
+    jq -s 'if length == 0 then [] else (map(if type=="array" then . else [.] end) | add) end' \
+        "$1" 2>/dev/null || echo '[]'
+}
+
+HEAD_ONLY=no
+if [ "${1:-}" = "--head-only" ]; then HEAD_ONLY=yes; shift; fi
+
+if [ "$HEAD_ONLY" = yes ]; then
+    OR=${1:-}; PR=${2:-}; OUT=${3:-}
+    [ -n "$OR" ] && [ -n "$PR" ] && [ -n "$OUT" ] || usage
+    mkdir -p "$OUT"
+    head_sha=$("$GHBIN" api "/repos/$OR/pulls/$PR" --jq '.head.sha' 2>/dev/null || echo "")
+    # Shape-check, not just non-empty: a failed fetch can print its error on stdout, and
+    # the close gate compares this value to the last round's reviewed_sha - an error string
+    # there is a silent mismatch, or worse, a match against another error string.
+    case "$head_sha" in
+        *[!0-9a-fA-F]* | "") echo "gather-round: could not read the PR head sha (got: ${head_sha:-<empty>})" >&2; exit 3 ;;
+    esac
+    [ "${#head_sha}" -ge 7 ] || { echo "gather-round: implausible head sha: $head_sha" >&2; exit 3; }
+    {
+        printf 'head_sha\t%s\n' "$head_sha"
+        printf 'observed_at\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$OUT/exit-head.tsv"
+    cat "$OUT/exit-head.tsv"
+    exit 0
+fi
+
+OR=${1:-}; PR=${2:-}; RND=${3:-}; OUT=${4:-}; BOT=${5:-claude}
+[ -n "$OR" ] && [ -n "$PR" ] && [ -n "$RND" ] && [ -n "$OUT" ] || usage
+mkdir -p "$OUT"
+OWNER=${OR%%/*}; REPO=${OR#*/}
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+
+head_sha=$("$GHBIN" api "/repos/$OR/pulls/$PR" --jq '.head.sha' 2>/dev/null || echo "-")
+# Anything that is not sha-shaped becomes "-", which makes stale=unknown - recorded as
+# "we do not know", never silently compared as if it were a revision.
+case "$head_sha" in
+    *[!0-9a-fA-F]* | "") head_sha="-" ;;
+esac
+[ "${#head_sha}" -ge 7 ] || head_sha="-"
+
+"$GHBIN" api "/repos/$OR/pulls/$PR/reviews" --paginate > "$TMP/reviews.raw" 2>/dev/null \
+    || echo '[]' > "$TMP/reviews.raw"
+flatten "$TMP/reviews.raw" > "$TMP/reviews.json"
+
+# The round's review = the bot's most recent submitted review.
+rev=$(jq -c --arg bot "$BOT" \
+    'map(select(.user.login // "" | ascii_downcase | contains($bot|ascii_downcase)))
+     | sort_by(.submitted_at // "") | last // {}' "$TMP/reviews.json")
+
+rev_id=$(printf '%s' "$rev" | jq -r '.id // "-"')
+rev_at=$(printf '%s' "$rev" | jq -r '.submitted_at // "-"')
+reviewed_sha=$(printf '%s' "$rev" | jq -r '.commit_id // "-"')
+
+stale=unknown
+if [ "$reviewed_sha" != "-" ] && [ "$head_sha" != "-" ]; then
+    if [ "$reviewed_sha" = "$head_sha" ]; then stale=no; else stale=yes; fi
+fi
+
+# ---- REST: thread structure + "answered", and the bot's issue comments ----
+"$GHBIN" api "/repos/$OR/pulls/$PR/comments" --paginate > "$TMP/rc.raw" 2>/dev/null \
+    || echo '[]' > "$TMP/rc.raw"
+flatten "$TMP/rc.raw" > "$TMP/rc.json"
+"$GHBIN" api "/repos/$OR/issues/$PR/comments" --paginate > "$TMP/ic.raw" 2>/dev/null \
+    || echo '[]' > "$TMP/ic.raw"
+flatten "$TMP/ic.raw" > "$TMP/ic.json"
+
+# ---- GraphQL (POST, allowed to fail -> unknown): thread resolution + comment minimization ----
+GQL='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved isOutdated comments(first:1){nodes{databaseId}}}} comments(last:100){nodes{databaseId isMinimized minimizedReason}}}}}'
+if "$GHBIN" api POST /graphql \
+        --field query="$GQL" \
+        --field owner="$OWNER" --field name="$REPO" --field number="$PR" \
+        > "$TMP/gql.json" 2>/dev/null; then
+    jq -r '
+      [.data.repository.pullRequest.reviewThreads.nodes[]?
+       | select((.comments.nodes[0].databaseId // null) != null)
+       | { id: (.comments.nodes[0].databaseId|tostring),
+           resolved: (if .isResolved then "yes" else "no" end),
+           outdated: (if .isOutdated then "yes" else "no" end) }]
+      | map({ (.id): { resolved: .resolved, outdated: .outdated } }) | add // {}
+    ' "$TMP/gql.json" > "$TMP/res.json" 2>/dev/null || echo '{}' > "$TMP/res.json"
+    jq -r '
+      [.data.repository.pullRequest.comments.nodes[]?
+       | select((.databaseId // null) != null)
+       | { id: (.databaseId|tostring),
+           minimized: (if .isMinimized then "yes" else "no" end) }]
+      | map({ (.id): .minimized }) | add // {}
+    ' "$TMP/gql.json" > "$TMP/min.json" 2>/dev/null || echo '{}' > "$TMP/min.json"
+else
+    echo '{}' > "$TMP/res.json"
+    echo '{}' > "$TMP/min.json"
+fi
+[ -s "$TMP/res.json" ] || echo '{}' > "$TMP/res.json"
+[ -s "$TMP/min.json" ] || echo '{}' > "$TMP/min.json"
+
+# ---- threads-<n>.tsv ----
+# A thread is "answered" when it carries a comment from someone other than the bot -
+# i.e. we said what happened to it (R10).
+jq -r --arg bot "$BOT" --slurpfile res "$TMP/res.json" '
+  ( $res[0] // {} ) as $R |
+  ( map({ root: ((.in_reply_to_id // .id) | tostring), c: . })
+    | group_by(.root)
+    | map({
+        root: .[0].root,
+        path: ( ( [ .[] | select((.c.in_reply_to_id // null) == null) | .c.path ] | first )
+                // ( [ .[] | .c.path ] | first ) // "-" ),
+        line: ( ( ( [ .[] | select((.c.in_reply_to_id // null) == null) | (.c.line // .c.original_line) ] | first )
+                  // ( [ .[] | (.c.line // .c.original_line) ] | first ) // "-" ) | tostring ),
+        answered: ( if ([ .[] | select((.c.user.login // "" | ascii_downcase | contains($bot|ascii_downcase)) | not) ] | length) > 0
+                    then "yes" else "no" end )
+      }) )[]
+  | [ .root, .path, .line,
+      (($R[.root].resolved) // "unknown"),
+      (($R[.root].outdated) // "unknown"),
+      .answered ] | @tsv
+' "$TMP/rc.json" > "$OUT/threads-$RND.tsv" 2>/dev/null || : > "$OUT/threads-$RND.tsv"
+
+# ---- bot-comments-<n>.tsv (R11) ----
+# superseded = every bot issue comment except the newest. The newest is the current
+# round's report and stays visible.
+jq -r --arg bot "$BOT" --slurpfile min "$TMP/min.json" '
+  ( $min[0] // {} ) as $M |
+  ( map(select(.user.login // "" | ascii_downcase | contains($bot|ascii_downcase)))
+    | sort_by(.created_at // "") ) as $bots |
+  ( $bots | length ) as $n |
+  ( $bots | to_entries[]
+    | [ (.value.id|tostring),
+        (.value.created_at // "-"),
+        (($M[(.value.id|tostring)]) // "unknown"),
+        (if .key == ($n - 1) then "no" else "yes" end) ] | @tsv )
+' "$TMP/ic.json" > "$OUT/bot-comments-$RND.tsv" 2>/dev/null || : > "$OUT/bot-comments-$RND.tsv"
+
+t_total=$(awk 'END{print NR+0}' "$OUT/threads-$RND.tsv")
+# Fail-closed: resolved must be an explicit "yes" to count as closed; unknown is open.
+t_open=$(awk -F'\t' '$4!="yes"{n++} END{print n+0}' "$OUT/threads-$RND.tsv")
+t_unans=$(awk -F'\t' '$6!="yes"{n++} END{print n+0}' "$OUT/threads-$RND.tsv")
+bc_total=$(awk 'END{print NR+0}' "$OUT/bot-comments-$RND.tsv")
+bc_sup=$(awk -F'\t' '$4=="yes"{n++} END{print n+0}' "$OUT/bot-comments-$RND.tsv")
+# Fail-closed again: minimized must be an explicit "yes"; unknown counts as expanded.
+bc_sup_exp=$(awk -F'\t' '$4=="yes" && $3!="yes"{n++} END{print n+0}' "$OUT/bot-comments-$RND.tsv")
+
+# ---- the bot's words, verbatim ----
+{
+    echo "# Round $RND - $OR #$PR"
+    echo
+    echo "- bot: \`$BOT\` | review id: \`$rev_id\` | submitted: \`$rev_at\`"
+    echo "- reviewed_sha: \`$reviewed_sha\` | head_sha: \`$head_sha\` | stale: **$stale**"
+    echo "- threads: $t_total total, $t_open open (unknown counts as open), $t_unans unanswered"
+    echo "- bot reports: $bc_total total, $bc_sup superseded, $bc_sup_exp still expanded (unknown counts as expanded)"
+    echo
+    if [ "$stale" = yes ]; then
+        echo "> **STALE (R7).** This review is about \`$reviewed_sha\`, which is not the head."
+        echo "> Record it; do not count it as coverage of the current code. Request a fresh round."
+        echo
+    fi
+    if [ "$stale" = unknown ]; then
+        echo "> **UNKNOWN REVISION (R7).** No bot review with a commit id was found for this round."
+        echo "> Do not proceed as though a round happened - check the request fired (R1)."
+        echo
+    fi
+    echo "## Review body"
+    echo
+    printf '%s' "$rev" | jq -r '.body // "(no review body)"'
+    echo
+    echo "## Thread comments"
+    echo
+    jq -r '
+      ( map({ root: ((.in_reply_to_id // .id) | tostring), c: . })
+        | group_by(.root) )[]
+      | "### thread " + .[0].root + " - "
+        + (([ .[] | .c.path ] | first) // "-") + ":"
+        + ((([ .[] | (.c.line // .c.original_line) ] | first) // "-") | tostring) + "\n\n"
+        + ( [ .[] | "- **" + (.c.user.login // "?") + "** (" + (.c.created_at // "?") + "):\n\n"
+              + (.c.body // "") ] | join("\n\n") ) + "\n"
+    ' "$TMP/rc.json" 2>/dev/null || echo "(no threads)"
+} > "$OUT/round-$RND.md"
+
+{
+    printf 'round\t%s\n' "$RND"
+    printf 'bot_login\t%s\n' "$BOT"
+    printf 'bot_review_id\t%s\n' "$rev_id"
+    printf 'submitted_at\t%s\n' "$rev_at"
+    printf 'reviewed_sha\t%s\n' "$reviewed_sha"
+    printf 'head_sha\t%s\n' "$head_sha"
+    printf 'stale\t%s\n' "$stale"
+    printf 'threads_total\t%s\n' "$t_total"
+    printf 'threads_open\t%s\n' "$t_open"
+    printf 'threads_unanswered\t%s\n' "$t_unans"
+    printf 'bot_comments_total\t%s\n' "$bc_total"
+    printf 'bot_comments_superseded\t%s\n' "$bc_sup"
+    printf 'bot_comments_superseded_expanded\t%s\n' "$bc_sup_exp"
+} > "$OUT/round-$RND.tsv"
+
+cat "$OUT/round-$RND.tsv"

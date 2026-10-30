@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""thread-state: per-thread mechanical facts, so "is this answered?" stops being a
+vibe read of a wall of XML.
+
+Why this exists. A reconciliation that reads a thread's FIRST comment and stops
+gets the answer backwards. Observed live: a reviewer raised a design objection at
+07:23, the owner answered and decided against it at 11:44 the same day, and a
+review published the objection as "still unanswered" because it read the raise and
+not the reply. Separately, an owner accepted a contradiction and then withdrew that
+acceptance three days later, so a read that stopped anywhere before the last
+comment would have re-sent a corrected mistake.
+
+The three facts that actually decide a thread's state are mechanical: who spoke
+last, how long ago, and whether the owner ever spoke in it at all. This computes
+them. The refinement - whether an owner reply that exists actually ANSWERS the
+question asked, versus talking past it - stays with the model, because that is a
+reading-comprehension judgment no script can make.
+
+State vocabulary (mechanical):
+  AWAITING_OWNER  - last speaker is not the owner. Someone is waiting. `age_days`
+                    says how long, and a large number here is the single most
+                    actionable row in the file.
+  OWNER_LAST      - the owner spoke last. Candidate for answered, but the model
+                    must still check the reply addresses the question.
+  NO_OWNER_REPLY  - the owner has never commented in this thread. Strictly worse
+                    than AWAITING_OWNER: nobody with authority has looked at all.
+
+Usage: thread-state <discussions.md> <owner-user-id> [as-of-ISO8601]
+Output: TSV rows, then `## Summary` counts.
+"""
+import re
+import sys
+from datetime import datetime, timezone
+
+DISC_RE = re.compile(
+    r'^<discussion id="discussion://([^"]+)"'
+    r'(?:[^>]*?comment-count="(\d+)")?'
+    r'(?:[^>]*?resolved="(true|false)")?'
+)
+COMMENT_RE = re.compile(
+    r'<comment id="([^"]+)"[^>]*?user-url="user://([^"]+)"[^>]*?datetime="([^"]+)"'
+)
+
+
+def parse_dt(value):
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def norm(uid):
+    return uid.replace("-", "").lower()
+
+
+def main():
+    if len(sys.argv) not in (3, 4):
+        sys.stderr.write(
+            "usage: thread-state <discussions.md> <owner-user-id> [as-of-ISO8601]\n"
+        )
+        return 2
+    path, owner = sys.argv[1], norm(sys.argv[2])
+    if len(sys.argv) == 4:
+        as_of = parse_dt(sys.argv[3])
+        if as_of is None:
+            sys.stderr.write(f"FAIL: cannot parse as-of date: {sys.argv[3]}\n")
+            return 2
+    else:
+        as_of = datetime.now(timezone.utc)
+
+    threads = []
+    current = None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                m = DISC_RE.match(raw)
+                if m:
+                    full = m.group(1)
+                    parts = full.split("/")
+                    current = {
+                        "id": "discussion://" + full,
+                        "block": parts[1] if len(parts) > 1 else "",
+                        "declared": m.group(2) or "",
+                        "resolved": m.group(3) or "unknown",
+                        "comments": [],
+                    }
+                    threads.append(current)
+                    continue
+                if current is None:
+                    continue
+                for cm in COMMENT_RE.finditer(raw):
+                    current["comments"].append((cm.group(3), norm(cm.group(2))))
+    except OSError as exc:
+        sys.stderr.write(f"FAIL: cannot read {path}: {exc}\n")
+        return 2
+
+    if not threads:
+        sys.stderr.write(
+            "FAIL: no <discussion id=...> blocks found - either the harvest is empty or\n"
+            "its format is not the notion-get-comments output this tool parses.\n"
+        )
+        return 1
+
+    print("discussion_id\tblock_id\tcomments\tresolved\tlast_author\tlast_date\tage_days\towner_spoke\tstate")
+    counts = {"AWAITING_OWNER": 0, "OWNER_LAST": 0, "NO_OWNER_REPLY": 0}
+    stale = []
+    for th in threads:
+        n = len(th["comments"])
+        if n == 0:
+            last_author, last_date, age = "", "", ""
+            owner_spoke = "no"
+            state = "NO_OWNER_REPLY"
+        else:
+            last_date_raw, last_author = th["comments"][-1]
+            authors = {a for _, a in th["comments"]}
+            owner_spoke = "yes" if owner in authors else "no"
+            parsed = parse_dt(last_date_raw)
+            age = str((as_of - parsed).days) if parsed else ""
+            last_date = last_date_raw
+            if owner_spoke == "no":
+                state = "NO_OWNER_REPLY"
+            elif last_author == owner:
+                state = "OWNER_LAST"
+            else:
+                state = "AWAITING_OWNER"
+        counts[state] = counts.get(state, 0) + 1
+        if state in ("AWAITING_OWNER", "NO_OWNER_REPLY") and age not in ("", None):
+            stale.append((int(age), th["id"], state))
+        print("\t".join([
+            th["id"], th["block"], str(n), th["resolved"],
+            last_author, last_date, age, owner_spoke, state,
+        ]))
+
+    print()
+    print("## Summary")
+    print(f"Threads: {len(threads)}")
+    for key in ("AWAITING_OWNER", "NO_OWNER_REPLY", "OWNER_LAST"):
+        print(f"{key}: {counts.get(key, 0)}")
+    if stale:
+        stale.sort(reverse=True)
+        print()
+        print("## Oldest unanswered (age_days, thread, state)")
+        for age, tid, state in stale[:10]:
+            print(f"{age}\t{tid}\t{state}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,16 @@
+diff --git a/src/ProfileForm.ts b/src/ProfileForm.ts
+--- a/src/ProfileForm.ts
++++ b/src/ProfileForm.ts
+@@ -1,4 +1,4 @@
+ export const rows = () => [
+-  { label: t('profileSettings:Display name'), value: displayName },
+-  { label: t('profileSettings:Lonely key'), value: lonely },
++  { label: t('profileSettings:Nickname'), value: displayName },
++  { label: t('profileSettings:Nickname'), value: lonely },
+ ]
+diff --git a/src/App.ts b/src/App.ts
+--- a/src/App.ts
++++ b/src/App.ts
+@@ -1 +1 @@
+-  const title = "Save";
++  const title = "Store";

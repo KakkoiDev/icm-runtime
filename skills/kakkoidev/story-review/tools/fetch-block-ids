@@ -1,0 +1,123 @@
+#!/bin/sh
+# fetch-block-ids: every block id + anchor URL for a Notion page, so a handoff can
+# say "comment HERE" with a clickable link instead of "somewhere on AC4".
+#
+# Why this exists: a reviewer handed a 16-item list to a human who then had to find
+# each acceptance criterion by hand before commenting. The block id is the whole
+# difference between a report and something actionable.
+#
+# Two ways exist to learn a block's id, and only this one is complete:
+#   * This tool (Notion REST API): returns EVERY block, including ones with no
+#     discussion on them yet. Those are exactly the blocks where a new thread has
+#     to be started, so they are the ones you most need and the other method
+#     cannot give you.
+#   * `notion-fetch` with include_discussions: exposes a block id only as a
+#     side effect of that block already having a discussion. Blocks with no
+#     comments yet stay invisible. Fallback only.
+#
+# TOKEN HANDLING: the token comes from the environment at run time. This tool does
+# NOT read .env files, and neither should the agent driving it - reading secrets off
+# disk is blocked by policy in this workspace. Export it in the shell that runs the
+# stage:
+#     export NOTION_TOKEN=...   (an internal-integration secret)
+#
+# The integration behind that token only sees pages explicitly shared with it in
+# Notion's UI. A 404 here is a real, human-only access gap (no API exists for a bot
+# to grant itself page access), not something to route around - the tool says so and
+# exits non-zero rather than emitting a partial file that reads as complete.
+#
+# Usage: fetch-block-ids <page-id-or-url> [max-depth]
+# Output: TSV, one row per block: block_id<TAB>type<TAB>anchor_url<TAB>text
+set -eu
+
+raw=${1:?"usage: fetch-block-ids <page-id-or-url> [max-depth]   (needs NOTION_TOKEN in env)"}
+max_depth=${2:-4}
+
+: "${NOTION_TOKEN:?NOTION_TOKEN not set - export the integration secret in the shell that runs this stage; this tool never reads secrets from files on disk}"
+
+command -v curl >/dev/null 2>&1 || { echo "FAIL: curl not found" >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "FAIL: python3 not found" >&2; exit 1; }
+
+# accept a bare id, a dashed uuid, or any Notion URL ending in the id
+page_id=$(printf '%s' "$raw" | tr -d '\n' | sed 's|.*/||; s|?.*||; s|#.*||; s|.*-||' | tr -d '-')
+case "$page_id" in
+    [0-9a-fA-F]*) : ;;
+    *) echo "FAIL: could not parse a page id out of: $raw" >&2; exit 2 ;;
+esac
+[ "${#page_id}" -eq 32 ] || { echo "FAIL: parsed id is not 32 hex chars: $page_id" >&2; exit 2; }
+
+NOTION_PAGE_ID="$page_id" NOTION_MAX_DEPTH="$max_depth" python3 <<'PY'
+import json, os, subprocess, sys
+
+token = os.environ["NOTION_TOKEN"]
+page_id = os.environ["NOTION_PAGE_ID"]
+max_depth = int(os.environ["NOTION_MAX_DEPTH"])
+VERSION = "2022-06-28"
+
+def get_children(block_id, cursor=None):
+    url = f"https://api.notion.com/v1/blocks/{block_id}/children?page_size=100"
+    if cursor:
+        url += f"&start_cursor={cursor}"
+    out = subprocess.run(
+        ["curl", "-sS", url,
+         "-H", f"Authorization: Bearer {token}",
+         "-H", f"Notion-Version: {VERSION}"],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        sys.stderr.write(f"FAIL: curl failed for {block_id}: {out.stderr.strip()}\n")
+        sys.exit(1)
+    try:
+        return json.loads(out.stdout)
+    except json.JSONDecodeError:
+        sys.stderr.write(f"FAIL: non-JSON response for {block_id}: {out.stdout[:200]}\n")
+        sys.exit(1)
+
+def plain_text(block):
+    body = block.get(block.get("type"), {})
+    if not isinstance(body, dict):
+        return ""
+    parts = [r.get("plain_text", "") for r in body.get("rich_text", [])]
+    return " ".join("".join(parts).split())
+
+rows = []
+
+def walk(block_id, depth):
+    if depth > max_depth:
+        return
+    cursor = None
+    while True:
+        data = get_children(block_id, cursor)
+        if "results" not in data:
+            code = data.get("code", "unknown")
+            msg = data.get("message", "")
+            sys.stderr.write(
+                f"FAIL: Notion API returned {code} for block {block_id}: {msg}\n"
+                "If this is object_not_found, the page tree is not shared with this\n"
+                "integration. That is a one-time human step in Notion's UI - share the\n"
+                "story (and its parent) with the integration, then re-run. Do not fall\n"
+                "back to a partial anchor list without saying so in the handoff.\n"
+            )
+            sys.exit(1)
+        for b in data["results"]:
+            bid = b["id"]
+            btype = b.get("type", "")
+            # columns/column_list hold no text of their own but contain the ACs
+            if btype not in ("column_list", "column"):
+                rows.append((bid.replace("-", ""), btype, plain_text(b)))
+            if b.get("has_children"):
+                walk(bid, depth + 1)
+        if not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
+
+walk(page_id, 1)
+
+if not rows:
+    sys.stderr.write("FAIL: page has no readable blocks\n")
+    sys.exit(1)
+
+for bid, btype, text in rows:
+    url = f"https://app.notion.com/p/{page_id}#{bid}"
+    print(f"{bid}\t{btype}\t{url}\t{text}")
+PY

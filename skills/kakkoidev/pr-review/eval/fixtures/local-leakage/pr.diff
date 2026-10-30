@@ -1,0 +1,89 @@
+diff --git a/.gitignore b/.gitignore
+index 1111111..2222222 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,6 @@
+ node_modules/
+ dist/
++.ego-lite/
++.next/
++node_modules/.cache
+ coverage/
+diff --git a/skills/notion-ticket/SKILL.md b/skills/notion-ticket/SKILL.md
+index 3333333..4444444 100644
+--- a/skills/notion-ticket/SKILL.md
++++ b/skills/notion-ticket/SKILL.md
+@@ -10,5 +10,7 @@ Setting up
+ line A
+ line B
++Run the helper from /Users/jdoe/Code/skills-repo/skills before you start.
+ line C
+ line D
++The CI job checks out to /home/runner/work/skills-repo/skills-repo.
+ line E
+@@ -40,4 +42,5 @@ Notes
+ line P
+-Legacy note about /Users/jdoe/old-path/thing.md
++Legacy note about the repository root.
+ line Q
++Ask the captain before changing the board.
+ line R
+diff --git a/skills/notion-ticket/references/recipes.md b/skills/notion-ticket/references/recipes.md
+index 5555555..6666666 100644
+--- a/skills/notion-ticket/references/recipes.md
++++ b/skills/notion-ticket/references/recipes.md
+@@ -20,2 +20,5 @@ Recipes
+ existing
++CONSOLE=9c8d7e6f5a4b43c2b1a0f9e8d7c6b5a4 node scripts/board.js --caller 7a6b5c4d-3e2f-4011-8293-a4b5c6d7e8f9
++CONSOLE=<your-page-id> node scripts/board.js --caller <your-user-id>
++Every ruling names the TIMESTAMP and the CANCELLED state.
+ tail
+diff --git a/docs/contributors.md b/docs/contributors.md
+index 7777777..8888888 100644
+--- a/docs/contributors.md
++++ b/docs/contributors.md
+@@ -3,2 +3,5 @@ Contributors
+ Contributors
++Bot commits land as 41898282+github-actions[bot]@users.noreply.github.com
++Report issues to someone@example.com
++Escalate to alice@acme-internal.io
+ end
+diff --git a/package-lock.json b/package-lock.json
+index 9999999..aaaaaaa 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -10,2 +10,3 @@
+     "node_modules/left-pad": {
++      "integrity": "sha512-b6d47ac3f119e0d52a40b7c6e8f19d3a",
+       "version": "1.3.0"
+diff --git a/go.sum b/go.sum
+index bbbbbbb..ccccccc 100644
+--- a/go.sum
++++ b/go.sum
+@@ -5,1 +5,2 @@
+ github.com/a/b v1.0.0 h1:aaaa
++github.com/foo/bar v1.2.3/go.mod h1:9c8d7e6f5a4b43c2b1a0f9e8d7c6b5a4
+diff --git a/.ego-lite/unnamed/probe.js b/.ego-lite/unnamed/probe.js
+new file mode 100644
+index 0000000..ddddddd
+--- /dev/null
++++ b/.ego-lite/unnamed/probe.js
+@@ -0,0 +1,2 @@
++const page = await browser.newPage();
++await page.goto('https://example.org/board');
+diff --git a/docs/roadmap-notion-draft.md b/docs/roadmap-notion-draft.md
+new file mode 100644
+index 0000000..eeeeeee
+--- /dev/null
++++ b/docs/roadmap-notion-draft.md
+@@ -0,0 +1,2 @@
++# Hierarchy draft
++Paste this into the board before the review.
+diff --git a/src/removed.ts b/src/removed.ts
+deleted file mode 100644
+index fffffff..0000000
+--- a/src/removed.ts
++++ /dev/null
+@@ -1,2 +0,0 @@
+-const home = '/Users/jdoe/Code/legacy';
+-export default home;

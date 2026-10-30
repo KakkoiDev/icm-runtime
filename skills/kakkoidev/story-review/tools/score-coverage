@@ -1,0 +1,228 @@
+#!/bin/sh
+# score-coverage: deterministic scorer. Matches stage 02's findings.md against the
+# frozen local answer key - no model judgment, so the number is
+# reproducible and is the real signal icm-improve (or a human) tracks phase over
+# phase.
+#
+# Matching is PER-BLOCK ONLY (each finding's own `## F<n> ...` block, never the
+# whole file at once). Earlier versions grepped primary/secondary against the
+# WHOLE concatenated file - which meant a primary term in one unrelated finding
+# and a secondary term in a totally different finding could combine into a false
+# "hit" neither finding actually supports on its own. Per-block matching requires
+# both terms to appear in the SAME finding, closing that class of false positive,
+# and gives a real F<n> <-> T<id> ledger as a side effect instead of a bare count.
+#
+# TSV parsing is done entirely in awk with an explicit FS="\t": shell `read` with
+# IFS=tab silently COLLAPSES consecutive tabs (POSIX classes tab as "IFS
+# whitespace" regardless of what IFS is set to), which drops empty fields and
+# shifts every field after it - awk's explicit single-char FS does not have this
+# behavior, so every TSV read below goes through `score.awk`, never shell `read`.
+#
+# TARGET GUARD (added 2026-07-29): the answer key is bound to the ONE story it was
+# extracted from. Scored against a different story it measures shared domain
+# vocabulary, not coverage - observed live when a US-01-derived key was pointed at
+# a sibling story and the operator had to notice and skip stage 03 by hand. When
+# both id arguments are supplied and disagree, this script refuses to emit a
+# coverage number at all: `Hits: n/a`, every section present but empty, and an
+# explicit `## Not applicable` block. A guard in the script, not a warning in
+# prose, because the failure mode is a number that looks perfectly reasonable.
+#
+# NO KEY: the answer key is local, untracked data (it was extracted from a private
+# story). A missing key file is the normal state on any other machine, so it is the
+# same `Hits: n/a` outcome with the missing path named, not a failure.
+#
+# Usage: score-coverage <findings.md> <answer-key.tsv> [<target-id-file> <key-target-file>]
+set -eu
+
+not_scored() {
+    echo
+    echo "Use \`tools/grounding-audit\` for this run's reproducible quality number"
+    echo "(grounding rate + refutation survival rate), which is target-independent."
+    echo
+    echo "## Matched"
+    echo "(none - not scored, see Not applicable above)"
+    echo
+    echo "## Missed"
+    echo "(none - not scored, see Not applicable above)"
+    echo
+    echo "## New candidates"
+    echo "(none - not scored, see Not applicable above)"
+    echo
+    echo "## Ambiguous overlap (informational)"
+    echo "(none - not scored, see Not applicable above)"
+}
+
+findings=${1:?"usage: score-coverage <findings.md> <answer-key.tsv> [<target-id-file> <key-target-file>]"}
+keyfile=${2:?"usage: score-coverage <findings.md> <answer-key.tsv> [<target-id-file> <key-target-file>]"}
+target_file=${3:-}
+key_target_file=${4:-}
+
+[ -f "$findings" ] || { echo "FAIL: findings file not found: $findings" >&2; exit 1; }
+if [ ! -f "$keyfile" ]; then
+    echo "# Coverage report"
+    echo
+    echo "Hits: n/a"
+    echo
+    echo "## Not applicable"
+    echo "No answer key at $keyfile. The key is local, untracked data; without it there"
+    echo "is nothing to score coverage against."
+    not_scored
+    exit 0
+fi
+
+# --- target guard --------------------------------------------------------------
+if [ -n "$target_file" ] || [ -n "$key_target_file" ]; then
+    [ -n "$target_file" ] && [ -n "$key_target_file" ] || {
+        echo "FAIL: target-id-file and key-target-file must be given together" >&2; exit 2; }
+    [ -f "$target_file" ] || { echo "FAIL: target-id file not found: $target_file" >&2; exit 1; }
+    [ -f "$key_target_file" ] || { echo "FAIL: key-target file not found: $key_target_file" >&2; exit 1; }
+
+    # normalize: strip dashes/whitespace so a UUID and its dashless form compare equal
+    norm_target=$(tr -d '\n\r \t-' < "$target_file" | tr 'A-Z' 'a-z')
+    norm_key=$(grep -vE '^[[:space:]]*#' "$key_target_file" | tr -d '\n\r \t-' | tr 'A-Z' 'a-z')
+
+    if [ "$norm_target" != "$norm_key" ]; then
+        echo "# Coverage report"
+        echo
+        echo "Hits: n/a"
+        echo
+        echo "## Not applicable"
+        echo "The frozen answer key was extracted from a different story, so scoring this"
+        echo "run against it would count shared domain vocabulary, not coverage."
+        echo
+        echo "- this run's target: $norm_target"
+        echo "- answer key's source target: $norm_key"
+        not_scored
+        exit 0
+    fi
+fi
+
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
+
+# --- split findings.md into per-finding blocks (## F<n> ... next ## header) ---
+# A block ends at the next `## F<n>` OR any other `##`-level header (e.g. a
+# reviewer's own lens-divider like `## L2 - ...`) - not just the next F<n>.
+# Found live during the 2026-07-28 variance study: a non-F header glued onto
+# the PRECEDING block inflated its keyword surface (a stray "grounding"/"L2"
+# note collided with answer-key primary term "rounding"), crediting a hit
+# that was really the divider text, not the finding.
+awk -v dir="$workdir" '
+    /^## F[0-9]+/ { n++; file = dir "/block-" n ".txt"; p = 1 }
+    /^##/ && !/^## F[0-9]+/ { p = 0 }
+    p { print > file }
+' "$findings"
+
+total=$(($(wc -l < "$keyfile") - 1))
+[ "$total" -ge 0 ] || total=0
+
+score_awk='
+    BEGIN {
+        FS = "\t"
+        while ((getline line < keyfile) > 0) {
+            if (++rownum == 1) continue          # skip header
+            split(line, f, "\t")
+            i++
+            id[i] = f[1]; lens[i] = f[2]; primary[i] = f[3]; secondary[i] = f[4]; desc[i] = f[5]
+        }
+        close(keyfile)
+        krows = i
+    }
+    function row_matches(idx, targetfile,    p, s) {
+        p = primary[idx]; s = secondary[idx]
+        if (system("grep -Eiq -- \x27" p "\x27 " targetfile) != 0) return 0
+        if (s != "" && system("grep -Eiq -- \x27" s "\x27 " targetfile) != 0) return 0
+        return 1
+    }
+'
+
+# --- one pass: every (block, answer-key row) match becomes a pairs.tsv row ---
+: > "$workdir/pairs.tsv"
+all_fids=""
+for blockfile in "$workdir"/block-*.txt; do
+    [ -e "$blockfile" ] || continue
+    heading=$(head -n1 "$blockfile")
+    fid=$(printf '%s' "$heading" | grep -oE 'F[0-9]+' | head -n1)
+    [ -n "$fid" ] || fid="UNKNOWN-$(basename "$blockfile")"
+    all_fids="${all_fids}${fid}
+"
+    awk -v keyfile="$keyfile" -v target="$blockfile" -v fid="$fid" "$score_awk"'
+        END {
+            for (k = 1; k <= krows; k++) {
+                if (row_matches(k, target)) print fid "\t" id[k] "\t" lens[k] "\t" desc[k]
+            }
+        }
+    ' /dev/null >> "$workdir/pairs.tsv"
+done
+
+matched_tids=$(awk -F'\t' '{print $2}' "$workdir/pairs.tsv" | sort -u)
+hits=$(printf '%s\n' "$matched_tids" | grep -c . || true)
+[ -n "$matched_tids" ] || hits=0
+
+# --- Matched: each hit T-id with the F-ids that matched it ---
+matched_out=""
+if [ -n "$matched_tids" ]; then
+    while IFS= read -r tid; do
+        [ -n "$tid" ] || continue
+        row=$(awk -F'\t' -v t="$tid" '$2==t{print; exit}' "$workdir/pairs.tsv")
+        lens_v=$(printf '%s' "$row" | awk -F'\t' '{print $3}')
+        desc_v=$(printf '%s' "$row" | awk -F'\t' '{print $4}')
+        fids=$(awk -F'\t' -v t="$tid" '$2==t{print $1}' "$workdir/pairs.tsv" | sort -u | paste -sd, -)
+        matched_out="${matched_out}- ${tid} (${lens_v}): ${desc_v} -- matched by: ${fids}
+"
+    done <<EOF
+$matched_tids
+EOF
+fi
+
+# --- Missed: answer-key rows with zero matching blocks ---
+missed_out=$(awk -v keyfile="$keyfile" -v matched="$workdir/pairs.tsv" '
+    BEGIN {
+        FS = "\t"
+        while ((getline line < matched) > 0) { split(line, m, "\t"); seen[m[2]] = 1 }
+        rownum = 0
+        while ((getline line < keyfile) > 0) {
+            if (++rownum == 1) continue
+            split(line, f, "\t")
+            if (!(f[1] in seen)) print "- " f[1] " (" f[2] "): " f[5]
+        }
+    }
+' /dev/null)
+
+# --- New candidates: finding blocks that matched zero answer-key rows ---
+new_out=""
+if [ -n "$all_fids" ]; then
+    while IFS= read -r fid; do
+        [ -n "$fid" ] || continue
+        if ! awk -F'\t' -v f="$fid" '$1==f{found=1; exit} END{exit !found}' "$workdir/pairs.tsv"; then
+            blockfile=$(grep -l "^## ${fid}\b" "$workdir"/block-*.txt 2>/dev/null | head -n1)
+            heading=$(head -n1 "$blockfile" 2>/dev/null || echo "## $fid")
+            new_out="${new_out}- ${heading}
+"
+        fi
+    done <<EOF
+$all_fids
+EOF
+fi
+
+# --- Ambiguous overlap: one finding block satisfying more than one known issue ---
+overlap_out=$(awk -F'\t' '
+    { count[$1]++ ; tids[$1] = tids[$1] " " $2 }
+    END { for (f in count) if (count[f] > 1) print "- " f " matches multiple known issues:" tids[f] }
+' "$workdir/pairs.tsv")
+
+echo "# Coverage report"
+echo
+echo "Hits: ${hits}/${total}"
+echo
+echo "## Matched"
+if [ -n "$matched_out" ]; then printf '%s' "$matched_out"; else echo "(none)"; fi
+echo
+echo "## Missed"
+if [ -n "$missed_out" ]; then printf '%s\n' "$missed_out"; else echo "(none)"; fi
+echo
+echo "## New candidates"
+if [ -n "$new_out" ]; then printf '%s' "$new_out"; else echo "(none - every finding matched a known issue)"; fi
+echo
+echo "## Ambiguous overlap (informational)"
+if [ -n "$overlap_out" ]; then printf '%s\n' "$overlap_out"; else echo "(none)"; fi

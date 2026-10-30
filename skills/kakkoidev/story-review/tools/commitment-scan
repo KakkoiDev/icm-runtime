@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""commitment-scan: enumerate every promise made in a comment thread, so a later
+step can check whether the document actually contains it.
+
+Why this exists. Across two stories, 24 and 17 threads, a single pattern accounted
+for more unresolved review state than any spec ambiguity: the owner answers a
+question in a comment, says "I'll put it in the AC", and the document is never
+edited. Reviewers then cannot find the spec they were told exists. Three separate
+reviewers on one page each wrote a variant of "Where can I find this? I cannot find
+the new wording", and on that page the owner had said outright that they did not
+want to edit the body because a rewrite would disconnect the existing comments.
+The consequence is that every later review runs against text the owner has already
+replaced, and the reviewer cannot tell.
+
+That failure is invisible to a spec-quality lens. It is not an ambiguity in the
+document, it is an absence of the document. So it gets its own deterministic pass:
+this tool ENUMERATES the promises, and the stage must dispose of every row as
+LANDED or NOT LANDED. Enumeration is mechanical; the judgment of whether the body
+satisfies a promise stays with the model. Same split as the sibling manifest - the
+tool guarantees nothing is silently dropped from consideration.
+
+Self-corrections are scanned separately and are the higher-severity half. An owner
+who reverses an earlier answer leaves a thread whose middle is now wrong; anyone
+reading top-down, or anyone who read it before the reversal, carries the withdrawn
+answer forward. Two such reversals were live on one page.
+
+Usage: commitment-scan <discussions.md>
+Output: `## Commitments` and `## Self-corrections`, TSV rows, then `## Summary`.
+"""
+import html
+import re
+import sys
+
+# Promises to change the document. Deliberately generous: a false positive costs
+# one disposition line, a false negative loses a whole piece of undocumented spec.
+COMMITMENT_MARKERS = [
+    # No bare "ill be" here: it is a substring of "will be" and mislabels every
+    # third-person sentence as a first-person promise.
+    "i'll", "i will", "i am going to", "i'm going to",
+    "we'll", "we will", "we are going to", "we're going to",
+    "will read", "will be reworded", "will be added", "will be updated",
+    "ac will read", "i have added", "i've added", "we have added",
+    "going to change", "plan to",
+    # Japanese: keep the polite-future verb forms that actually promise an edit,
+    # not every -masu form, which would match most sentences.
+    "書き換えます", "追加します", "修正します", "明記します", "外します",
+    "直します", "削除します", "定義します", "反映します", "変更します",
+    "記載します", "更新します", "統合します", "分割します",
+]
+
+# Reversals of an earlier answer in the same thread.
+CORRECTION_MARKERS = [
+    "a correction", "correction to", "correcting my", "quick correction",
+    "small update to", "i was wrong", "that was wrong", "this was wrong",
+    "please disregard", "disregard that", "was not accurate", "wasn't accurate",
+    "let me correct", "i need to correct", "superseded",
+    "訂正", "誤りでした", "間違いでした", "撤回",
+]
+
+TAG_RE = re.compile(r"<[^>]+>")
+DISC_RE = re.compile(r'^<discussion id="(discussion://[^"]+)"')
+COMMENT_OPEN_RE = re.compile(
+    r'<comment id="([^"]+)"[^>]*?user-url="user://([^"]+)"[^>]*?datetime="([^"]+)"'
+)
+
+
+def _compile(markers):
+    """Match markers on word boundaries, never as bare substrings.
+
+    Substring matching produced two separate false positives on the first real run:
+    "ill be" matched inside "will be", and "i will" matched inside "UI will". Both
+    turned third-person sentences into first-person promises. Boundary matching kills
+    the whole class rather than the two instances, so the generous marker list stays
+    safe to extend. Lookarounds rather than \\b because the markers contain
+    apostrophes, where \\b behaves in ways nobody remembers correctly.
+    Non-ASCII markers (Japanese) match as substrings: there are no word boundaries
+    to anchor to, and the verb forms listed are specific enough not to need them.
+    """
+    out = []
+    for marker in markers:
+        if marker.isascii():
+            out.append((marker, re.compile(
+                r"(?<![A-Za-z0-9])" + re.escape(marker) + r"(?![A-Za-z0-9])"
+            )))
+        else:
+            out.append((marker, None))
+    return out
+
+
+def first_marker(text, compiled):
+    low = text.lower()
+    for label, rx in compiled:
+        if rx is None:
+            if label in low:
+                return label
+        elif rx.search(low):
+            return label
+    return None
+
+
+def clean(text):
+    text = text.replace("<br>", " ")
+    text = TAG_RE.sub(" ", text)
+    text = html.unescape(text)
+    text = text.replace("**", "").replace("\\>", ">")
+    return " ".join(text.split())
+
+
+def sentences(text):
+    parts = re.split(r"(?<=[.!?。])\s+|\s+-\s+", text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def scan(path):
+    rows_commit = []
+    rows_correct = []
+    disc = ""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        buf = None
+        meta = None
+        for raw in fh:
+            m = DISC_RE.match(raw)
+            if m:
+                disc = m.group(1)
+                continue
+            if buf is None:
+                m = COMMENT_OPEN_RE.search(raw)
+                if m:
+                    meta = (disc, m.group(1), m.group(3), m.group(2))
+                    # The regex ends inside the open tag (at datetime="..."), so skip
+                    # past the tag's own closing bracket or it leaks in as text.
+                    rest = raw[m.end():]
+                    gt = rest.find(">")
+                    buf = rest[gt + 1:] if gt != -1 else rest
+                    if "</comment>" in buf:
+                        body, _, _ = buf.partition("</comment>")
+                        emit(clean(body), meta, rows_commit, rows_correct)
+                        buf = None
+                        meta = None
+                continue
+            if "</comment>" in raw:
+                body, _, _ = raw.partition("</comment>")
+                emit(clean(buf + body), meta, rows_commit, rows_correct)
+                buf = None
+                meta = None
+            else:
+                buf += raw
+    return rows_commit, rows_correct
+
+
+COMMIT_RX = _compile(COMMITMENT_MARKERS)
+CORRECT_RX = _compile(CORRECTION_MARKERS)
+
+
+def emit(text, meta, rows_commit, rows_correct):
+    disc, cid, date, author = meta
+    if first_marker(text, CORRECT_RX):
+        for sent in sentences(text):
+            marker = first_marker(sent, CORRECT_RX)
+            if marker:
+                rows_correct.append((disc, cid, date, author, marker, sent[:400]))
+                break
+    seen = set()
+    for sent in sentences(text):
+        marker = first_marker(sent, COMMIT_RX)
+        if marker:
+            key = sent[:120]
+            if key not in seen:
+                seen.add(key)
+                rows_commit.append((disc, cid, date, author, marker, sent[:400]))
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.stderr.write("usage: commitment-scan <discussions.md>\n")
+        return 2
+    path = sys.argv[1]
+    try:
+        commits, corrections = scan(path)
+    except OSError as exc:
+        sys.stderr.write(f"FAIL: cannot read {path}: {exc}\n")
+        return 2
+
+    print("## Commitments")
+    print("discussion_id\tcomment_id\tdate\tauthor\tmarker\tsentence")
+    for row in commits:
+        print("\t".join(row))
+    if not commits:
+        print("# none found - if the threads contain owner answers, verify the harvest is complete")
+
+    print()
+    print("## Self-corrections")
+    print("discussion_id\tcomment_id\tdate\tauthor\tmarker\tsentence")
+    for row in corrections:
+        print("\t".join(row))
+    if not corrections:
+        print("# none found")
+
+    print()
+    print("## Summary")
+    print(f"Commitments: {len(commits)}")
+    print(f"Self-corrections: {len(corrections)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

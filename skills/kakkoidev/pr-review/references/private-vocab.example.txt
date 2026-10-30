@@ -1,0 +1,33 @@
+# private-vocab.example.txt - the FORMAT of the private lexicon `tools/gather-local-leakage`
+# reads. The real lexicon is a local, untracked file:
+#   $ICM_PRIVATE_VOCAB, else ${XDG_CONFIG_HOME:-~/.config}/icm/private-vocab.txt
+# Copy this file there and replace the example terms with your own.
+#
+# One term per line. A term here means something inside ONE person's setup and nothing
+# to a reader who is not us: a role name from a private agent contract, a locally
+# installed tool, a machine-local directory convention. Shipping one is not a style
+# slip - it is documentation that is false outside this machine, which is why stage 04
+# treats a hit as a correctness-of-documentation finding.
+#
+# The real list must never be committed, to a reviewed repo or to this one. A past PR learned
+# that the expensive way: the first guard against this class hardcoded the banned names
+# inside a file that shipped, so the guard published the list it existed to suppress.
+# The tool excludes any `private-vocab.txt` from its own scan for the same reason.
+#
+# Matching: case-insensitive, whole-token, with `-` treated as a token boundary, so
+# `my-tool` matches `my-tool-cli` while `my-toolbox` matches nothing. `#` starts a
+# comment; blank lines are ignored.
+#
+# Adding a term: it must be genuinely meaningless elsewhere. A term that is ALSO an
+# ordinary English word, or the reviewed repo's own name, produces a row on every added
+# line and makes stage 04's "account for every row" rule unaffordable - that cost is
+# what keeps this list short.
+
+# --- private role vocabulary (an agent contract's cast, not any team's job titles)
+example-agent-role
+
+# --- locally installed tools and their wrappers
+example-local-tool
+
+# --- machine-local directory conventions
+example-worktree-pool

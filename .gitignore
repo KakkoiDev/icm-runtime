@@ -1,0 +1,21 @@
+# Local planning / working docs - kept out of the runtime repo.
+IMPLEMENTATION-PLAN-*.md
+TASK.md
+
+# Local agent harness settings (machine-specific paths, tool allow-lists).
+.claude/
+
+# Runtime state from test/proof runs in this repo (the runtime's own output).
+.icm/
+.icm-seals.log
+
+# Presentation build deps (the HTML decks ARE tracked; build.sh / the pre-commit hook keep them in sync).
+docs/presentation/node_modules/
+__pycache__/
+*.pyc
+
+# Local, untracked private data the skills read (never commit the real files)
+skills/kakkoidev/pr-review/references/private-vocab.txt
+skills/kakkoidev/pr-review/references/calibration.md
+skills/kakkoidev/story-review/references/answer-key.tsv
+skills/kakkoidev/story-review/references/answer-key-target.txt

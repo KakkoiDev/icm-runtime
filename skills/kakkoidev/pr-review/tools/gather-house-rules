@@ -1,0 +1,169 @@
+#!/bin/sh
+# gather-house-rules: deterministic discovery of the repo's OWN normative documents.
+#
+# Why this exists: the review's judgment dimensions are generic (security, dead code,
+# test coverage). A repo that writes down its own standards - guideline trees,
+# architecture decision records, a contributor guide, agent instruction files - is
+# stating the bar its reviewers actually enforce, and a review that never opens those
+# documents audits against the reviewer's taste instead of the team's rules.
+# Discovery must be deterministic so the audit cannot silently skip a document that
+# exists: this script emits the complete candidate set, and stage 04 must account for
+# every row as audited or not-applicable.
+#
+# Usage: gather-house-rules <pr-diff-file> <out-dir> [repo-root]
+#   repo-root defaults to `git rev-parse --show-toplevel`.
+# Writes:
+#   <out-dir>/house-rules.tsv  - one row per discovered normative doc:
+#       <path>\t<title>\t<lines>\t<relevance>\t<matched>
+#     relevance is `likely` (a token in the doc's path matched the diff's own paths or
+#     file types) or `unknown` (discovered, relevance not established mechanically).
+#     `unknown` is NOT "skip it" - it means the model must judge, and say so.
+#     A header comment line records the totals; an empty set is stated explicitly so
+#     "no rows" can never read as "audited and clean".
+#
+# NO judgment: this script never decides whether the diff complies. It only says which
+# documents claim authority over code like this diff's.
+#
+# Read-only. No gh, no network. POSIX sh / bash 3.2.
+#
+# Known residual misses (documented, not solved):
+#   - standards that live outside the repo (a wiki, Notion, a shared doc). Stage 02's
+#     link-following is the path for those; this tool is repo-local by design.
+#   - a normative rule buried in a doc whose path looks non-normative (a README section
+#     inside a feature folder). Only conventional locations are discovered.
+#   - relevance is token overlap, not comprehension: `likely` is a hint, never a filter.
+set -eu
+
+DIFF=${1:-}; OUT=${2:-}; ROOT=${3:-}
+[ -n "$DIFF" ] && [ -n "$OUT" ] || { echo "usage: gather-house-rules <pr-diff-file> <out-dir> [repo-root]" >&2; exit 2; }
+[ -f "$DIFF" ] || { echo "gather-house-rules: diff file not found: $DIFF" >&2; exit 2; }
+if [ -z "$ROOT" ]; then
+    ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+fi
+[ -d "$ROOT" ] || { echo "gather-house-rules: repo root not a directory: $ROOT" >&2; exit 2; }
+mkdir -p "$OUT"
+
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+TAB=$(printf '\t')
+OUTFILE=$OUT/house-rules.tsv
+
+# ---------------------------------------------------------------- changed paths
+# Every path the diff touches, from the diff itself (not from git state), so the
+# relevance hint is computed against the reviewed revision.
+sed -n 's|^+++ b/||p' "$DIFF" | sed 's/[[:space:]]*$//' | grep -v '^/dev/null$' \
+    | sort -u > "$TMP/changed" || :
+
+# Tokens the diff exposes: every path segment, plus a topic token per file type.
+: > "$TMP/tokens"
+while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    printf '%s\n' "$p" | tr '/.' '\n\n' >> "$TMP/tokens"
+    case $p in
+    *.test.ts|*.test.tsx|*.spec.ts|*.spec.tsx|*_test.py|*_test.go|*.test.js)
+        printf 'testing\ntest\n' >> "$TMP/tokens" ;;
+    esac
+    case $p in
+    *.ts|*.tsx|*.js|*.jsx|*.py|*.go|*.rb|*.java|*.kt|*.rs)
+        printf 'coding\ncode\nstyle\n' >> "$TMP/tokens" ;;
+    esac
+    case $p in
+    *controller.ts|*route*.ts|*router*.ts|*.dto.ts|*openapi*|*swagger*|*schema.graphql)
+        printf 'api\nopenapi\n' >> "$TMP/tokens" ;;
+    esac
+    case $p in
+    .github/workflows/*|*.yml|*.yaml|Dockerfile*|*.tf)
+        printf 'ci\nconfig\ninfra\n' >> "$TMP/tokens" ;;
+    esac
+    case $p in
+    package.json|*/package.json|*.lock|pnpm-lock.yaml|yarn.lock|Cargo.toml|go.mod|requirements*.txt)
+        printf 'dependency\ndeps\n' >> "$TMP/tokens" ;;
+    esac
+    case $p in
+    *prisma/schema.prisma|*/migrations/*|*migration*)
+        printf 'database\nprisma\nmigration\n' >> "$TMP/tokens" ;;
+    esac
+    case $p in
+    *logger*|*sentry*|*telemetry*|*metric*)
+        printf 'monitoring\nobservability\n' >> "$TMP/tokens" ;;
+    esac
+done < "$TMP/changed"
+# Lowercase, drop noise tokens that would match everything.
+tr 'A-Z' 'a-z' < "$TMP/tokens" \
+    | grep -E '^[a-z][a-z0-9_-]{2,}$' \
+    | grep -vE '^(apps|src|lib|packages|index|main|ts|tsx|js|json|md|yml|yaml|the|and|for|docs|doc|readme|guideline|guidelines)$' \
+    | sort -u > "$TMP/tok" || :
+
+# ------------------------------------------------------------------- discovery
+# Conventional homes for normative material. Each pattern is a claim of authority:
+# a guidelines tree, decision records, contributor and agent instructions, review
+# guidelines, and the PR template (whose checklist stage 04 already audits).
+find_docs() {
+    find "$ROOT" \
+        -name node_modules -prune -o \
+        -name .git -prune -o \
+        -name dist -prune -o \
+        -name build -prune -o \
+        -name .next -prune -o \
+        -type f \( -name '*.md' -o -name '*.mdx' -o -name '*.rst' \) -print 2>/dev/null
+}
+
+: > "$TMP/cand"
+find_docs | while IFS= read -r f; do
+    rel=${f#"$ROOT"/}
+    low=$(printf '%s' "$rel" | tr 'A-Z' 'a-z')
+    case $low in
+    *node_modules/*) continue ;;
+    esac
+    keep=no
+    case $low in
+    *guideline*|*/guidelines/*)                        keep=yes ;;
+    *architecture-decision*|*/adr/*|*/adrs/*|*/decisions/*) keep=yes ;;
+    contributing.md|*/contributing.md)                 keep=yes ;;
+    agents.md|*/agents.md|claude.md|*/claude.md)        keep=yes ;;
+    *code_review*|*code-review*)                       keep=yes ;;
+    *conventions*|*best-practice*|*best_practice*|*style-guide*|*styleguide*) keep=yes ;;
+    .github/pull_request_template.md|.github/*/pull_request_template.md) keep=yes ;;
+    docs/*/readme.md|docs/readme.md)                   keep=yes ;;
+    docs/config.md|docs/configuration.md)              keep=yes ;;
+    esac
+    [ "$keep" = yes ] || continue
+    printf '%s\n' "$rel" >> "$TMP/cand"
+done
+sort -u -o "$TMP/cand" "$TMP/cand" 2>/dev/null || :
+
+# ---------------------------------------------------------------------- output
+n_total=0; n_likely=0
+{
+    printf '# house-rules.tsv - the repo'"'"'s own normative documents (deterministic discovery)\n'
+    printf '# path\ttitle\tlines\trelevance\tmatched\n'
+} > "$OUTFILE"
+
+if [ -s "$TMP/cand" ]; then
+    while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        f=$ROOT/$rel
+        [ -f "$f" ] || continue
+        title=$(grep -m1 -E '^#+[[:space:]]+' "$f" 2>/dev/null | sed 's/^#*[[:space:]]*//' | cut -c1-90 || :)
+        [ -n "$title" ] || title='(no heading)'
+        lines=$(wc -l < "$f" | tr -d ' ')
+        # Relevance: does any diff token appear in this doc's own path?
+        matched=$(printf '%s' "$rel" | tr 'A-Z/.-' 'a-z\n\n\n' | sort -u \
+            | { [ -s "$TMP/tok" ] && grep -Fx -f "$TMP/tok" || :; } \
+            | paste -sd, - | sed 's/,$//')
+        if [ -n "$matched" ]; then rel_v=likely; n_likely=$((n_likely + 1)); else rel_v=unknown; matched='-'; fi
+        printf '%s\t%s\t%s\t%s\t%s\n' "$rel" "$title" "$lines" "$rel_v" "$matched" >> "$OUTFILE"
+        n_total=$((n_total + 1))
+    done < "$TMP/cand"
+fi
+
+if [ "$n_total" -eq 0 ]; then
+    printf '# NONE: no normative documents found in the conventional locations.\n' >> "$OUTFILE"
+    printf '# This is a fact about the repo, not a pass: stage 04 states that no house\n' >> "$OUTFILE"
+    printf '# standard was available to audit against.\n' >> "$OUTFILE"
+else
+    printf '# TOTAL: %s documents discovered, %s with a path-token match to this diff.\n' \
+        "$n_total" "$n_likely" >> "$OUTFILE"
+    printf '# Stage 04 must account for EVERY row: audited, or not-applicable with a reason.\n' >> "$OUTFILE"
+fi
+
+echo "gather-house-rules: $n_total documents -> $OUTFILE"
