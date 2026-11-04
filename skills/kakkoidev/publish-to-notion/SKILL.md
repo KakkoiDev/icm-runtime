@@ -60,7 +60,7 @@ Every type keeps the density, authoring, and verification rules below. The type 
   - Audit trail preserved: on update, move material, never drop it unless asked. Fix any text
     that still names a moved block's old location ("see below", "in the results section").
   - After writing, reload the page and check headings and media sit in the intended order.
-  Source example: `/Users/cyril.antoni/Code/firstmate/data/notion-report-style/notion-ai-report.md`
+  Source example: `references/shared-report-example.md`
   (a Notion AI rework of a QA ticket for a PdM, 2026-11-04).
 Reordering and regrouping are form changes, like density: no fact added, removed, or reinterpreted.
 
