@@ -24,6 +24,10 @@ PreToolUse gate cannot inspect a result that does not exist until after the fetc
 1. `notion-fetch` the page by id/URL. Compare against `page.md`: confirm the body, every
    `<table>`, every mermaid block, and every link are present. Note anything missing or
    mangled (silent-dropped edits, broken tables, unrendered mermaid).
+   For a shared report, also check order: headings and every video/image block sit where
+   `page.md` puts them, each media block follows its "what to look for" line, and no text
+   still names a moved block's old location. If the write returned a warning, re-fetch before
+   judging.
 2. If anything is missing, the publish did not fully land: report exactly what is missing and
    stop with `VERIFIED: FAIL`. (Fixing it is a re-run of stage 02, not this stage.)
 3. Resolve sharing against the audience in `target.md`:

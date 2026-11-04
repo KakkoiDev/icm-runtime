@@ -40,6 +40,30 @@ density. It will not publish prose where a bullet, table, or diagram carries the
 That is a form change, not a content change - no fact is added, removed, or reinterpreted.
 See "Density" below and stage 01-render step 3.
 
+## Page types (ask before rendering)
+Captain's ruling, 2026-11-04: "we do 3 types of notion pages: data dumps, dashboard pages and
+shared reports. the report should be easily parsable by humans to avoid cognitive load."
+Ask which type is being published before stage 01 renders anything; record it in `target.md`.
+Every type keeps the density, authoring, and verification rules below. The type adds:
+- **Data dump.** Complete and agent-findable: no fact dropped to save space; a descriptive
+  title and headings an agent can search.
+- **Dashboard page.** Current numbers at a glance: the figures sit at the top.
+- **Shared report.** Read by a human right away, so order it for that reader:
+  - Reader's decision and outcome first. Methodology and implementation later.
+  - Counts and test environment up front (e.g. "7 Pass / 1 Skip"), never implying more was
+    tested than was.
+  - Confirmed, untested, and known-bug kept in separate sections.
+  - Caveats next to the result they qualify (skipped test, scope exclusion), not in an appendix.
+  - Evidence grouped by observable action. Before each video or image, one "what to look for"
+    line: what the viewer should see, and the expected result.
+  - Supporting detail (test plan, traces, logs) kept below the summary, not deleted.
+  - Audit trail preserved: on update, move material, never drop it unless asked. Fix any text
+    that still names a moved block's old location ("see below", "in the results section").
+  - After writing, reload the page and check headings and media sit in the intended order.
+  Source example: `/Users/cyril.antoni/Code/firstmate/data/notion-report-style/notion-ai-report.md`
+  (a Notion AI rework of a QA ticket for a PdM, 2026-11-04).
+Reordering and regrouping are form changes, like density: no fact added, removed, or reinterpreted.
+
 ## Density (standing rule - the reader's attention is the scarce resource)
 Captain's ruling, 2026-09-08: "The thing is to not make people waste time on prose. time and
 attention are very limited." A published page is a reference, not an essay. These are hard rules,

@@ -24,8 +24,11 @@ full-width, and laying out any surviving bilingual prose in two columns.
 | Content | Chat message or a file path | The finished document to publish (markdown) |
 | Target | Chat message | New page under a parent `page_id`, or an existing `page_id` to update |
 | Audience | Chat message | Who must be able to read it (just me / a team / anyone at org) |
+| Page type | Chat message | data dump / dashboard page / shared report; ask if not stated |
 
 ## Process
+0. Page type: if the user did not say, ask which of data dump, dashboard page, or shared report
+   this is before rendering. The type's rules are in SKILL.md "Page types".
 1. Write the user's content verbatim (unchanged markdown) to `output/source.md`.
 2. Run the deterministic renderer - it rewrites GitHub pipe tables into Notion `<table>`
    blocks and passes everything else (headings, bold, lists, links, code, ```mermaid fences)
@@ -48,6 +51,12 @@ full-width, and laying out any surviving bilingual prose in two columns.
    - Test each remaining paragraph: does deleting it lose a fact? If not, delete it.
    - Record in `output/target.md` what was condensed, so the diff from `source.md` is auditable.
    If the source is already dense (bullets, tables, diagrams), say so and change nothing.
+   **Page-type pass (right after density).** Apply the type's rules from SKILL.md "Page types".
+   For a shared report, reorder: decision and outcome, counts and environment, then confirmed /
+   untested / known-bug as separate sections with caveats beside their results, then evidence by
+   observable action with a "what to look for" line before each video or image, then supporting
+   detail. On update, keep every existing block (move, do not drop) and fix text naming a moved
+   block's old location. Record the reordering in `output/target.md`.
 4. Review `output/page.md` for the content-level items the renderer does not judge: wrap
    mermaid node labels containing special characters (e.g. parentheses) in double quotes and
    use `<br>` not `\n` inside labels; escape stray literal special characters that appear
@@ -140,7 +149,7 @@ full-width, and laying out any surviving bilingual prose in two columns.
      labels stays full-width.
 9. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
    "none = private workspace page") and the title; for update, the existing `page_id`; and the
-   `audience` (who must be able to read it).
+   `audience` (who must be able to read it); and the `page type`.
 
 ## After Output (MANDATORY)
 ```bash
