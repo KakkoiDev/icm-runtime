@@ -24,18 +24,24 @@ exists, so the report always carries execution results. Then seal the run.
    - A first line reading `> 🤖 AI-generated review. An automated agent wrote this. It is written to be triaged by another agent, which judges each finding and fixes only what should be fixed. Findings are hypotheses, not conclusions.` The report gets read by humans who did not run it, and a machine review that reads like a human verdict both wastes their time and lands as an insult. Name what wrote it, on the first line, every time. The posted draft carries the same disclaimer, prepended deterministically by `tools/post-review`, so do NOT repeat it inside `review-summary.md`.
    - `**Verdict**: SHIP | SHIP WITH FIXES | BLOCK` + one-line rationale.
    - Scope (N files, +M/-L), PR title + link, specialists run.
+   - `Pending review: <url>` - the URL `post-review` printed in step 2c, or `Pending review: none (<why>: stopped on existing pending review <id> / failed: <error> / nothing posted)`. The review is unpublished until the human submits it.
    - `Independence:` line from `../01-context/output/prior-runs.tsv` - `fresh` if empty, else `re-review (N prior same-PR runs; prior review read: yes/no)`. If a predecessor review was read, this run's findings are not fully independent of it - say so plainly. Do NOT claim `fresh` if `prior-runs.tsv` is non-empty; the report-contract cross-checks the on-disk prior reviews and FAILS a false `fresh`.
    - `Reviewed revision:` line from `../01-context/output/seal.tsv` + `seal-decision.tsv` - the sealed `pr.diff` is `pr_head_sha`. If `diverged=yes`, state the local `local_head_sha` differs (different commit and/or dirty tree) and name the recorded decision: `target=sealed` (reviewed the PR; divergence is one finding; local reads tagged `OUT-OF-SEAL` per 04) or `target=working-tree` (human_approved) - in which case say up front the ENTIRE review is non-reproducible/out-of-seal. Never present a working-tree review as the PR. If `diverged=no`, `Reviewed revision: <pr_head_sha> (PR head == local)`.
    - `## 7-Point Validation` table: all 7 rows (Requirements traceability, Dead code, Scope, Security, Performance, Test coverage [from stage 05 mutation], Production readiness) with PASS/FAIL + note. Points 1-6 FAIL block SHIP.
    - `## PR-Template Checklist Audit` (MANDATORY when `../01-context/output/template-checklist.tsv` is non-empty - the REPO mandates a checklist; the trigger is never `checklist.tsv`, which is only what the author pasted and is empty precisely when the template was dropped whole): the per-item table from stage 04 folded with stage 05's exercise results - `item | mandated | author-tick | verdict (MET/GAP/N-A) | method (verified/asserted->now exercised) | basis`. Then the **Bias alarm** line (did gaps land only on the scannable items or a primed hint?). Any `GAP` here is a finding in Critical Issues at its severity; the author's tick state is reported as a claim, and the section states plainly that ticking the boxes is the human's to do - the audit gives them grounded evidence, it does not tick for them. When the template mandates items the body carries none of, every author-tick reads `absent`, and the dropped template is itself a finding (the author skipped the whole gate) - the audit is at its most necessary there, not waived. Only an empty `template-checklist.tsv` (no template in the repo, or one with no boxes) replaces the section with one line saying so.
    - `## Critical Issues` (CRITICAL/HIGH/MEDIUM): each with file:line, severity, category, found-by, blast-radius, description, fix, Regression spec, Mutation result, AND its **status** (`CONFIRMED` / `PLAUSIBLE` / `REFUTED` / `UNVERIFIABLE` from stage 05) with the evidence (source citation or execution token) that settled it. `UNVERIFIABLE` is a truth state, not a reason to omit the finding: report it with what was unreachable, and if it is diff-introduced correctness/security/data-loss it still carries its `inline` disposition. A finding not reproducible from the sealed `pr.diff` (only from a diverged local file) MUST carry an `OUT-OF-SEAL` tag naming where it lives (per 04) - do not report it as a plain diff finding. A finding asserted CONFIRMED with no evidence token is a contract violation - carry the evidence or downgrade it. A load-bearing assumption that could not be executed is reported `UNVERIFIED: <why>`, never silently as confirmed.
+   - **Every finding, in whichever section it lands, carries** (this is for the human who gates publication, not for the PR):
+     - `Explanation:` a lengthy plain-English explanation for a reader who has not opened the diff - what the code does today, why it matters, a concrete failure scenario (inputs/state -> wrong outcome), and the fix. Several paragraphs is fine; this is where the detail lives.
+     - `Posted (EN):` and `Posted (JP):` - the exact terse English and Japanese lines put on the pending review (step 2a), or `Posted: not posted (<disposition>)` for report-only/dropped findings.
    - `## Findings by Category`, `## Verification` (suite/mutation/live/adversarial verdicts), `## Recommendations` (LOW + every `report-only` finding, each with its disposition reason, and any `dropped` finding with why - report-only is a visible destination, never a silent drop; whoever runs the tool on their own PR still sees everything).
    - `## Sources`: one clickable `[label](url)` per resolved link from the link graph; note any `walled-off` requirement the review could not verify against.
    - A trailing `REGRESSION-SPEC-JSON` HTML comment block (per CRITICAL/HIGH: finding, file, seam, assertion, fails_on_revert).
-2. **Post the findings inline on the PR as a PENDING draft review (automatic; NEVER submitted).**
-   The report is the record; this puts each finding on the exact line it is about, as a draft a
-   human then submits. Determinism split: the line anchoring + payload is a tool; the POST is a
-   gated pending-only write (never a submit).
+2. **Add the findings to the PR as ONE PENDING review (automatic; NEVER submitted, NEVER published).**
+   The report is the record; this puts each finding on the exact line it is about, as an
+   unpublished draft the human reads and then publishes themselves - publication is their gate.
+   Never submit the review, never post a plain PR/issue comment, never reply on a thread, by any
+   tool. Determinism split: the line anchoring + payload is a tool; the write is a
+   pending-only create (never a submit).
 
    **Coverage rule - disposition-based posting (completeness AND precision).** Stage 05's
    `Disposition:` lines decide what posts: ONLY findings with final disposition `inline` get an
@@ -64,11 +70,12 @@ exists, so the report always carries execution results. Then seal the run.
       context line - both are commentable; a `-` deleted line is NOT, so anchor its finding to the
       adjacent context line). Quote the code; the tool resolves it to the real RIGHT-side line. Do
       NOT hand-compute line numbers (a diff-offset vs source line mixup is the exact miss this
-      design removes). **`body` = ONE concise sentence stating the problem, in natural engineer
-      language, optionally + a one-line fix** - leading with `**F<n> - <SEV> - <category>.**` so the
-      draft, the report, and the receipt cross-reference the same id. No bullet essay, no
-      multi-paragraph block: the report carries the full detail; the inline comment is the terse
-      pointer a colleague would actually write (a correct comment still gets faulted for verbosity). Also write `output/review-summary.md` (verdict + one line per POSTED finding -
+      design removes). **`body` = exactly two lines: ONE terse English line, then ONE terse Japanese
+      line saying the same thing** (problem + fix if it fits), in natural engineer language - the
+      English line leading with `**F<n> - <SEV> - <category>.**` so the draft, the report, and the
+      receipt cross-reference the same id. No bullet essay, no multi-paragraph block: the report's
+      `Explanation:` carries the full detail; the inline comment is the terse pointer a colleague
+      would actually write (a correct comment still gets faulted for verbosity). Also write `output/review-summary.md` (verdict + one line per POSTED finding -
       `inline` and `body-only` only, never `report-only`/`dropped`) for the review body.
    b. Build the anchored payload (deterministic - validates every anchor against the sealed diff):
       ```bash
@@ -85,26 +92,31 @@ exists, so the report always carries execution results. Then seal the run.
       rule exists to stop - resolve every `unanchored.tsv` row (fix the snippet or record it
       body-only) and rebuild until anchored + body-only + report-only + dropped equals the number
       of findings, and the anchored set is exactly the `inline` dispositions minus body-only.
-   c. Post as a PENDING review (create-or-append, NEVER submit):
+   c. Create ONE PENDING review (NEVER submit):
       ```bash
       bash ~/.agents/skills/kakkoidev/pr-review/tools/post-review <owner>/<repo> <PR#> \
         output/review-comments.json --body-file output/review-summary.md
       ```
-      `post-review` creates a draft review, or appends to a pending review the human already
-      started (no 422, no clobber), and passes NO `event` so nothing is published until a human
-      submits in the GitHub UI. If it fails (no write scope / offline), record the error and
-      continue - the sealed report is the primary artifact, posting is a convenience.
+      `post-review` creates one draft review with every anchored comment, passes NO `event` so
+      nothing is published until the human submits in the GitHub UI, and prints the pending
+      review URL on stdout - write it into the report's `Pending review:` line. If the user
+      already has a pending review on this PR it STOPS (exit 6) and adds nothing: do not append,
+      retry, or work around it - record `stopped` and tell the human in your final message that
+      their existing pending review must be submitted or discarded first. If it fails (no write
+      scope / offline), record the error and continue - the sealed report is the primary
+      artifact.
    d. **Human handoff (a reviewer's explicit ask).** The draft is a starting point,
       not a finished review: the reviewer asked the human to "at least read the comments ...
       to filter the unnecessary comments and to make the necessary comments yourself instead
       of providing the agent's output." So end the run by telling the human, verbatim in your
-      final message AND as the receipt's `Human handoff:` line: *"Draft review is PENDING -
-      before submitting, read each comment on the diff, rewrite it in your own words (or
+      final message AND as the receipt's `Human handoff:` line: *"Draft review is PENDING and
+      unpublished (<pending review url>) - read REVIEW-<PR#>.md's explanations, then read each comment on the diff, rewrite it in your own words (or
       delete it), then submit. Days later, run `tools/gather-review-feedback` and log the
       outcomes in ~/.config/icm/pr-review-calibration.md."* Owning the words is what makes it the human's
       review; the tool only drafts.
 3. Write `output/report-receipt.md`: the report path, its line/finding counts, the inline-post
-   result (`created`/`appended`/`skipped`/`failed` + anchored/unanchored counts), a **`Human
+   result (`created <pending review url>`/`stopped(existing pending review <id>)`/`skipped`/`failed`
+   + anchored/unanchored counts), a **`Human
    handoff:`** line (step 2d - read, rewrite in your own words, then submit; harvest feedback
    later), a **`Findings coverage:`** line that accounts for EVERY finding by id and disposition - one space-separated
    token per finding in the form `F<n>:inline` | `F<n>:body-only(<reason>)` |
@@ -121,7 +133,7 @@ exists, so the report always carries execution results. Then seal the run.
    audit harder, not less) + every CRITICAL/HIGH has file:line + Regression spec + a status with evidence +
    every finding in `findings.md` accounted for on the `Findings coverage:` line) or `VERIFIED:
    FAIL` (with what is missing - a non-empty template-checklist.tsv with no audit section, OR a
-   finding not accounted for on the coverage line, is a FAIL). The inline-post *outcome* (created/appended vs a
+   finding not accounted for on the coverage line, is a FAIL). The inline-post *outcome* (created vs stopped vs a
    network/scope failure) is recorded but does NOT gate the verdict; coverage completeness DOES -
    a post that silently omits a finding is the failure this closes.
 
@@ -134,9 +146,9 @@ bash ~/.agents/skills/icm/runtime/icm.sh seal kakkoidev/pr-review
 ## Outputs
 | Artifact | Location | Format |
 |----------|----------|--------|
-| Review report | output/REVIEW-<PR#>.md | Verdict + rationale; 7-Point table (7 rows); PR-Template Checklist Audit table + Bias-alarm line (when a template checklist exists); Critical Issues (file:line, severity, blast-radius, fix, Regression, Mutation, status CONFIRMED/PLAUSIBLE/REFUTED/UNVERIFIABLE + evidence); Findings by Category; Verification; Recommendations; Sources (clickable, walled-off noted); REGRESSION-SPEC-JSON block |
-| Inline-comment source | output/review-comments.ndjson | One JSON object per `inline`-disposition finding (per stage 05's Disposition lines; report-only/dropped findings get NO row): `{path, snippet (verbatim from an added OR context pr.diff line), severity, body}`. `body` is ONE concise engineer-natural sentence (+ optional one-line fix), never a bullet essay. Deletion-only findings anchor to the adjacent context line; PR-wide findings to a representative line with a `(PR-wide)` body prefix. Model-authored; the anchor is a quoted snippet, never a hand-computed line. |
+| Review report | output/REVIEW-<PR#>.md | Verdict + rationale; `Pending review:` URL line; per finding a lengthy `Explanation:` + the `Posted (EN):`/`Posted (JP):` text; 7-Point table (7 rows); PR-Template Checklist Audit table + Bias-alarm line (when a template checklist exists); Critical Issues (file:line, severity, blast-radius, fix, Regression, Mutation, status CONFIRMED/PLAUSIBLE/REFUTED/UNVERIFIABLE + evidence); Findings by Category; Verification; Recommendations; Sources (clickable, walled-off noted); REGRESSION-SPEC-JSON block |
+| Inline-comment source | output/review-comments.ndjson | One JSON object per `inline`-disposition finding (per stage 05's Disposition lines; report-only/dropped findings get NO row): `{path, snippet (verbatim from an added OR context pr.diff line), severity, body}`. `body` is one terse English line + one terse Japanese line, never a bullet essay. Deletion-only findings anchor to the adjacent context line; PR-wide findings to a representative line with a `(PR-wide)` body prefix. Model-authored; the anchor is a quoted snippet, never a hand-computed line. |
 | Review summary | output/review-summary.md | Verdict + one line per POSTED finding (`inline`/`body-only` only - `report-only`/`dropped` stay out; the body reaches the PR on submit); used as the pending review's body on create. |
 | Anchored payload | output/review-comments.json | Deterministic `tools/build-review-comments` output: JSON array of `{path, line, side:RIGHT, body}`, each line resolved from its snippet against `pr.diff`. |
 | Unanchored | output/unanchored.tsv | `path<TAB>reason<TAB>snippet` for every comment that did NOT anchor (snippet absent/ambiguous). Must be surfaced or fixed - never a silent drop. |
-| Report receipt | output/report-receipt.md | Report path + counts + inline-post result (created/appended/skipped/failed, anchored/unanchored); a `Human handoff:` line (read each draft comment, rewrite in your own words or delete, then submit; harvest outcomes later via gather-review-feedback); a `Findings coverage:` line accounting for every finding by id (`F<n>:inline` / `F<n>:body-only(<reason>)` / `F<n>:report-only(<reason>)` / `F<n>:dropped(<reason>)`, `:inline` count == comments in review-comments.json, tokens match stage-05 dispositions); final line exactly `VERIFIED: PASS` / `VERIFIED: FAIL` |
+| Report receipt | output/report-receipt.md | Report path + counts + inline-post result (created <url>/stopped/skipped/failed, anchored/unanchored); a `Human handoff:` line (read each draft comment, rewrite in your own words or delete, then submit; harvest outcomes later via gather-review-feedback); a `Findings coverage:` line accounting for every finding by id (`F<n>:inline` / `F<n>:body-only(<reason>)` / `F<n>:report-only(<reason>)` / `F<n>:dropped(<reason>)`, `:inline` count == comments in review-comments.json, tokens match stage-05 dispositions); final line exactly `VERIFIED: PASS` / `VERIFIED: FAIL` |

@@ -52,9 +52,11 @@ gathering that was optional and silent, and links that were never followed.
 - The inline PR review (06) splits the same way: the line **anchoring is
   deterministic** (`tools/build-review-comments` resolves a quoted snippet to its
   real RIGHT-side line, so a diff-offset vs source-line mixup cannot mis-post; an
-  unresolved snippet lands in `unanchored.tsv`, never a guessed line). The **POST is a
-  gated, pending-only write** (`tools/post-review`, create-or-append, passes no
-  `event`) - it drafts a review a human submits; it never publishes on its own.
+  unresolved snippet lands in `unanchored.tsv`, never a guessed line). The **write is
+  ONE pending review** (`tools/post-review`, create-only, passes no `event`, stops if the
+  user already has a pending review on the PR) - one terse English + one terse Japanese
+  line per finding; the report carries the lengthy explanation and the pending review URL.
+  It never submits, never posts a plain comment: the human reads, then publishes.
 
 ## Pipeline
 
@@ -65,7 +67,7 @@ gathering that was optional and silent, and links that were never followed.
 | 03-runtime-evidence | how the mechanism executes: run history + a real actor/event instance + secret stores (deterministic); the changed-value impact sweep (tests that still assert a value the diff removes - the dual of dead-code, deterministic); per-AC execution-chain trace | `runtime-evidence.md`, `impact.md`, `ac-execution-trace.md` |
 | 04-review | ported review dimensions + 7-point + scars check + PR-template checklist audit (uniform bar, verified/asserted, bias alarm), findings tagged CONFIRMED/PLAUSIBLE/REFUTED | `findings.md`, `checklist-audit.md` |
 | 05-verify | suite + mutation-in-worktree + read-only MCP + mandatory adversarial per-finding verify (no-oracle PRs backed by runtime-evidence, never "static only") | `verification.md` |
-| 06-report | assemble + seal the report, then post findings inline as a PENDING PR review (deterministic snippet->line anchoring; create-or-append; never submitted) | `REVIEW-<PR#>.md`, `review-comments.ndjson`, `review-comments.json`, `unanchored.tsv`, `report-receipt.md` |
+| 06-report | assemble + seal the report, then add findings inline as ONE PENDING PR review, EN + JP line each (deterministic snippet->line anchoring; create-only, stops on an existing pending review; never submitted) | `REVIEW-<PR#>.md`, `review-comments.ndjson`, `review-comments.json`, `unanchored.tsv`, `report-receipt.md` |
 
 ## Invocation
 

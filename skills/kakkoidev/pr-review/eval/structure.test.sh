@@ -93,7 +93,14 @@ grep -q 'Disposition:' stages/05-verify.md || { echo "FAIL: 05-verify must resol
 grep -qiE 'senior engineer' stages/05-verify.md || { echo "FAIL: 05-verify must carry the judgment-gate questions (would a senior engineer bother?)"; exit 1; }
 grep -q 'report-only' stages/06-report.md || { echo "FAIL: 06-report must support the report-only disposition (low-value findings stay off the PR)"; exit 1; }
 grep -qiE 'inline.-disposition' stages/06-report.md || { echo "FAIL: 06-report must post ndjson rows only for inline-disposition findings"; exit 1; }
-grep -qiE 'ONE concise sentence' stages/06-report.md || { echo "FAIL: 06-report must mandate one-concise-sentence inline bodies (a reviewer's verbosity feedback)"; exit 1; }
+grep -qiE 'ONE terse English line' stages/06-report.md || { echo "FAIL: 06-report must mandate one terse English line per inline body"; exit 1; }
+grep -qiE 'ONE terse Japanese line' stages/06-report.md || { echo "FAIL: 06-report must mandate one terse Japanese line per inline body"; exit 1; }
+# Publication is the captain's gate: one pending review, never appended to, never submitted;
+# the report carries the long explanation, the posted EN/JP text, and the pending review URL.
+if grep -q 'addPullRequestReviewThread' tools/post-review; then echo "FAIL: post-review must not append to an existing pending review"; exit 1; fi
+grep -q 'Pending review:' stages/06-report.md || { echo "FAIL: 06-report must put the pending review URL in the report"; exit 1; }
+grep -q 'Explanation:' stages/06-report.md || { echo "FAIL: 06-report must mandate a lengthy per-finding Explanation in the report"; exit 1; }
+test -x eval/post-review.test.sh || { echo "FAIL: eval/post-review.test.sh missing or not executable (the pending-only freeze)"; exit 1; }
 test -x eval/inline-coverage-selftest.test.sh || { echo "FAIL: eval/inline-coverage-selftest.test.sh missing or not executable (proves the coverage check bites both directions)"; exit 1; }
 # The floor is model-graded; 05 must cross-check the introduced-by-diff claims against
 # the diff deterministically (a self-graded gate is prose, not enforcement).
