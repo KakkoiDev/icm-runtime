@@ -25,8 +25,11 @@ here: this stage is a single script call so the gathered context is reproducible
    the body, one row per box: `checked`/`unchecked` <TAB> item text),
    `output/pr-template.md` (the repo's PR template, ground truth for which items
    are mandatory) with `output/template-checklist.tsv` (that template's own boxes,
-   same extractor), and `output/pr.diff` (the change under review, sealed so the
-   review is reproducible).
+   same extractor), `output/body-claims.tsv` (every body line stating a checkable fact),
+   `output/gates.tsv` (repo visibility, author, CODEOWNERS owners per touched path, base
+   branch review policy, the template's QA lines), `output/pr-text.diff` (the body and
+   commit messages as a scannable diff), and `output/pr.diff` (the change under review,
+   sealed so the review is reproducible).
 2. Do NOT hand-edit any of these files. If the tool errors (auth, missing PR),
    report the exact error to the user and stop - do not fabricate context.
 3. Read `output/pr-context.md` so you know the PR; note the bucket counts and any
@@ -94,6 +97,14 @@ here: this stage is a single script call so the gathered context is reproducible
    diff is portable - only that these six signals were searched and none were found.
    Read all three. Note the counts; they are the inputs to stage 04's house-standards,
    deprecation and local-context audits.
+   **When `gates.tsv` records `visibility - PUBLIC`**, also scan the text the PR publishes
+   beside the diff - the body and every commit message:
+   ```bash
+   cd <abs-run-dir>/01-context && \
+     bash ~/.agents/skills/kakkoidev/pr-review/tools/gather-local-leakage output/pr-text.diff output/pr-text
+   ```
+   `output/pr-text/local-leakage.tsv` feeds 04's local-context audit the same way. On a
+   private repo the scan is skipped and that is recorded in 04, not left silent.
 
 **Run discipline (cwd + one model per run).** Two working directories coexist and
 mixing them is the most common operational failure: tools read/write a
@@ -128,4 +139,7 @@ cd <abs-repo-root> && \
 | House rules | output/house-rules.tsv | One row per normative document the repo writes for itself: `<path>\t<title>\t<lines>\t<relevance>\t<matched>`. Vendored trees excluded. `relevance` (`likely`/`unknown`) is a path-token hint, not a filter. Ends with a `# TOTAL:` line, or `# NONE:` when the repo states no standards - stage 04 must account for every row. |
 | Deprecations | output/deprecations.tsv | One row per deprecated symbol used on an added line: `<symbol>\t<definition-file:line>\t<note>\t<diff-path>\t<added-line>`. The note usually names the replacement. Ends with `# TOTAL:` or an explicit `# CLEAR:` - a searched-and-clear result, never to be conflated with unchecked. |
 | Local leakage | output/local-leakage.tsv | One row per local-context signal the diff would ship: `<class>\t<path>\t<line>\t<evidence>`, class in `home-path` / `identity-value` / `scratch-path` / `personal-ignore` / `private-vocab` / `process-label` (`<line>` is `-` for a whole-file hit). Added lines and added paths only - a value the diff deletes can never appear. A row is a SIGNAL, not a verdict: 04 decides. Ends with `# TOTAL:` or an explicit `# CLEAR:`, which is a searched-and-none-found result and must never be read as unchecked - but which is bounded by the lexicon and the tool's stated residual misses, so it is not proof the diff is portable. |
+| Body claims | output/body-claims.tsv | `tools/extract-body-claims` over the PR body: `<body-line>\t<markers>\t<text>` per line stating a checkable fact (a count, now/once/only/no/same/already/fixes/...); headings, checkboxes, code and bare links skipped. Ends `# TOTAL:` or `# NONE:`. 04 verifies each row against the diff. |
+| Gates | output/gates.tsv | Process gates as facts: `visibility`, `author`, `codeowners <path> <owners>` per touched path (last matching rule; `NONE:` without a CODEOWNERS file), `review-policy <base> <counts>` (or `unavailable`), `qa pr-template.md:<line>` per template QA line. 04 audits each row. |
+| PR text | output/pr-text.diff | The PR body (`pr-body.md`) and commit messages (`commit-messages.md`) as added lines of a synthetic diff, scanned by `gather-local-leakage` into `output/pr-text/` when the repo is public. |
 | Diff | output/pr.diff | `gh pr diff` output - the exact change under review, sealed with the context so the review stage reads a reproducible artifact, not an ad-hoc re-fetch. |

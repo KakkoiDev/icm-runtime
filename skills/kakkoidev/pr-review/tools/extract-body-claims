@@ -1,0 +1,43 @@
+#!/bin/sh
+# extract-body-claims: read a PR body on stdin, emit every line that states a checkable
+# fact, so stage 04 verifies each claim against the diff instead of reading the body as
+# context.
+#
+# A claim line carries at least one marker: a number (counts), or one of the words
+# now, once, only, no, never, always, all, every, same, already, fix, fixes, fixed,
+# removes, unchanged, longer (as in "no longer"), not. Headings, checkbox lines (the
+# checklist audit owns them), code-fence contents and bare-link lines are skipped.
+#
+# Output (stdout, TSV): <body-line> <TAB> <markers,comma-separated> <TAB> <text>
+# then `# TOTAL: <n> claim lines` or `# NONE: no claim lines in the body`.
+# Facts only: whether a claim is true is stage 04's job. POSIX sh + awk.
+set -eu
+
+awk '
+BEGIN {
+    n = split("now once only no never always all every same already fix fixes fixed removes unchanged longer not", W, " ")
+    total = 0
+}
+{
+    line = $0
+    if (line ~ /^[[:space:]]*```/) { infence = !infence; next }
+    if (infence) next
+    if (line ~ /^[[:space:]]*$/) next
+    if (line ~ /^[[:space:]]*#/) next
+    if (line ~ /^[[:space:]]*[-*][[:space:]]*\[[ xX]\]/) next
+    if (line ~ /^[[:space:]]*<?https?:\/\/[^[:space:]]*>?[[:space:]]*$/) next
+    low = tolower(line)
+    m = ""
+    if (line ~ /(^|[^A-Za-z0-9])[0-9]+([^A-Za-z0-9]|$)/) m = "number"
+    for (i = 1; i <= n; i++)
+        if (low ~ ("(^|[^a-z])" W[i] "([^a-z]|$)")) m = (m == "" ? W[i] : m "," W[i])
+    if (m == "") next
+    t = line; sub(/^[[:space:]]+/, "", t); gsub(/\t/, " ", t)
+    printf "%d\t%s\t%s\n", NR, m, substr(t, 1, 300)
+    total++
+}
+END {
+    if (total == 0) print "# NONE: no claim lines in the body"
+    else printf "# TOTAL: %d claim lines - stage 04 verifies each against the diff\n", total
+}
+'

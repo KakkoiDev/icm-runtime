@@ -21,7 +21,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 TAB=$(printf '\t')
 
 gh pr view "$PR" --repo "$OR" --json \
-  number,title,state,isDraft,author,createdAt,updatedAt,body,labels,files,additions,deletions,commits,reviews,comments,closingIssuesReferences,headRefOid \
+  number,title,state,isDraft,author,createdAt,updatedAt,body,labels,files,additions,deletions,commits,reviews,comments,closingIssuesReferences,headRefOid,baseRefName \
   > "$TMP/pr.json" 2>"$TMP/err" || { echo "gather-pr: gh pr view failed:" >&2; cat "$TMP/err" >&2; exit 4; }
 
 gh api --paginate "repos/$OR/issues/$PR/timeline" > "$TMP/timeline.json" 2>/dev/null || echo '[]' > "$TMP/timeline.json"
@@ -114,6 +114,74 @@ done
 # template-rows>0 is the dropped-template case, itself a finding. ----
 "$(dirname "$0")/extract-checklist" < "$OUT/pr-template.md" > "$OUT/template-checklist.tsv" 2>/dev/null || true
 [ -f "$OUT/template-checklist.tsv" ] || : > "$OUT/template-checklist.tsv"
+
+# ---- body-claims.tsv: every body line that states a checkable fact (a count, "now",
+# "once", "no", "same as", "fixes", ...). Stage 04 verifies each against the diff. ----
+jq -r '(.body // "")' "$TMP/pr.json" | "$(dirname "$0")/extract-body-claims" > "$OUT/body-claims.tsv"
+
+# ---- pr-text.diff: the PR body and every commit message as added lines of two
+# synthetic files, so gather-local-leakage can scan the text a public repo publishes
+# beside the diff. ----
+jq -r '(.body // "")' "$TMP/pr.json" > "$TMP/body.txt"
+jq -r '.commits[]? | (.messageHeadline // ""), (.messageBody // "")' "$TMP/pr.json" > "$TMP/commits.txt"
+{
+  for pair in "pr-body.md:$TMP/body.txt" "commit-messages.md:$TMP/commits.txt"; do
+    name=${pair%%:*}; src=${pair#*:}
+    cnt=$(awk 'END {print NR+0}' "$src")
+    printf 'diff --git a/%s b/%s\n--- /dev/null\n+++ b/%s\n@@ -0,0 +1,%s @@\n' "$name" "$name" "$name" "$cnt"
+    sed 's/^/+/' "$src"
+  done
+} > "$OUT/pr-text.diff"
+
+# ---- gates.tsv: process gates as facts - repo visibility, the author, the CODEOWNERS
+# owners of each touched path (last matching rule wins; `*` here also crosses `/`, a
+# documented approximation of gitignore globbing), the base branch's review policy, and
+# the template's QA lines. Columns: gate <TAB> subject <TAB> detail. ----
+G=$OUT/gates.tsv
+{
+  printf '# gates.tsv - process gates (facts, no judgment): stage 04 audits each row\n'
+  printf '# gate\tsubject\tdetail\n'
+  vis=$(gh repo view "$OR" --json visibility 2>/dev/null | jq -r '.visibility // empty' 2>/dev/null || :)
+  printf 'visibility\t-\t%s\n' "${vis:-unavailable}"
+  printf 'author\t-\t%s\n' "$(jq -r '.author.login // "?"' "$TMP/pr.json")"
+  : > "$TMP/codeowners"
+  for p in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
+    if gh api "repos/$OR/contents/$p" -H "Accept: application/vnd.github.raw" > "$TMP/co" 2>/dev/null && [ -s "$TMP/co" ]; then
+      cp "$TMP/co" "$TMP/codeowners"; break
+    fi
+  done
+  if [ ! -s "$TMP/codeowners" ]; then
+    printf 'codeowners\t-\tNONE: no CODEOWNERS file at .github/, root or docs/\n'
+  else
+    sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$TMP/codeowners" > "$TMP/corules"
+    jq -r '.files[].path' "$TMP/pr.json" | while IFS= read -r f; do
+      owners='(no matching rule)'
+      while read -r pat rest; do
+        anch=no
+        case $pat in /*) anch=yes; pat=${pat#/} ;; esac
+        pat=${pat%/}
+        hit=no
+        if [ "$anch" = yes ]; then
+          case $f in $pat|$pat/*) hit=yes ;; esac
+        else
+          case $f in $pat|$pat/*|*/$pat|*/$pat/*) hit=yes ;; esac
+        fi
+        [ "$hit" = yes ] && owners=$rest
+      done < "$TMP/corules"
+      printf 'codeowners\t%s\t%s\n' "$f" "$owners"
+    done
+  fi
+  base=$(jq -r '.baseRefName // empty' "$TMP/pr.json")
+  if [ -n "$base" ] && gh api "repos/$OR/branches/$base/protection" > "$TMP/prot.json" 2>/dev/null \
+     && pol=$(jq -r '.required_pull_request_reviews // empty | "required_approving_review_count=\(.required_approving_review_count // 0) require_code_owner_reviews=\(.require_code_owner_reviews // false)"' "$TMP/prot.json" 2>/dev/null) \
+     && [ -n "$pol" ]; then
+    printf 'review-policy\t%s\t%s\n' "$base" "$pol"
+  else
+    printf 'review-policy\t%s\tunavailable (no protection, no required reviews, or no permission)\n' "${base:--}"
+  fi
+  grep -nE '(^|[^A-Za-z])QA([^A-Za-z]|$)' "$OUT/pr-template.md" 2>/dev/null \
+    | while IFS= read -r l; do printf 'qa\tpr-template.md:%s\t%s\n' "${l%%:*}" "${l#*:}"; done || :
+} > "$G"
 
 # ---- prior-runs.tsv: sealed reviews of THIS SAME PR from earlier runs. Deterministic
 # and cwd-trap-free: computed from OUT (= <runs-root>/<ts>/01-context/output), not a
