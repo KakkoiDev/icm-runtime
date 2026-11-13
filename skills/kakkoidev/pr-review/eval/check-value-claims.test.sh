@@ -167,4 +167,26 @@ EOF
 out=$("$tool" "$tmp/findings9.md" "$tmp/rename.diff") || { echo "FAIL: rename-only diff must not be refused"; exit 1; }
 case "$(verdict F1)" in consistent) : ;; *) echo "FAIL: rename-target citation expected consistent (got: $(verdict F1))"; exit 1 ;; esac
 
-echo "ok: check-value-claims (grounded/ungrounded/exempt/attribution/root-file/empty-diff/combo/conflict/collision/bracket/rename verdicts)"
+# introduced-by-diff=sibling: a pre-existing instance of the SAME defect class the PR
+# fixes passes the floor, but only when the block cites the diff-touched fix site it is
+# a sibling of; an uncited sibling is SUSPECT; a floor-failing sibling is exempt.
+cat > "$tmp/findings10.md" <<'EOF'
+## F1 - HIGH - correctness
+The PR fixes the swallowed rejection in apps/web/src/components/ShareDialog/hooks.ts:3;
+apps/web/src/lib/download.ts:45 swallows it the same way.
+Value: introduced-by-diff=sibling in-scope=yes merge-decision=yes floor=pass -> proposed: inline
+## F2 - HIGH - correctness
+apps/web/src/lib/download.ts:45 swallows the rejection the same way.
+Value: introduced-by-diff=sibling in-scope=yes merge-decision=yes floor=pass -> proposed: inline
+## F3 - LOW - correctness
+apps/web/src/lib/download.ts:45 again.
+Value: introduced-by-diff=sibling in-scope=no merge-decision=no floor=fail -> proposed: report-only(out-of-scope)
+EOF
+out=$("$tool" "$tmp/findings10.md" "$tmp/pr.diff")
+case "$(verdict F1)" in consistent) : ;; *) echo "FAIL: sibling citing the diff-touched fix site expected consistent (got: $(verdict F1))"; exit 1 ;; esac
+case "$(verdict F2)" in SUSPECT*) : ;; *) echo "FAIL: sibling citing no diff-touched fix site expected SUSPECT (got: $(verdict F2))"; exit 1 ;; esac
+case "$(verdict F3)" in "exempt(floor=fail)") : ;; *) echo "FAIL: floor-failing sibling expected exempt(floor=fail) (got: $(verdict F3))"; exit 1 ;; esac
+claim() { printf '%s\n' "$out" | awk -F'\t' -v id="$1" '$1==id{print $2; exit}'; }
+case "$(claim F1)" in introduced-by-diff=sibling) : ;; *) echo "FAIL: sibling claim column expected introduced-by-diff=sibling (got: $(claim F1))"; exit 1 ;; esac
+
+echo "ok: check-value-claims (grounded/ungrounded/exempt/attribution/root-file/empty-diff/combo/conflict/collision/bracket/rename/sibling verdicts)"

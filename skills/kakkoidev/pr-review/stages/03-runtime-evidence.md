@@ -61,6 +61,12 @@ It does not judge - that is stage 04. Do not flag findings here.
    an *effect or mechanism* (not just a value), lay out the chain
    `trigger -> condition -> step -> external effect` and mark each link
    `executes for the real actor` / `unverified` / `broken`, citing `runtime-evidence.md`.
+   **Failure chain alongside the success chain.** For every link that calls into a library or
+   framework (form libraries, router, fetch/RTK, agent loops, queues), add a failure column:
+   what happens on reject / throw / `false` / retry, and does that failure reach the caller
+   the AC cares about? Settle it from the library SOURCE at the version the lockfile pins
+   (`node_modules/<pkg>`), not from memory or docs; cite `<pkg>@<version> <file>:<line>`, or
+   tag the failure link `unverified`.
    This is the lens stage 04's constant/set traceability does not cover: a value-AC is a
    constant to check; a mechanism-AC ("notification sent on PR open", "job runs nightly",
    "flag gates the path") is an execution chain to walk against a real instance.
@@ -82,4 +88,4 @@ cd <abs-repo-root> && \
 |----------|----------|--------|
 | Runtime evidence | output/runtime-evidence.md | Tool output (verbatim): changed-workflow run history; per conditional actor/event a real instance (timeline ops with actor + timestamp); secret-store membership (names only). Facts, no judgment. |
 | Changed-value impact | output/impact.md | Tool output (verbatim): per user-visible value the diff REMOVES (i18n key/value), the test/snapshot files that still assert it (breakage candidates), each with `file:line`; an explicit `0 consumers` clear line where none; visual snapshots marked NOT searched; or a `NOT RUN:` line when the reviewed checkout is unavailable - the tool refuses a root the diff does not belong to rather than clearing it. Facts, no judgment. |
-| AC execution trace | output/ac-execution-trace.md | One block per mechanism-AC: the `trigger -> condition -> step -> external effect` chain, each link tagged `executes for the real actor` / `unverified` / `broken` with a citation into runtime-evidence.md. Value-only ACs are noted as "constant - checked in 04", not traced. |
+| AC execution trace | output/ac-execution-trace.md | One block per mechanism-AC: the `trigger -> condition -> step -> external effect` chain, each link tagged `executes for the real actor` / `unverified` / `broken` with a citation into runtime-evidence.md; every library/framework link also carries its failure behavior (reject/throw/false/retry -> what the caller sees) cited to the pinned library source, or `unverified`. Value-only ACs are noted as "constant - checked in 04", not traced. |

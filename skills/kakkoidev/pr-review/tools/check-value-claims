@@ -8,6 +8,9 @@
 # one that will post inline) must cite at least one file path the diff actually touches.
 # It cannot catch semantic lies (a pre-existing pattern cited alongside a changed file
 # still passes) - it catches the lazy ones (no cited file in the diff, no file cited).
+# introduced-by-diff=sibling (a pre-existing instance of the SAME defect class the PR
+# fixes) passes the floor under the same rule: the block must cite the diff-touched fix
+# site it is a sibling of.
 #
 # Parsing contract (mirrors stage 04): a finding BLOCK starts at a line whose first
 # alphanumeric content is its id (`## F1 ...`, `**F2 ...`, `| F3 |`, `F4:`); an id
@@ -21,6 +24,7 @@
 # files` lines, so rename-only and binary-only PRs still produce a report.
 #
 # Emits TSV to stdout: F<n> <TAB> claim <TAB> verdict <TAB> detail
+# claim: introduced-by-diff=yes|sibling|no
 # verdict: consistent | exempt(introduced-by-diff=no) | exempt(floor=fail) | SUSPECT(<why>)
 # Exit 0 on a produced report (stage 05 resolves SUSPECT rows: ground the claim in a
 # changed file, or flip it to =no and demote); exit 2 on unusable input - including a
@@ -60,6 +64,7 @@ NR == FNR { df[$0] = 1; next }
     if ($0 ~ /Value:/) {
         c = ""; f = ""
         if ($0 ~ /introduced-by-diff=yes/) c = "yes"
+        else if ($0 ~ /introduced-by-diff=sibling/) c = "sibling"
         else if ($0 ~ /introduced-by-diff=no/) c = "no"
         if ($0 ~ /floor=pass/) f = "pass"
         else if ($0 ~ /floor=fail/) f = "fail"
@@ -87,7 +92,7 @@ END {
         # requirement below via the =no exemption.
         if (c == "no" && f == "pass") { printf "%s\tintroduced-by-diff=no\tSUSPECT(floor=pass requires introduced-by-diff=yes)\t-\n", id; continue }
         if (c == "no")     { printf "%s\tintroduced-by-diff=no\texempt(introduced-by-diff=no)\t-\n", id; continue }
-        if (f == "fail")   { printf "%s\tintroduced-by-diff=yes\texempt(floor=fail)\t-\n", id; continue }
+        if (f == "fail")   { printf "%s\tintroduced-by-diff=%s\texempt(floor=fail)\t-\n", id, c; continue }
         n = split(substr(paths[id], 2), arr, " ")
         hit = ""
         for (j = 1; j <= n && hit == ""; j++) {
@@ -100,9 +105,9 @@ END {
                 if (d == p || ends(d, "/" p) || (index(d, "/") && ends(p, "/" d))) { hit = p; break }
             }
         }
-        if (hit != "")      printf "%s\tintroduced-by-diff=yes\tconsistent\t%s\n", id, hit
-        else if (n == 0)    printf "%s\tintroduced-by-diff=yes\tSUSPECT(no file path cited in the finding block)\t-\n", id
-        else                printf "%s\tintroduced-by-diff=yes\tSUSPECT(no cited file is touched by the diff)\t%s\n", id, arr[1]
+        if (hit != "")      printf "%s\tintroduced-by-diff=%s\tconsistent\t%s\n", id, c, hit
+        else if (n == 0)    printf "%s\tintroduced-by-diff=%s\tSUSPECT(no file path cited in the finding block)\t-\n", id, c
+        else                printf "%s\tintroduced-by-diff=%s\tSUSPECT(no cited file is touched by the diff)\t%s\n", id, c, arr[1]
     }
 }
 ' "$dfiles" "$findings"

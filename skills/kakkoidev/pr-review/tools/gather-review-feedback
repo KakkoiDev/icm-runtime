@@ -9,7 +9,7 @@
 #
 #   F<n> <TAB> root_comment_id <TAB> posted|reply <TAB> author <TAB> created_at <TAB> body
 #
-# Classification (accepted / rejected / ignored) is judgment, not this tool's job:
+# Classification (accepted / accepted-fix-replaced / rejected / ignored) is judgment, not this tool's job:
 # a human or model reads the rows and appends the verdicts to the local calibration log
 # (~/.config/icm/pr-review-calibration.md; format in references/calibration.example.md)
 # (recurring rejections of a finding shape -> a new scar / gate reason).

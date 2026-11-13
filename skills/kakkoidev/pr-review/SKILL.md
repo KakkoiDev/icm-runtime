@@ -107,22 +107,28 @@ Seal makes `REVIEW-<PR#>.md` tamper-evident; suggest committing `.icm-seals.log`
 ## Feedback pass (after the author responds)
 
 The run ends at a pending draft; precision is only measurable once the author/reviewer
-replies. Days later (or when asked "how did the review land?"), run:
+replies. The pass is not left to memory - it runs on two triggers, whichever comes first:
+- **At merge** of a reviewed PR (or when asked "how did the review land?").
+- **At the start of the next run on the same repo**, before stage 01: list the sealed
+  `REVIEW-<n>.md` under that repo's `.icm/kakkoidev/pr-review/` whose PR has no row in
+  the calibration log, and run the pass for each before starting the new review.
+
+For each, run:
 ```
 bash tools/gather-review-feedback <owner>/<repo> <PR#>
 ```
 It emits one TSV row per posted `**F<n>` comment and per reply. Classify each finding
-(`accepted` / `rejected(<reason>)` / `disputed` / `ignored`) and append the rows to
+(`accepted` / `accepted-fix-replaced` / `rejected(<reason>)` / `disputed` / `ignored`) and append the rows to
 the local, untracked calibration log (`~/.config/icm/pr-review-calibration.md`,
 format in `references/calibration.example.md`). A finding shape rejected twice becomes a floor demotion
-reason or a scar - this is the loop that keeps the value gate calibrated by ground
-truth instead of one incident.
+reason or a scar, and a fix shape replaced twice becomes a stage-04 `Fix shape:` lens - this
+is the loop that keeps the value gate calibrated by ground truth instead of one incident.
 
 ## Reference
 - `tools/gather-pr` - deterministic PR gather (gh + links + checklist + template). `tools/extract-checklist` - shared checkbox parser (frozen by `eval/checklist-extraction.test.sh`). `tools/fetch-web` - curl + auth-wall detect.
 - `tools/gather-house-rules` - deterministic discovery of the repo's OWN normative documents (guideline trees, architecture decision records, contributor and agent instructions, the PR template), with a path-token relevance hint and an explicit `# NONE:`/`# TOTAL:` accounting line so a document that exists cannot be skipped by forgetting it (`house-rules.tsv`; 04 must account for every row and quote the rule it cites). `tools/gather-deprecations` - the deprecated-symbol map intersected with the diff's added lines, resolved to the definition site with the note that names the replacement, and an explicit `# CLEAR:` for searched-and-none-found (`deprecations.tsv`). Both frozen by `eval/house-rules-deprecations.test.sh`.
 - `tools/gather-local-leakage` - deterministic extraction of the local context a diff would SHIP: home paths, identity-shaped literals (bounded 32-hex / uuid / Slack id), scratch and draft file locations, a personal tool's ignore rule in a shared ignore file, and terms from the private lexicon - a local untracked file (`$ICM_PRIVATE_VOCAB`, else `~/.config/icm/private-vocab.txt`; format in `references/private-vocab.example.txt`) that is never committed to a reviewed repo or to this one; a missing lexicon is reported as `# NO-LEXICON:`, never as a clear (a past PR's first guard hardcoded the banned words inside a file that shipped, publishing the list it existed to suppress; the tool excludes that file from its own scan). Added lines and added paths only: a value the diff deletes can never produce a hit. Emits signals, never verdicts; `# TOTAL:`/`# CLEAR:` accounting, with the clear explicitly bounded by the lexicon and by the tool's residual misses. Frozen by `eval/local-leakage.test.sh`, which asserts both halves against a frozen fixture - planted signals found at the right line across hunks, and CI paths, bot addresses, lockfile hashes and all-caps constants kept silent.
 - `tools/gather-impact` - deterministic changed-value dual of dead-code: for each user-visible value the diff removes, the tests/snapshots that still assert it (`impact.md`). Catches the class a review agent once caught by hand and the skill missed. Pass the reviewed checkout as the 3rd arg (stage 03 does): the `git rev-parse` default resolves to whatever repo the cwd sits in, and the tool refuses a root that holds none of the diff's paths rather than sweeping it and printing a false `values=0` (frozen by `eval/impact-root-guard.test.sh`).
-- `tools/check-value-claims` - deterministic cross-check of the self-graded value floor (an inline-bound `introduced-by-diff=yes` must cite a diff-touched file; frozen by `eval/check-value-claims.test.sh`). `tools/gather-review-feedback` - post-submit thread harvest feeding the local calibration log.
+- `tools/check-value-claims` - deterministic cross-check of the self-graded value floor (an inline-bound `introduced-by-diff=yes` or `=sibling` must cite a diff-touched file; frozen by `eval/check-value-claims.test.sh`). `tools/gather-review-feedback` - post-submit thread harvest feeding the local calibration log.
 - `references/scars.md` - generalized review lenses, frozen into the run and used as a review lens in 03. `references/calibration.example.md` - format of the local, untracked per-finding ground-truth log (accepted/rejected) driving gate calibration.
 - `eval/structure.test.sh` - skill shape. `eval-heldout/` - output-contract floor (link coverage, report contract, inline-comment coverage + value gate) for icm-improve.

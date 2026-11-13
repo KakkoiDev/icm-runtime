@@ -135,3 +135,26 @@ blast radius is runtime.
 **How to review it.** When a diff widens a type or adds `?` to a field, find the consumers that
 previously relied on the narrower guarantee. `strictNullChecks` catches the direct reads; it does
 not catch a consumer that passes the value onward to something that spreads or serializes it.
+
+---
+
+## T9. Library and framework failure semantics, verified at the pinned version
+
+**The class.** The diff calls into a library or framework and handles the success path. What the
+library does on reject, throw, `false`, or retry is assumed from memory. The type checker sees a
+`Promise<void>` either way; it says nothing about whether the failure ever reaches the caller.
+
+**Real findings.** React Hook Form `handleSubmit` resolves without calling `onValid` when the
+resolver fails, and throwing inside `onInvalid` leaves `isSubmitting` stuck. An RTK Query
+`FETCH_ERROR` carries no `data`, so `e.data.error` throws inside the error handler. Next.js
+`router.push` rejects asynchronously and resolves `false` on cancel. An agent loop retries on a
+`{success:false}` tool result, so a per-call failure report shows an error on a run that then
+succeeds. One rejected send that clears a whole queue drops callers already told success.
+
+**How to review it.** For every changed call into a library or framework (form libraries, router,
+fetch/RTK, agent loops, queues), state what happens on reject / throw / `false` / retry and whether
+the failure reaches the caller that needs it. Verify against the library source at the version the
+lockfile pins (`node_modules/<pkg>`), not memory or docs, and cite the file and line.
+
+**Evidence that settles it.** A citation into the pinned library source, or a probe that makes the
+library fail and records what the caller observed.
