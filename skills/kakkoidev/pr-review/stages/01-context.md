@@ -74,7 +74,7 @@ here: this stage is a single script call so the gathered context is reproducible
    ```
    `output/house-rules.tsv` is the complete set of normative documents the repo writes
    for itself - guideline trees, decision records, contributor and agent instructions,
-   the PR template. Discovery is deterministic precisely so stage 04 cannot silently skip
+   the PR template, incident catalogues (production incidents, postmortems, pitfalls). Discovery is deterministic precisely so stage 04 cannot silently skip
    a document that exists: a `# NONE:` marker means the repo states no standards, which is
    a fact to report, not a pass. The `likely`/`unknown` relevance column is a HINT from
    path-token overlap, never a filter - an `unknown` row still has to be judged.
@@ -84,13 +84,14 @@ here: this stage is a single script call so the gathered context is reproducible
    from not-checked; do not report a clear as silence or a silence as a clear.
    `output/local-leakage.tsv` is every mechanical signal that the diff would SHIP the
    author's own environment - a home path, an identity-shaped literal, a scratch or draft
-   file, a personal tool's ignore rule, a private-lexicon term - on ADDED lines and added
+   file, a personal tool's ignore rule, a private-lexicon term, a review-process label in
+   code - on ADDED lines and added
    paths only. It takes no repo root: the diff is the whole input. The lexicon it reads
    (`$ICM_PRIVATE_VOCAB`, else `~/.config/icm/private-vocab.txt`) is a local untracked file,
    never committed to a reviewed repo or to this skill's repo; when it is missing the TSV
    carries a `# NO-LEXICON:` line and the vocab class was not searched. Same `# CLEAR:` rule as above, and one more: a clear here is bounded by
    the lexicon and by the tool header's residual misses, so it is never evidence that the
-   diff is portable - only that these five signals were searched and none were found.
+   diff is portable - only that these six signals were searched and none were found.
    Read all three. Note the counts; they are the inputs to stage 04's house-standards,
    deprecation and local-context audits.
 
@@ -126,5 +127,5 @@ cd <abs-repo-root> && \
 | Seal decision | output/seal-decision.tsv | Written ONLY when `diverged=yes`: `target` (`sealed`/`working-tree`), `human_approved` (`yes`/`no`), `note`. Records which revision the review targets; 04's gate blocks the review Write without it (working-tree needs human_approved=yes). |
 | House rules | output/house-rules.tsv | One row per normative document the repo writes for itself: `<path>\t<title>\t<lines>\t<relevance>\t<matched>`. Vendored trees excluded. `relevance` (`likely`/`unknown`) is a path-token hint, not a filter. Ends with a `# TOTAL:` line, or `# NONE:` when the repo states no standards - stage 04 must account for every row. |
 | Deprecations | output/deprecations.tsv | One row per deprecated symbol used on an added line: `<symbol>\t<definition-file:line>\t<note>\t<diff-path>\t<added-line>`. The note usually names the replacement. Ends with `# TOTAL:` or an explicit `# CLEAR:` - a searched-and-clear result, never to be conflated with unchecked. |
-| Local leakage | output/local-leakage.tsv | One row per local-context signal the diff would ship: `<class>\t<path>\t<line>\t<evidence>`, class in `home-path` / `identity-value` / `scratch-path` / `personal-ignore` / `private-vocab` (`<line>` is `-` for a whole-file hit). Added lines and added paths only - a value the diff deletes can never appear. A row is a SIGNAL, not a verdict: 04 decides. Ends with `# TOTAL:` or an explicit `# CLEAR:`, which is a searched-and-none-found result and must never be read as unchecked - but which is bounded by the lexicon and the tool's stated residual misses, so it is not proof the diff is portable. |
+| Local leakage | output/local-leakage.tsv | One row per local-context signal the diff would ship: `<class>\t<path>\t<line>\t<evidence>`, class in `home-path` / `identity-value` / `scratch-path` / `personal-ignore` / `private-vocab` / `process-label` (`<line>` is `-` for a whole-file hit). Added lines and added paths only - a value the diff deletes can never appear. A row is a SIGNAL, not a verdict: 04 decides. Ends with `# TOTAL:` or an explicit `# CLEAR:`, which is a searched-and-none-found result and must never be read as unchecked - but which is bounded by the lexicon and the tool's stated residual misses, so it is not proof the diff is portable. |
 | Diff | output/pr.diff | `gh pr diff` output - the exact change under review, sealed with the context so the review stage reads a reproducible artifact, not an ad-hoc re-fetch. |

@@ -58,6 +58,14 @@ grep -q '^docs/guidelines/api/api-types.md	.*	likely	' "$R" \
 grep -q '^# TOTAL: .* documents discovered' "$R" \
     || { echo "FAIL(B3): totals line absent - a skipped doc could pass as an audited one"; exit 1; }
 
+# B5 - incident catalogues are house rules: a production-incidents, postmortem or
+#      pitfalls doc is discovered, so 04 can cross-check the diff against each
+#      catalogued pattern id (a team bot cited PIP-NN entries the skill never loaded).
+for want in docs/domain_knowledges/production-incidents.md docs/ops/postmortem-2026-03.md docs/pitfalls.md; do
+    grep -q "^$want	" "$R" \
+        || { echo "FAIL(B5): incident catalogue $want not discovered"; exit 1; }
+done
+
 # B4 - an empty discovery says so explicitly, so "no rows" can never read as "clean".
 EMPTY=$(mktemp -d); mkdir -p "$EMPTY/repo"
 sh "$HR" "$FIX/pr.diff" "$EMPTY/out" "$EMPTY/repo" >/dev/null 2>&1 \

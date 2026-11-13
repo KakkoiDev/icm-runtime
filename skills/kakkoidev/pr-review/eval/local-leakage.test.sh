@@ -218,4 +218,41 @@ grep -q '^private-vocab	' "$NOV/out/local-leakage.tsv" \
     && { echo "FAIL(C6): private-vocab rows appeared without a lexicon file"; rm -rf "$NOV"; exit 1; }
 rm -rf "$NOV"
 
+# D1 - review-process labels in shipped code: an investigation label ("Fix C"), a finding
+#      id ("F4a"), a round-scoped id ("R5-2"), "round N" and "finding N" in test names and
+#      comments narrate the review conversation, not the code. Reviewers had them renamed
+#      on several PRs. The look-alikes stay silent: a prose doc that discusses findings,
+#      `Math.round(2)`, an ordinary "Fix the" sentence, a hex colour, and an F-key-free id.
+PL=$(mktemp -d)
+cat > "$PL/pr.diff" <<'EOF'
+diff --git a/src/order.spec.ts b/src/order.spec.ts
+--- a/src/order.spec.ts
++++ b/src/order.spec.ts
+@@ -1,1 +1,9 @@
+ import { x } from './order'
++it('Fix C: keeps the first writer', () => {})
++test('F4a guard rejects nested lists', () => {})
++// R5-2 handled here
++describe('finding 3 regression', () => {})
++// round 2 of review asked for this
++const n = Math.round(2.5)
++// Fix the order of writes
++const colour = '#F1F1F1'
+diff --git a/docs/review.md b/docs/review.md
+--- a/docs/review.md
++++ b/docs/review.md
+@@ -1,1 +1,2 @@
+ # Review
++F1 and round 2 are discussed in this prose doc.
+EOF
+sh "$LL" "$PL/pr.diff" "$PL/out" "$TV" >/dev/null 2>&1 \
+    || { echo "FAIL(D1): gather-local-leakage failed on the process-label diff"; rm -rf "$PL"; exit 1; }
+for ln in 2 3 4 5 6; do
+    grep -q "^process-label	src/order\.spec\.ts	$ln	" "$PL/out/local-leakage.tsv" \
+        || { echo "FAIL(D1): expected process-label at src/order.spec.ts:$ln"; rm -rf "$PL"; exit 1; }
+done
+grep -q '^# TOTAL: 5 ' "$PL/out/local-leakage.tsv" \
+    || { echo "FAIL(D1): expected exactly 5 process-label rows - Math.round, 'Fix the', a hex colour or a prose doc fired"; rm -rf "$PL"; exit 1; }
+rm -rf "$PL"
+
 echo "PASS: planted home path, recipe id, address, scratch files, personal ignore rule and lexicon term all found at the right lines; CI paths, bot/placeholder addresses, lockfile hashes, build-dir ignores, all-caps constants and every removed line stayed silent; a hit found before a non-scratch final path survived into the report"

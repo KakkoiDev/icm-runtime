@@ -96,7 +96,9 @@ tr 'A-Z' 'a-z' < "$TMP/tokens" \
 # ------------------------------------------------------------------- discovery
 # Conventional homes for normative material. Each pattern is a claim of authority:
 # a guidelines tree, decision records, contributor and agent instructions, review
-# guidelines, and the PR template (whose checklist stage 04 already audits).
+# guidelines, the PR template (whose checklist stage 04 already audits), and incident
+# catalogues (production incidents, postmortems, pitfalls) whose entries are failure
+# patterns stage 04 cross-checks the diff against.
 find_docs() {
     find "$ROOT" \
         -name node_modules -prune -o \
@@ -125,6 +127,7 @@ find_docs | while IFS= read -r f; do
     .github/pull_request_template.md|.github/*/pull_request_template.md) keep=yes ;;
     docs/*/readme.md|docs/readme.md)                   keep=yes ;;
     docs/config.md|docs/configuration.md)              keep=yes ;;
+    *incident*|*postmortem*|*post-mortem*|*pitfall*)   keep=yes ;;
     esac
     [ "$keep" = yes ] || continue
     printf '%s\n' "$rel" >> "$TMP/cand"

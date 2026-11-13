@@ -36,6 +36,10 @@
 #   scratch-path     an added file whose path is a scratch, sandbox or draft location
 #   personal-ignore  an ignore rule for a personal tool added to a shared ignore file
 #   private-vocab    a term from the private lexicon, meaningless in another environment
+#   process-label    a review-process label in shipped code (`Fix C`, `F4a`, `R5-2`,
+#                    `round 2`, `finding 3`): names the review conversation, not the code.
+#                    Code files only; prose docs (.md/.mdx/.rst/.txt) legitimately discuss
+#                    findings and are not scanned for this class.
 #
 # NO judgment: this script does not decide severity, and a hit is not automatically a
 # finding. A fixture email, a documented tenant uuid, a deliberately public link - all
@@ -138,6 +142,10 @@ BEGIN {
             "|(^|/)[^/]*[-._](draft|notes|scratch|local|personal)\\.[A-Za-z0-9]+$"
 
     VOCABFILE = "(^|/)private-vocab\\.txt$"
+
+    # Bounded with character classes, not `\b`: `\b` is not POSIX ERE.
+    PROCLABEL = "(^|[^A-Za-z0-9_])(Fix [A-Z]|F[0-9]+[a-z]?|R[0-9]+-[0-9]+|[Rr]ound [0-9]+|[Ff]inding [0-9]+)([^A-Za-z0-9_]|$)"
+    DOCPATH = "\\.(md|mdx|rst|txt)$"
 }
 
 {
@@ -183,6 +191,8 @@ function classify(p, ln, text,   low, tok, i) {
         }
     }
 
+    if (p !~ DOCPATH && text ~ PROCLABEL) emit("process-label", p, ln, text)
+
     if (p ~ IGNOREFILE && text ~ /^\.[A-Za-z0-9_.-]+\/?$/ && text !~ IGNORESKIP)
         emit("personal-ignore", p, ln, text)
 
@@ -221,8 +231,8 @@ n=$(awk 'END {print NR+0}' "$TMP/hits.sorted")
     cat "$TMP/hits.sorted"
     if [ "$n" -eq 0 ]; then
         printf '# CLEAR: searched every added line and added path for home paths, identity values,\n'
-        printf '# scratch locations, personal ignore rules and private-lexicon terms, and found\n'
-        printf '# none. This is a searched-and-clear result, not an unchecked one - and it is\n'
+        printf '# scratch locations, personal ignore rules, private-lexicon terms and review-process\n'
+        printf '# labels, and found none. This is a searched-and-clear result, not an unchecked one - and it is\n'
         printf '# bounded by the lexicon and by the residual misses in this tool'"'"'s header.\n'
     else
         printf '# TOTAL: %s local-context signals. A hit is a SIGNAL, not a finding: stage 04\n' "$n"
