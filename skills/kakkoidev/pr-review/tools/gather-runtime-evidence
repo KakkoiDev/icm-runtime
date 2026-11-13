@@ -3,9 +3,12 @@
 # actually execute - workflow run history, a real instance of every actor/event the
 # diff is conditional on, and the secret stores a referenced secret resolves in.
 #
-# Usage: gather-runtime-evidence <owner/repo> <pr-number> <out-dir> [pinned-diff-file]
+# Usage: gather-runtime-evidence <owner/repo> <pr-number> <out-dir> [pinned-diff-file] [reviewed-checkout]
 #   The optional 4th arg pins detection to a specific commit's diff (e.g. when the PR
 #   was updated/force-pushed after the review was requested - review the right state).
+#   The optional 5th arg is the local clone of <owner/repo>; it drives the deployed-
+#   presence section (env var reads vs the repo's registries, new test files vs CI
+#   workflows). Without it that section records NOT RUN.
 # Writes:
 #   <out-dir>/runtime-evidence.md  - deterministic runtime facts, NO judgment
 #
@@ -19,7 +22,7 @@
 # Parses under bash 3.2 / POSIX sh.
 set -eu
 
-OR=${1:-}; PR=${2:-}; OUT=${3:-}; DIFF=${4:-}
+OR=${1:-}; PR=${2:-}; OUT=${3:-}; DIFF=${4:-}; ROOT=${5:-}
 [ -n "$OR" ] && [ -n "$PR" ] && [ -n "$OUT" ] || { echo "usage: gather-runtime-evidence <owner/repo> <pr#> <out-dir> [pinned-diff-file]" >&2; exit 2; }
 command -v gh >/dev/null 2>&1 || { echo "gather-runtime-evidence: gh not found" >&2; exit 3; }
 command -v jq >/dev/null 2>&1 || { echo "gather-runtime-evidence: jq not found" >&2; exit 3; }
@@ -118,6 +121,62 @@ fi
       grep -qx "$s" "$TMP/dsec.txt" 2>/dev/null && ind=yes
       echo "  - $s: in Actions store=$ina, in Dependabot store=$ind"
     done
+  fi
+  echo
+
+  # ---- 4. Deployed presence: new env var reads + new test files ----
+  # Facts only. An env var only the diff mentions has no registry / manifest / SSM entry
+  # in this checkout; a new test file under a path no workflow names may run in no CI job.
+  # Residual misses: registries outside the repo (a live SSM store), test-runner configs
+  # that include or exclude paths, workflows that run every package without naming it.
+  echo "## Deployed presence (new env var reads + new test files)"
+  if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then
+    echo "- NOT RUN: no reviewed checkout passed (5th arg) - env registries and CI pickup NOT checked"
+  else
+    grep -E '^\+\+\+ b/' "$TMP/pr.diff" | sed -E 's#^\+\+\+ b/##' | sort -u > "$TMP/touched.txt"
+    grep -E '^\+' "$TMP/pr.diff" | grep -vE '^\+\+\+ ' \
+      | grep -oE 'process\.env\.[A-Z_][A-Z0-9_]*|process\.env\[[^A-Za-z0-9_][A-Z_][A-Z0-9_]*|os\.environ(\.get\(|\[)[^A-Za-z0-9_][A-Z_][A-Z0-9_]*|os\.getenv\([^A-Za-z0-9_][A-Z_][A-Z0-9_]*' \
+      | grep -oE '[A-Z_][A-Z0-9_]*$' | sort -u > "$TMP/envvars.txt" || :
+    echo "### env vars read by added lines"
+    if [ ! -s "$TMP/envvars.txt" ]; then
+      echo "- (no env var reads on added lines)"
+    else
+      while IFS= read -r v; do
+        hits=$(grep -rlF --exclude-dir=node_modules --exclude-dir=.git -e "$v" "$ROOT" 2>/dev/null \
+          | sed "s#^$ROOT/##" | grep -vxF -f "$TMP/touched.txt" | sort | head -20 | tr '\n' ' ' | sed 's/ $//' || :)
+        if [ -n "$hits" ]; then
+          echo "- $v: found outside the diff in: $hits"
+        else
+          echo "- $v: NOT FOUND outside the diff (no registry / manifest / SSM entry in this checkout)"
+        fi
+      done < "$TMP/envvars.txt"
+    fi
+    awk 'prev == "--- /dev/null" && /^\+\+\+ b\// { print substr($0, 7) } { prev = $0 }' "$TMP/pr.diff" \
+      | grep -E '\.(spec|test)\.[A-Za-z]+$|_test\.(go|py)$|(^|/)test_[^/]*\.py$' | sort -u > "$TMP/newtests.txt" || :
+    echo "### new test files vs CI workflows"
+    if [ ! -s "$TMP/newtests.txt" ]; then
+      echo "- (no new test files)"
+    else
+      WFDIR=$ROOT/.github/workflows
+      if [ -d "$WFDIR" ]; then
+        grep -nE '(jest|vitest|pytest|go test|mocha|playwright|cypress|(npm|pnpm|yarn|bun)[^#]*[[:space:]]test([[:space:]:]|$))' "$WFDIR"/*.yml "$WFDIR"/*.yaml 2>/dev/null \
+          | sed "s#^$ROOT/##" | while IFS= read -r l; do echo "- workflow test invocation: $l"; done || :
+      else
+        echo "- no .github/workflows directory in the checkout"
+      fi
+      while IFS= read -r t; do
+        pkg=$(printf '%s' "$t" | cut -d/ -f1-2)
+        wfs=$( { [ -d "$WFDIR" ] && grep -lF -e "$pkg" "$WFDIR"/*.yml "$WFDIR"/*.yaml 2>/dev/null; } \
+          | sed "s#^$ROOT/##" | tr '\n' ' ' | sed 's/ $//' || :)
+        echo "- $t: workflows naming $pkg: ${wfs:-NONE}"
+      done < "$TMP/newtests.txt"
+      base=$(gh pr view "$PR" --repo "$OR" --json baseRefName --jq .baseRefName 2>/dev/null || :)
+      if [ -n "$base" ] && req=$(gh api "repos/$OR/branches/$base/protection/required_status_checks" --jq '.contexts[]' 2>/dev/null); then
+        echo "- required status checks on $base: $(printf '%s' "$req" | tr '\n' ' ')"
+      else
+        echo "- required status checks: unavailable (no base branch, no branch protection, or no permission)"
+      fi
+    fi
   fi
 } > "$OUT/runtime-evidence.md"
 

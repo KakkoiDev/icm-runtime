@@ -24,7 +24,7 @@ It does not judge - that is stage 04. Do not flag findings here.
    dir (it writes a cwd-relative `output/`), pinning detection to the sealed diff:
    ```bash
    cd <abs-run-dir>/03-runtime-evidence && \
-     bash ~/.agents/skills/kakkoidev/pr-review/tools/gather-runtime-evidence <owner>/<repo> <pr#> output ../01-context/output/pr.diff
+     bash ~/.agents/skills/kakkoidev/pr-review/tools/gather-runtime-evidence <owner>/<repo> <pr#> output ../01-context/output/pr.diff <abs-reviewed-checkout>
    ```
    The 4th arg pins detection to the diff sealed in stage 01, so this stage reads the
    exact state under review, not live HEAD (a determinism leak the tool already solves;
@@ -32,7 +32,14 @@ It does not judge - that is stage 04. Do not flag findings here.
    It records, for the changed mechanisms: workflow run history; a real recent instance
    of every conditional actor/event the diff depends on (e.g. a Dependabot PR timeline
    showing the bot applies labels as discrete ops); and the Actions-vs-Dependabot secret
-   stores any referenced `secrets.*` resolves in. Absence is a recorded fact, never a
+   stores any referenced `secrets.*` resolves in. The 5th arg (the local clone of
+   `<owner>/<repo>`, same path as gather-impact's below) adds **deployed presence**: every
+   env var an added line reads, looked up in the checkout outside the diff (env registry,
+   `.env.example`, SSM/IaC manifest - `NOT FOUND` means nothing outside the diff declares
+   it, so it is likely unset where it deploys); every NEW test file, against the CI
+   workflows' test invocations and the workflows that name its package, plus the base
+   branch's required status checks (a spec no required job runs proves nothing at merge).
+   Without a checkout the section says `NOT RUN`, never clear. Absence is a recorded fact, never a
    silent skip. The tool is a live snapshot (run history / secrets drift) - that is
    expected; the load-bearing fact (e.g. "the bot applies the label") is stable.
 1b. **Gather changed-value impact (deterministic) - the dual of the dead-code check.** Run,
@@ -86,6 +93,6 @@ cd <abs-repo-root> && \
 ## Outputs
 | Artifact | Location | Format |
 |----------|----------|--------|
-| Runtime evidence | output/runtime-evidence.md | Tool output (verbatim): changed-workflow run history; per conditional actor/event a real instance (timeline ops with actor + timestamp); secret-store membership (names only). Facts, no judgment. |
+| Runtime evidence | output/runtime-evidence.md | Tool output (verbatim): changed-workflow run history; per conditional actor/event a real instance (timeline ops with actor + timestamp); secret-store membership (names only); deployed presence (per added env var read: registry hit or `NOT FOUND`; per new test file: workflows naming its package or `NONE`, workflow test invocations, required status checks), or `NOT RUN` without a checkout. Facts, no judgment. |
 | Changed-value impact | output/impact.md | Tool output (verbatim): per user-visible value the diff REMOVES (i18n key/value), the test/snapshot files that still assert it (breakage candidates), each with `file:line`; an explicit `0 consumers` clear line where none; visual snapshots marked NOT searched; or a `NOT RUN:` line when the reviewed checkout is unavailable - the tool refuses a root the diff does not belong to rather than clearing it. Facts, no judgment. |
 | AC execution trace | output/ac-execution-trace.md | One block per mechanism-AC: the `trigger -> condition -> step -> external effect` chain, each link tagged `executes for the real actor` / `unverified` / `broken` with a citation into runtime-evidence.md; every library/framework link also carries its failure behavior (reject/throw/false/retry -> what the caller sees) cited to the pinned library source, or `unverified`. Value-only ACs are noted as "constant - checked in 04", not traced. |
