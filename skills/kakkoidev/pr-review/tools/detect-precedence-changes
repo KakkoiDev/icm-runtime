@@ -1,0 +1,225 @@
+#!/bin/sh
+# detect-precedence-changes: find merges whose order the diff changed, so stage 04 states
+# which source won before and which wins now, instead of reading a moved spread as a no-op.
+#
+#   detect-precedence-changes <pr.diff>
+#     Per hunk, two shapes:
+#     object-literal - a multi-line object/array literal holding a `...spread` line: every
+#       entry (key or spread) present on both sides whose order against the spread flipped.
+#     inline - a removed and an added line holding `...`, `Object.assign(` or `merge(`
+#       with the same tokens in a different order (`{ ...a, ...b }` -> `{ ...b, ...a }`).
+#     Output (TSV): <file> <new-line> <kind> <S> <E> <old-winner> <new-winner>
+#     then `# TOTAL: <n> reordered pairs` or `# NONE: no reordered merge entries in the diff`.
+#     The later entry wins a merge. Blind to orders a diff cannot show as one literal:
+#     middleware/handler registration, config file layering, default-vs-override across
+#     files. Stage 04 sweeps those by hand.
+#
+#   detect-precedence-changes --check <precedence.tsv> <findings.md>
+#     Every row needs a findings line
+#       Precedence: <file>:<line> <S> vs <E> old-winner=<S|E> new-winner=<S|E> intent=stated(<quote>)|partial(<quote>)|unstated test=<path:line>|missing finding=F<n>|none
+#     with the winners the diff shows. Every Precedence line with intent other than stated,
+#     or test=missing, names a finding whose block exists. Exit 1 lists each violation.
+# POSIX sh + awk.
+set -eu
+
+if [ "${1:-}" = "--check" ]; then
+    [ $# -eq 3 ] || { echo "usage: detect-precedence-changes --check <precedence.tsv> <findings.md>" >&2; exit 2; }
+    awk -F'\t' '
+    FNR == NR {
+        if ($0 ~ /^#/ || NF < 7) next
+        nrow++; rf[nrow] = $1 ":" $2; rs[nrow] = $4; re[nrow] = $5; ro[nrow] = $6; rn[nrow] = $7
+        next
+    }
+    {
+        line = $0
+        if (line ~ /^[-* ]*Precedence:/) { np++; pl[np] = line " "; next }
+        if (match(line, /^[#* ]*F[0-9]+/)) {
+            id = substr(line, RSTART, RLENGTH); sub(/^[#* ]*/, "", id); block[id] = 1
+        }
+    }
+    function field(s, name,   v) {
+        if (!match(s, name "=[^ ]+")) return ""
+        v = substr(s, RSTART + length(name) + 1, RLENGTH - length(name) - 1)
+        return v
+    }
+    END {
+        bad = 0
+        for (r = 1; r <= nrow; r++) {
+            hit = 0
+            for (p = 1; p <= np; p++)
+                if (index(pl[p], " " rf[r] " ") && index(pl[p], " " rs[r] " vs " re[r] " ")) { hit = p; break }
+            if (!hit) { print "UNACCOUNTED: " rf[r] " " rs[r] " vs " re[r] " has no Precedence line"; bad++; continue }
+            if (!index(pl[hit], " old-winner=" ro[r] " ") || !index(pl[hit], " new-winner=" rn[r] " ")) {
+                print "WRONG-WINNER: " rf[r] " " rs[r] " vs " re[r] " - the diff shows old-winner=" ro[r] " new-winner=" rn[r]; bad++
+            }
+        }
+        for (p = 1; p <= np; p++) {
+            s = pl[p]
+            if (!match(s, / intent=(stated|partial|unstated)/)) { print "BAD-INTENT: " s; bad++; continue }
+            intent = substr(s, RSTART + 8, RLENGTH - 8)
+            t = field(s, " test"); f = field(s, " finding")
+            if (t == "") { print "NO-TEST-FIELD: " s; bad++; continue }
+            if (f == "") { print "NO-FINDING-FIELD: " s; bad++; continue }
+            if ((intent != "stated" || t == "missing") && f == "none") {
+                print "NEEDS-FINDING: intent=" intent " test=" t " requires finding=F<n>: " s; bad++; continue
+            }
+            if (f != "none" && !(f in block)) { print "DANGLING: finding=" f " has no " f " block: " s; bad++ }
+        }
+        if (bad) exit 1
+        print "OK: " nrow " detected rows accounted, " np " Precedence lines"
+    }' "$2" "$3"
+    exit $?
+fi
+
+[ $# -eq 1 ] || { echo "usage: detect-precedence-changes <pr.diff>" >&2; exit 2; }
+
+awk '
+function abs(x) { return x < 0 ? -x : x }
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+# sets OPEN (openers left unclosed at the end of s) and CLOSE (leading closers matching
+# nothing in s): `} = {` is CLOSE=1 OPEN=1, a literal boundary in both directions
+function brackets(s,   i, ch, b, mn) {
+    b = 0; mn = 0
+    for (i = 1; i <= length(s); i++) {
+        ch = substr(s, i, 1)
+        if (ch == "{" || ch == "[" || ch == "(") b++
+        else if (ch == "}" || ch == "]" || ch == ")") { b--; if (b < mn) mn = b }
+    }
+    OPEN = b - mn; CLOSE = -mn
+}
+# entry name of a literal line, "" when it is neither a key nor a spread
+function ename(s,   t) {
+    t = trim(s); sub(/,$/, "", t)
+    if (t ~ /^\.\.\./) return t
+    if (match(t, /^["\047]?[A-Za-z0-9_$.\[\]-]+["\047]?[ ]*:/)) {
+        t = substr(t, 1, RLENGTH - 1); t = trim(t); gsub(/["\047]/, "", t); return t
+    }
+    if (t ~ /^[A-Za-z_$][A-Za-z0-9_$]*$/) return t
+    return ""
+}
+# fills L[] with the entries of the literal around index i on side sd; returns count, sets
+# SIDX, and START to the line that opens it ("" past the hunk edge)
+function literal(sd, i,   j, d, n, k, tmp, cnt) {
+    n = 0; START = ""
+    d = 0
+    for (j = i - 1; j >= 1; j--) {
+        brackets(T[sd, j]); if (OPEN > d) { START = T[sd, j]; break }
+        d = d - OPEN + CLOSE
+        if (d == 0 && ename(T[sd, j]) != "") tmp[++n] = ename(T[sd, j])
+    }
+    cnt = 0
+    for (k = n; k >= 1; k--) L[++cnt] = tmp[k]
+    L[++cnt] = ename(T[sd, i]); SIDX = cnt
+    d = 0
+    for (j = i + 1; j <= N[sd]; j++) {
+        brackets(T[sd, j]); if (CLOSE > d) break
+        if (d == 0 && ename(T[sd, j]) != "") L[++cnt] = ename(T[sd, j])
+        d = d - CLOSE + OPEN
+    }
+    return cnt
+}
+# what a literal is assigned to: the opener line up to its first `=`, `:` or `(`
+function head(s,   t) {
+    t = s; sub(/[=:(].*/, "", t); return trim(t)
+}
+function toks(s, A,   t, n, i, m, P) {
+    t = s; gsub(/[ \t]/, "", t); gsub(/[{}\[\]();]/, ",", t)
+    n = split(t, P, ","); m = 0
+    for (i = 1; i <= n; i++) if (P[i] != "") A[++m] = P[i]
+    return m
+}
+function sortedkey(A, n,   i, j, x, B, out) {
+    for (i = 1; i <= n; i++) B[i] = A[i]
+    for (i = 2; i <= n; i++) { x = B[i]; j = i - 1; while (j >= 1 && B[j] > x) { B[j + 1] = B[j]; j-- } B[j + 1] = x }
+    out = ""; for (i = 1; i <= n; i++) out = out "\034" B[i]
+    return out
+}
+function emit(f, ln, kind, s, e, ow, nw) {
+    key = f SUBSEP ln SUBSEP s SUBSEP e
+    if (key in seen) return
+    seen[key] = 1
+    printf "%s\t%d\t%s\t%s\t%s\t%s\t%s\n", f, ln, kind, s, e, ow, nw
+    total++
+}
+function flush(   i, j, k, nn, no, nh, s, e, oi, ni, NL, OL, NI, OI, m, a, b, A, B, used, ow, nw, last) {
+    if (!inhunk) return
+    # object-literal
+    for (i = 1; i <= N["n"]; i++) {
+        if (trim(T["n", i]) !~ /^\.\.\./) continue
+        s = ename(T["n", i])
+        delete L; nn = literal("n", i); NI = SIDX
+        for (k = 1; k <= nn; k++) NL[k] = L[k]
+        nh = head(START)
+        # the same literal on the old side: same spread, same head (`attributes`,
+        # `const merged`), nearest the aligned position - a hunk can hold the same spread
+        # in several literals
+        oi = 0
+        for (j = 1; j <= N["o"]; j++) {
+            if (ename(T["o", j]) != s) continue
+            delete L; literal("o", j)
+            if (nh != "" && START != "" && head(START) != nh) continue
+            if (!oi || abs(j - OP[i]) < abs(oi - OP[i])) oi = j
+        }
+        if (!oi) continue
+        delete L; no = literal("o", oi); OI = SIDX
+        for (k = 1; k <= no; k++) OL[k] = L[k]
+        for (k = 1; k <= nn; k++) {
+            if (k == NI) continue
+            e = NL[k]
+            m = 0
+            for (j = 1; j <= no; j++) if (j != OI && OL[j] == e) { m = j; break }
+            if (!m) continue
+            if ((k < NI) == (m < OI)) continue
+            if (e ~ /^\.\.\./ && k < NI) continue
+            ow = (m > OI) ? e : s
+            nw = (k > NI) ? e : s
+            emit(file, LN["n", i], "object-literal", s, e, ow, nw)
+        }
+    }
+    # inline
+    for (i = 1; i <= ND; i++) {
+        delete A; a = toks(DT[i], A)
+        for (j = 1; j <= NA; j++) {
+            if (used[j]) continue
+            delete B; b = toks(AT[j], B)
+            if (a != b || a < 2) continue
+            if (sortedkey(A, a) != sortedkey(B, b)) continue
+            last = 0
+            for (k = 1; k <= a; k++) if (A[k] != B[k]) last = k
+            if (!last) continue
+            used[j] = 1
+            emit(file, AL[j], "inline", A[last], B[last], A[last], B[last])
+            break
+        }
+    }
+}
+function reset() { delete T; delete LN; delete OP; N["o"] = 0; N["n"] = 0; ND = 0; NA = 0; delete DT; delete AT; delete AL }
+BEGIN { total = 0; inhunk = 0; reset() }
+/^diff --git / { flush(); inhunk = 0; reset(); next }
+/^\+\+\+ / { file = substr($0, 5); sub(/^b\//, "", file); next }
+/^--- / && !inhunk { next }
+/^@@ / {
+    flush(); reset(); inhunk = 1
+    h = $0; sub(/^@@ -[0-9,]+ \+/, "", h); sub(/[, ].*/, "", h); nl = h + 0
+    next
+}
+!inhunk { next }
+{
+    c = substr($0, 1, 1); body = substr($0, 2)
+    if (c == " " || c == "") {
+        T["o", ++N["o"]] = body
+        T["n", ++N["n"]] = body; LN["n", N["n"]] = nl; OP[N["n"]] = N["o"]; nl++
+    } else if (c == "-") {
+        T["o", ++N["o"]] = body
+        if (body ~ /\.\.\.|Object\.assign\(|merge\(/) DT[++ND] = body
+    } else if (c == "+") {
+        T["n", ++N["n"]] = body; LN["n", N["n"]] = nl; OP[N["n"]] = N["o"]
+        if (body ~ /\.\.\.|Object\.assign\(|merge\(/) { AT[++NA] = body; AL[NA] = nl }
+        nl++
+    }
+}
+END {
+    flush()
+    if (total == 0) print "# NONE: no reordered merge entries in the diff"
+    else print "# TOTAL: " total " reordered pairs"
+}' "$1"
