@@ -149,7 +149,11 @@ full-width, and laying out any surviving bilingual prose in two columns.
      labels stays full-width.
 9. Sources (captain's standing rule, 2026-11-16; SKILL.md "Sources"). Every factual claim (date,
    deadline, owner, status, number) gets a link to its source AND a short verbatim quote of it on
-   the same line or table row: `Review due 2026-11-30 ([spec](url): "spec freeze 11/30")`. Fetch
+   the same line or table row. Put the link INLINE on the words of the claim it backs and the quote
+   right after those words, in the same sentence: `Review due [2026-11-30 per the spec](url) "spec
+   freeze 11/30".` / `期限は[仕様書では11月30日](url)「仕様締切 11/30」`. Merge any separate
+   `Source:` / `出典：` line or trailing `([spec](url): "...")` parenthetical into the claim text;
+   the check fails both. Fetch
    the source to quote it; a brief, plan, or memory is not a source. A claim you cannot source is
    marked `(unverified)` / `（未検証）` or dropped - ask the user which. Then run the check and
    fix every line it prints until it passes (stage 02's gate runs the same check and blocks the

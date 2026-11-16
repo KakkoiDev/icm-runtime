@@ -17,9 +17,21 @@ fail '- Review due 2026-11-30, which is also the spec deadline.' 'unsourced dead
 fail '- Review due 2026-11-30 ([spec](https://www.notion.so/abc)).' 'linked but unquoted claim'
 # Quote alone is not enough: the source must be linked.
 fail '- Review due 2026-11-30: "spec freeze 11/30".' 'quoted but unlinked claim'
-# Sourced: link + verbatim quote.
-pass '- Review due 2026-11-30 ([spec](https://www.notion.so/abc): "spec freeze 11/30").' 'linked + quoted claim'
-pass '- 期限は11月30日（[仕様書](https://www.notion.so/abc)：「仕様締切 11/30」）' 'JA linked + quoted claim'
+# Sourced inline: the link sits on the claim words, the verbatim quote follows them.
+pass '- Review due [2026-11-30 per the spec](https://www.notion.so/abc) "spec freeze 11/30".' 'inline linked + quoted claim'
+pass '- 期限は[仕様書では11月30日](https://www.notion.so/abc)「仕様締切 11/30」' 'JA inline linked + quoted claim'
+# A separate source line is the old form: the link belongs on the claim words.
+fail '- Source: [spec](https://www.notion.so/abc) "spec freeze 11/30"' 'separate Source line'
+fail '  - 出典：[仕様書](https://www.notion.so/abc)「仕様締切 11/30」' 'separate JA source line'
+fail '   - Source (item 2): [reply](https://www.notion.so/abc) 「B で進めます」' 'labelled Source line'
+fail '出典（項目3）：[回答](https://www.notion.so/abc)「その場所を開ける」' 'labelled JA source line'
+fail '**Sources**: [spec](https://www.notion.so/abc)' 'bold Sources line'
+# A source parked in a trailing parenthetical is the old form too.
+fail '- Review due 2026-11-30 ([spec](https://www.notion.so/abc): "spec freeze 11/30").' 'parenthetical source'
+fail '- 期限は11月30日（[仕様書](https://www.notion.so/abc)：「仕様締切 11/30」）' 'JA parenthetical source'
+# The word source inside a sentence is not a source line.
+pass '- The source of truth is [the wiki](https://www.notion.so/abc).' 'source as a word'
+pass '- Plan in [the wiki](https://www.notion.so/abc) (see the [list](https://www.notion.so/def)).' 'plain link in parentheses'
 # Explicitly marked unverified passes (the reader is warned).
 pass '- Review due 2026-11-30 (unverified).' 'claim marked unverified'
 # Named ticket / PR without a link fails; linked passes.

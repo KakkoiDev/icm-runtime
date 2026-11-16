@@ -89,13 +89,20 @@ Captain's ruling, 2026-11-16: "make sure to have links for every document talked
 for every claims. like "which is also the spec deadline" etc..."
 - **Every document, ticket, PR, page, or thread the page mentions is linked.** Bare name = defect.
 - **Every factual claim (date, deadline, owner, status, number) carries a link to its source AND a
-  short verbatim quote of it**, on the same line or table row:
-  `Review due 2026-11-30 ([spec](url): "spec freeze 11/30")`.
+  short verbatim quote of it**, on the same line or table row.
+- **The link sits inline on the words of the claim it backs; the verbatim quote follows those
+  words in the same sentence.** Captain's ruling, 2026-11-16: merge the links into the text to
+  make it easier to read.
+  `Review due [2026-11-30 per the spec](url) "spec freeze 11/30".` /
+  `期限は[仕様書では11月30日](url)「仕様締切 11/30」`.
+  No separate `Source:` / `出典：` line, and no source parked in a trailing parenthetical
+  (`([spec](url): "...")`): both are defects. In a table, link the words in the claim's cell.
 - **No source = mark it `(unverified)` / `（未検証）` or drop it.** Never state it bare.
 - Quote the source as fetched in this run, not from a brief, a plan, or memory.
 - `tools/check-sources` enforces the floor: stage 02's gate blocks the Notion write on it, stage 03
   re-runs it on the fetched page. It detects dates, deadline/owner/status/spec words (EN + JA),
-  ticket ids, and PR numbers; it does NOT detect bare counts. Those stay the model's job.
+  ticket ids, and PR numbers, and fails separate source lines and parenthetical sources; it does
+  NOT detect bare counts. Those stay the model's job.
 
 ## Page width (standing rule)
 Captain's ruling, 2026-09-08: "Published pages in 2 languages should be full width by default",

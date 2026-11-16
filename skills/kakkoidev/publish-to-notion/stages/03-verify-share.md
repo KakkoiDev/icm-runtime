@@ -30,8 +30,8 @@ PreToolUse gate cannot inspect a result that does not exist until after the fetc
    judging.
    Sources: write the fetched body to `output/fetched.md` and run
    `~/.agents/skills/kakkoidev/publish-to-notion/tools/check-sources output/fetched.md`.
-   Any line it prints (a claim without link + verbatim quote, or a reference without a link)
-   is a defect: `VERIFIED: FAIL`, back to stage 01.
+   Any line it prints (a claim without link + verbatim quote, a reference without a link, or a
+   source not inline on the claim words) is a defect: `VERIFIED: FAIL`, back to stage 01.
 2. If anything is missing, the publish did not fully land: report exactly what is missing and
    stop with `VERIFIED: FAIL`. (Fixing it is a re-run of stage 02, not this stage.)
 3. Resolve sharing against the audience in `target.md`:

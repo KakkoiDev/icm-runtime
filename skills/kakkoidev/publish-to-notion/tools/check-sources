@@ -14,6 +14,10 @@
 # A link is [text](url), a bare http(s) URL, or a <mention-...> tag. HTML
 # attribute values (key="...") are not quotes. A unit marked "unverified" or
 # 未検証 passes: the reader is told it has no source.
+# The link goes inline on the claim words. Two out-of-line forms fail on any
+# unit: a separate source line (starts with Source:, Sources:, 出典：, also with a
+# list marker, bold, or a "(item 2)" label), and a source parked in a
+# parenthetical (an open paren, then a link, then a quote: ([spec](url): "...")).
 #
 # Usage: check-sources <page.md>. Exit 0 = every unit sourced; exit 1 = lists each
 # failing unit as "line N: <what is missing>: <text>", or the file is missing/empty.
@@ -26,6 +30,16 @@ function check(text, n,   t, lt, claim, ref, linked, quoted) {
     t = text
     gsub(/`[^`]*`/, "", t)
     lt = tolower(t)
+    if (lt ~ /^[ \t]*([-*+]|[0-9]+\.)?[ \t]*(\*\*|<b>)?(sources?|出典)(\*\*|<\/b>)?[ \t]*(\([^)]*\)|（.*）)?[ \t]*(\*\*|<\/b>)?[ \t]*(:|：)/) {
+        bad++
+        printf "line %d: separate source line, put the link on the claim words: %s\n", n, text
+        return
+    }
+    if (t ~ /(\(|（)\[[^]]*\]\([^)]*\)[ \t]*(:|：)?[ \t]*("|“|「)/) {
+        bad++
+        printf "line %d: source in a parenthetical, put the link on the claim words: %s\n", n, text
+        return
+    }
     if (lt ~ /unverified/ || t ~ /未検証/) return
     claim = (t ~ /[0-9][0-9][0-9][0-9][-\/][0-9][0-9]?[-\/][0-9][0-9]?/ \
         || t ~ /(^|[^0-9])[0-9][0-9]?\/[0-9][0-9]?([^0-9]|$)/ \
