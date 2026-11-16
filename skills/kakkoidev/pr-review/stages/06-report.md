@@ -1,11 +1,11 @@
-# Stage 06: Assemble report and seal
+# Stage 06: Assemble report
 
 <!-- ICM-TOOLS expect="(Write|Bash)" -->
 <!-- ICM-GATE tools="Write" run="test -s ../05-verify/output/verification.md" -->
 
 Assemble the final review report in the ported `REVIEW.md` contract and a receipt
 with a deterministic verdict line. The gate blocks writing until verification
-exists, so the report always carries execution results. Then seal the run.
+exists, so the report always carries execution results.
 
 ## Inputs
 | Source | Location | Scope |
@@ -140,8 +140,8 @@ exists, so the report always carries execution results. Then seal the run.
 ## After Output (MANDATORY)
 ```bash
 bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/pr-review --stage 06-report
-bash ~/.agents/skills/icm/runtime/icm.sh seal kakkoidev/pr-review
 ```
+The seal runs at the end of 07-pr-agent: seal refuses while any stage lacks its stage-done.
 
 ## Outputs
 | Artifact | Location | Format |

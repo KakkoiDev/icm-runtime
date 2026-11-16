@@ -8,7 +8,7 @@ set -eu
 test -f SKILL.md || { echo "FAIL: SKILL.md missing"; exit 1; }
 grep -q '^name: pr-review$' SKILL.md || { echo "FAIL: SKILL.md name frontmatter"; exit 1; }
 
-STAGES="01-context 02-links 03-runtime-evidence 04-review 05-verify 06-report"
+STAGES="01-context 02-links 03-runtime-evidence 04-review 05-verify 06-report 07-pr-agent"
 for s in $STAGES; do
     f="stages/$s.md"
     test -s "$f" || { echo "FAIL: $f missing or empty"; exit 1; }

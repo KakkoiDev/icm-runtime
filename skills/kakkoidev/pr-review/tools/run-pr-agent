@@ -1,0 +1,91 @@
+#!/bin/sh
+# run-pr-agent <pr.diff> <outdir> <owner/repo> <PR#> [--publish]
+# Runs pr-agent (The-PR-Agent/pr-agent, pinned) `review` on the sealed diff, its LLM calls
+# served by `claude -p` (Opus 5.5, the user's own login) via tools/pr-agent-claude.py.
+# Writes <outdir>/PR-AGENT-<PR#>.md, pr-agent-review.json, pr-agent.log.
+#
+# pr-agent itself never publishes: plain-diff mode (--diff-file, no PR to post to),
+# CONFIG__PUBLISH_OUTPUT=false, every GitHub token removed from its env.
+# --publish is the ONE switch that posts: after a successful review, this script posts
+# the findings as one PR comment opening with <!-- pr-agent-review -->. Without it,
+# nothing leaves the machine except the diff sent to Claude.
+# No `claude` CLI on PATH -> STATUS: BLOCKED, nothing runs, exit 0.
+set -eu
+
+PIN=0.50.0
+MODEL=claude-opus-5-5
+[ $# -eq 4 ] || [ $# -eq 5 ] || { echo "usage: run-pr-agent <pr.diff> <outdir> <owner/repo> <PR#> [--publish]" >&2; exit 2; }
+diff=$1; out=$2; repo=$3; pr=$4; publish=no
+if [ $# -eq 5 ]; then
+    [ "$5" = --publish ] || { echo "run-pr-agent: unknown option '$5'" >&2; exit 2; }
+    publish=yes
+fi
+test -s "$diff" || { echo "run-pr-agent: diff '$diff' missing or empty" >&2; exit 2; }
+mkdir -p "$out"
+diff=$(cd "$(dirname "$diff")" && pwd)/$(basename "$diff")
+out=$(cd "$out" && pwd)
+report="$out/PR-AGENT-$pr.md"
+here=$(cd "$(dirname "$0")" && pwd)
+
+header() {
+    printf '# pr-agent findings - %s#%s\n\n' "$repo" "$pr"
+    printf 'STATUS: %s\n' "$1"
+    printf 'Published: %s\n\n' "$2"
+    printf '> Second-opinion findings from pr-agent %s, model %s via `claude -p`, run on the sealed `pr.diff`. Unverified - triage each one.\n\n' "$PIN" "$MODEL"
+}
+
+if ! command -v claude > /dev/null 2>&1; then
+    { header BLOCKED 'no'; printf 'pr-agent was not run: the `claude` CLI is not on PATH.\n'; } > "$report"
+    echo "run-pr-agent: BLOCKED - claude CLI not on PATH" >&2
+    exit 0
+fi
+
+got=$(pr-agent --version 2>/dev/null | awk '$1 == "pr-agent" {print $2}')
+if [ "$got" != "$PIN" ]; then
+    echo "run-pr-agent: pr-agent version '$got' != pinned $PIN; install with: uv tool install 'pr-agent==$PIN' --python 3.12" >&2
+    exit 1
+fi
+py=${PR_AGENT_PYTHON:-$(head -1 "$(command -v pr-agent)" | sed 's/^#!//')}
+
+# Empty cwd: plain-diff mode reads a .pr_agent.toml from the cwd's repository root.
+work=$(mktemp -d)
+rc=0
+(
+    cd "$work"
+    env -u GH_TOKEN -u GITHUB_TOKEN -u GITHUB__USER_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN \
+        CONFIG__GIT_PROVIDER=plain-diff \
+        CONFIG__PUBLISH_OUTPUT=false \
+        CONFIG__PROPAGATE_TOOL_ERRORS=true \
+        CONFIG__MODEL="anthropic/$MODEL" \
+        CONFIG__FALLBACK_MODELS='[]' \
+        "$py" "$here/pr-agent-claude.py" --diff-file "$diff" --output "$out/pr-agent-raw.md" --json-output "$out/pr-agent-review.json" review
+) > "$out/pr-agent.log" 2>&1 || rc=$?
+rmdir "$work" 2>/dev/null || true
+
+if [ "$rc" -ne 0 ] || [ ! -s "$out/pr-agent-raw.md" ]; then
+    { header FAILED 'no (review failed)'; printf 'pr-agent exited %s; see pr-agent.log.\n' "$rc"; } > "$report"
+    rm -f "$out/pr-agent-raw.md"
+    echo "run-pr-agent: FAILED (exit $rc), see $out/pr-agent.log" >&2
+    exit 1
+fi
+
+published='no (--publish not given)'
+prc=0
+if [ "$publish" = yes ]; then
+    body="$out/pr-agent-comment.md"
+    {
+        printf '<!-- pr-agent-review -->\n'
+        printf '> AI-generated review by pr-agent %s ([The-PR-Agent/pr-agent](https://github.com/The-PR-Agent/pr-agent)), model %s via `claude -p`, on the diff at review time. Findings are hypotheses; nobody has verified them yet.\n\n' "$PIN" "$MODEL"
+        cat "$out/pr-agent-raw.md"
+    } > "$body"
+    if url=$(gh pr comment "$pr" --repo "$repo" --body-file "$body"); then
+        published=$url
+    else
+        prc=$?
+        published="failed (gh exit $prc)"
+    fi
+fi
+{ header RAN "$published"; cat "$out/pr-agent-raw.md"; } > "$report"
+rm -f "$out/pr-agent-raw.md"
+echo "$report"
+exit "$prc"
