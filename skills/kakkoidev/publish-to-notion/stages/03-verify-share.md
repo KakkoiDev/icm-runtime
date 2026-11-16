@@ -28,6 +28,10 @@ PreToolUse gate cannot inspect a result that does not exist until after the fetc
    `page.md` puts them, each media block follows its "what to look for" line, and no text
    still names a moved block's old location. If the write returned a warning, re-fetch before
    judging.
+   Sources: write the fetched body to `output/fetched.md` and run
+   `~/.agents/skills/kakkoidev/publish-to-notion/tools/check-sources output/fetched.md`.
+   Any line it prints (a claim without link + verbatim quote, or a reference without a link)
+   is a defect: `VERIFIED: FAIL`, back to stage 01.
 2. If anything is missing, the publish did not fully land: report exactly what is missing and
    stop with `VERIFIED: FAIL`. (Fixing it is a re-run of stage 02, not this stage.)
 3. Resolve sharing against the audience in `target.md`:
@@ -45,7 +49,7 @@ PreToolUse gate cannot inspect a result that does not exist until after the fetc
    the receipt as outstanding manual steps for the human: page `...` menu "Full width", and the
    per-block display toggle on each mermaid diagram.
 5. Write `output/verify-receipt.md`: page URL, a per-check list (body / tables / mermaid /
-   links), the sharing state ("private - intended" or "shared - confirmed by human"), the
+   links / sources, with the `check-sources` output line), the sharing state ("private - intended" or "shared - confirmed by human"), the
    full-width state for a bilingual page, and a
    final line that is exactly `VERIFIED: PASS` (content landed AND sharing matches audience)
    or `VERIFIED: FAIL` with what is missing.
@@ -62,4 +66,5 @@ bash ~/.agents/skills/icm/runtime/icm.sh stage-done kakkoidev/publish-to-notion 
 ## Outputs
 | Artifact | Location | Format |
 |----------|----------|--------|
-| Verify receipt | output/verify-receipt.md | Page URL, per-check list, sharing state, final `VERIFIED: PASS` / `VERIFIED: FAIL` |
+| Fetched body | output/fetched.md | The page as `notion-fetch` returned it, input to `check-sources` |
+| Verify receipt | output/verify-receipt.md | Page URL, per-check list incl. sources, sharing state, final `VERIFIED: PASS` / `VERIFIED: FAIL` |

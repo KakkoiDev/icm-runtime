@@ -147,7 +147,18 @@ full-width, and laying out any surviving bilingual prose in two columns.
      full-width line, then the bilingual explanation in its OWN per-pair `<columns>` block (JA left,
      EN right, real tabs), then the full-width block. The caption reads side by side; the block it
      labels stays full-width.
-9. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
+9. Sources (captain's standing rule, 2026-11-16; SKILL.md "Sources"). Every factual claim (date,
+   deadline, owner, status, number) gets a link to its source AND a short verbatim quote of it on
+   the same line or table row: `Review due 2026-11-30 ([spec](url): "spec freeze 11/30")`. Fetch
+   the source to quote it; a brief, plan, or memory is not a source. A claim you cannot source is
+   marked `(unverified)` / `（未検証）` or dropped - ask the user which. Then run the check and
+   fix every line it prints until it passes (stage 02's gate runs the same check and blocks the
+   write):
+   ```bash
+   ~/.agents/skills/kakkoidev/publish-to-notion/tools/check-sources output/page.md
+   ```
+   Adding a source or an `(unverified)` marker is not a content change; inventing a source is.
+10. Write `output/target.md`: `mode` (create or update); for create, the parent (`page_id` or
    "none = private workspace page") and the title; for update, the existing `page_id`; and the
    `audience` (who must be able to read it); and the `page type`.
 

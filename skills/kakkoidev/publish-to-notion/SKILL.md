@@ -84,6 +84,19 @@ not preferences:
 - Before publishing, re-read every paragraph and ask: does deleting this lose a fact? If not,
   delete it.
 
+## Sources (standing rule - every claim is checkable)
+Captain's ruling, 2026-11-16: "make sure to have links for every document talked about and source
+for every claims. like "which is also the spec deadline" etc..."
+- **Every document, ticket, PR, page, or thread the page mentions is linked.** Bare name = defect.
+- **Every factual claim (date, deadline, owner, status, number) carries a link to its source AND a
+  short verbatim quote of it**, on the same line or table row:
+  `Review due 2026-11-30 ([spec](url): "spec freeze 11/30")`.
+- **No source = mark it `(unverified)` / `（未検証）` or drop it.** Never state it bare.
+- Quote the source as fetched in this run, not from a brief, a plan, or memory.
+- `tools/check-sources` enforces the floor: stage 02's gate blocks the Notion write on it, stage 03
+  re-runs it on the fetched page. It detects dates, deadline/owner/status/spec words (EN + JA),
+  ticket ids, and PR numbers; it does NOT detect bare counts. Those stay the model's job.
+
 ## Page width (standing rule)
 Captain's ruling, 2026-09-08: "Published pages in 2 languages should be full width by default",
 "all shared tables like this one with 2 languages should be full width by default."

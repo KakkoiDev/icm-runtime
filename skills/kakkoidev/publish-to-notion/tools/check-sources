@@ -1,0 +1,62 @@
+#!/bin/sh
+# check-sources: fail a Notion page body that states a claim or names a reference
+# without its source. Deterministic floor for the sourcing rule in SKILL.md; the
+# model still judges claims this cannot detect (e.g. bare counts).
+#
+# Unit: one line outside code fences; a <tr>...</tr> table row is one unit.
+# A unit needs a source when, after inline code spans are removed, it holds:
+#   - a claim trigger: a date (2026-11-30, 2026/11/30, 11/30, 11月30日, Nov 30)
+#     or a word: deadline, due date, owner, owned by, assignee, status, spec,
+#     期限, 締切, 締め切り, 担当, ステータス, 仕様
+#     -> needs a link AND a verbatim quote ("...", “...”, 「...」);
+#   - a reference: ticket id (ABC-123) or PR number (PR 12, PR #12, #123)
+#     -> needs a link.
+# A link is [text](url), a bare http(s) URL, or a <mention-...> tag. HTML
+# attribute values (key="...") are not quotes. A unit marked "unverified" or
+# 未検証 passes: the reader is told it has no source.
+#
+# Usage: check-sources <page.md>. Exit 0 = every unit sourced; exit 1 = lists each
+# failing unit as "line N: <what is missing>: <text>", or the file is missing/empty.
+set -eu
+[ $# -eq 1 ] || { echo "usage: check-sources <page.md>" >&2; exit 2; }
+[ -s "$1" ] || { echo "check-sources: $1 missing or empty"; exit 1; }
+
+exec /usr/bin/awk '
+function check(text, n,   t, lt, claim, ref, linked, quoted) {
+    t = text
+    gsub(/`[^`]*`/, "", t)
+    lt = tolower(t)
+    if (lt ~ /unverified/ || t ~ /未検証/) return
+    claim = (t ~ /[0-9][0-9][0-9][0-9][-\/][0-9][0-9]?[-\/][0-9][0-9]?/ \
+        || t ~ /(^|[^0-9])[0-9][0-9]?\/[0-9][0-9]?([^0-9]|$)/ \
+        || t ~ /[0-9]+月[0-9]+日/ \
+        || lt ~ /(^|[^a-z])(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? [0-9][0-9]?([^0-9]|$)/ \
+        || lt ~ /(^|[^a-z])(deadlines?|due dates?|owners?|owned by|assignees?|status|specs?)([^a-z]|$)/ \
+        || t ~ /期限|締切|締め切り|担当|ステータス|仕様/)
+    ref = (t ~ /(^|[^A-Za-z0-9])[A-Z][A-Z0-9]+-[0-9]+/ \
+        || t ~ /(^|[^A-Za-z])PR ?#?[0-9]+/ \
+        || t ~ /(^|[^A-Za-z0-9&])#[0-9][0-9]+/)
+    if (!claim && !ref) return
+    linked = (t ~ /\]\([^)]+\)/ || t ~ /https?:\/\// || t ~ /<mention-/)
+    gsub(/[A-Za-z-]+="[^"]*"/, "", t)
+    quoted = (t ~ /"[^"]+"/ || t ~ /“[^”]+”/ || t ~ /「[^」]+」/)
+    if (claim && !(linked && quoted)) {
+        bad++
+        printf "line %d: claim without %s: %s\n", n, (linked ? "verbatim quote" : (quoted ? "link" : "link + verbatim quote")), text
+    } else if (ref && !linked) {
+        bad++
+        printf "line %d: reference without link: %s\n", n, text
+    }
+}
+BEGIN { in_fence = 0; in_row = 0; bad = 0 }
+/^[ \t]*```/ { in_fence = !in_fence; next }
+in_fence { next }
+/^[ \t]*<tr[ >]/ || /^[ \t]*<tr$/ { in_row = 1; row = ""; row_line = NR; next }
+in_row && /^[ \t]*<\/tr>/ { in_row = 0; check(row, row_line); next }
+in_row { row = row " " $0; next }
+{ check($0, NR) }
+END {
+    if (bad) { printf "check-sources: %d unsourced unit(s)\n", bad; exit 1 }
+    print "ok: every claim and reference sourced"
+}
+' "$1"

@@ -1,11 +1,13 @@
 # Stage 02: Publish the page
 
 <!-- ICM-TOOLS expect="(notion-create-pages|notion-update-page)" -->
-<!-- ICM-GATE tools="notion-create-pages|notion-update-page" run="test -s ../01-render/output/page.md" -->
+<!-- ICM-GATE tools="notion-create-pages|notion-update-page" run="tools/check-sources ../01-render/output/page.md" -->
 
-Create the new page, or update the existing one, with the rendered body. The gate guards a
-PRE-write invariant only: a rendered body must exist before any Notion write (you cannot
-publish nothing). A PreToolUse gate runs BEFORE the tool, so it cannot check a post-write
+Create the new page, or update the existing one, with the rendered body. The gate guards
+PRE-write invariants only: a rendered body must exist before any Notion write (you cannot
+publish nothing), and `tools/check-sources` must pass on it (every claim and named reference
+sourced; SKILL.md "Sources"). A gate failure prints each unsourced line: fix `page.md` in
+stage 01, never weaken the line to dodge the check. A PreToolUse gate runs BEFORE the tool, so it cannot check a post-write
 fetch-back receipt - do NOT gate the write on verification. The fetch-back is enforced in
 stage 03 and by `icm.sh audit`.
 
