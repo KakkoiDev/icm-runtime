@@ -1,0 +1,108 @@
+diff --git a/db/migrations/20260101000000_add_attachment_tables/migration.sql b/db/migrations/20260101000000_add_attachment_tables/migration.sql
+new file mode 100644
+--- /dev/null
++++ b/db/migrations/20260101000000_add_attachment_tables/migration.sql
+@@ -0,0 +1,26 @@
++-- CreateTable
++CREATE TABLE "Attachment" (
++    "id" TEXT NOT NULL,
++    "tenantId" TEXT NOT NULL DEFAULT tenant_id(),
++    "noteId" TEXT,
++    "s3Key" TEXT,
++    CONSTRAINT "Attachment_pkey" PRIMARY KEY ("id")
++);
++
++CREATE TABLE "AttachmentUse" (
++    "id" TEXT NOT NULL,
++    "attachmentId" TEXT NOT NULL,
++    CONSTRAINT "AttachmentUse_pkey" PRIMARY KEY ("id")
++);
++
++CREATE TABLE IF NOT EXISTS "Scoped" (
++    "id" TEXT NOT NULL
++);
++
++-- Row level security, same as Note.
++SELECT enable_tenant_rls('Attachment');
++CREATE POLICY scoped_policy ON "Scoped" USING (true);
++
++INSERT INTO "Attachment" ("id", "tenantId", "s3Key")
++SELECT "id", "tenantId", "s3Key" FROM "Note";
++INSERT INTO "Tag" ("id") VALUES ('t1');
+diff --git a/src/attachments/attachments.controller.ts b/src/attachments/attachments.controller.ts
+new file mode 100644
+--- /dev/null
++++ b/src/attachments/attachments.controller.ts
+@@ -0,0 +1,22 @@
++@RequireResource(Resource.NOTE)
++@Controller('attachments')
++export class AttachmentsController {
++  @Get('targets/:targetType/:targetId/attachments')
++  list(@Param('targetType') targetType: string, @Param('targetId') targetId: string) {
++    return this.service.list(targetType, targetId)
++  }
++
++  @Post(':attachmentId/uses')
++  use(@Param('attachmentId') attachmentId: string) {
++    return this.service.use(attachmentId)
++  }
++
++  @Post('import')
++  import() {
++    return this.service.importFromNotes()
++  }
++}
++
++router.delete('/attachments/:id', handler)
++router.get('/health', health)
++app.get(`/files/${prefix}`, files)
+diff --git a/src/attachments/attachments.service.ts b/src/attachments/attachments.service.ts
+--- a/src/attachments/attachments.service.ts
++++ b/src/attachments/attachments.service.ts
+@@ -10,3 +10,12 @@ export class AttachmentsService {
+   constructor(private readonly db: Db) {}
++
++  async importFromNotes() {
++    const rows = await this.db.note.findMany({ include: { tags: true } })
++    const { count } = await this.db.attachment.createMany({
++      data: rows.map(toAttachment),
++      skipDuplicates: true,
++    })
++    return count
++  }
+ }
+diff --git a/src/attachments/attachments.service.spec.ts b/src/attachments/attachments.service.spec.ts
+new file mode 100644
+--- /dev/null
++++ b/src/attachments/attachments.service.spec.ts
+@@ -0,0 +1,4 @@
++it('imports', async () => {
++  await db.note.createMany({ data: [note()] })
++  router.get('/fake/:id', h)
++})
+diff --git a/web/AttachmentsBlock.tsx b/web/AttachmentsBlock.tsx
+new file mode 100644
+--- /dev/null
++++ b/web/AttachmentsBlock.tsx
+@@ -0,0 +1,30 @@
++export function AttachmentsBlock({ targetId }: Props) {
++  const { data, isLoading } = useGetAttachmentsQuery(
++    { targetId },
++  )
++  const [createAttachment, { isLoading: isCreating }] =
++    useCreateAttachmentMutation()
++  const [useAttachment] = useUseAttachmentMutation()
++  const { mutate } = useMutation({ mutationFn: save })
++  const { data: tags } = useQuery({ queryKey: ['tags'] })
++  const { data: users } = useSWR('/users', fetcher)
++  const { data: notes, isError } = useGetNotesQuery({ targetId })
++  const { data: other, error } = useQuery({ queryKey: ['other'] })
++  const { data: a, status } = useGetAQuery()
++  const [trigger, { isPending }] = useSaveMutation()
++  const { mutate: m2, isPending: saving } = useMutation({ mutationFn: save })
++  const [fetchLazy] = useLazyGetThingQuery()
++  const { data: s } = useSuspenseQuery({ queryKey: ['s'] })
++  const query = useGetWholeQuery()
++  const [open, setOpen] = useState(false)
++  return null
++}

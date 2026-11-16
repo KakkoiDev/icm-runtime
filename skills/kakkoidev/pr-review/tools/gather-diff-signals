@@ -1,0 +1,221 @@
+#!/bin/sh
+# gather-diff-signals: find five code shapes on a diff's ADDED lines that a bot reviewer
+# raised on a private-repo PR (2026-11) and pr-review had no step for. Stage 04 step 18
+# judges each row; the script only finds them, so none is passed over unread.
+#
+#   gather-diff-signals <pr.diff> <out-dir> [repo-root]
+#     Writes <out-dir>/diff-signals.tsv: <class> <path> <new-line> <subject> <evidence>
+#     then `# TOTAL: <n> signals` or `# NONE: ...`.
+#     new-table-access   CREATE TABLE in an added .sql line. evidence: access=<the RLS calls,
+#                        policies, grants the diff applies to that table>|none, and
+#                        sibling=<Name>(<its access calls in repo-root .sql files>) for every
+#                        existing table a comment in the same migration names
+#                        (sibling=none-named when none; sibling=NOT-RUN(no repo root) without
+#                        a repo root).
+#     entity-route       a route decorator (@Get/@Post/.../@Controller) or a router/app/server
+#                        .get/.post/... whose path holds `:param`. evidence: route + params.
+#     bulk-copy          `INSERT INTO ... SELECT` in .sql, or an ORM bulk insert call
+#                        (createMany, insertMany, bulkCreate, bulkInsert, bulkWrite).
+#     query-no-error-state     `const {..} = use*Query(` / useQuery / useSWR whose
+#                              destructure reads none of isError, error, status, isSuccess.
+#     mutation-no-pending-state  `const [..] = use*Mutation(` / useMutation whose
+#                              destructure reads none of isLoading, isPending, isMutating,
+#                              status, isSuccess.
+#     Test, spec, story and e2e files are skipped for every class but new-table-access.
+#     Lazy and suspense queries, whole-object hook results and tuple-shaped query results
+#     are skipped: their error path is not a destructured field.
+#
+#   gather-diff-signals --check <diff-signals.tsv> <findings.md>
+#     Every row needs a findings line
+#       Signal: <class> <path>:<line> verdict=finding(F<n>)|clear(<reason>)
+#     and every finding(F<n>) needs an F<n> block. Exit 1 lists each violation.
+#
+# Blind to: isolation set outside migrations (an ORM middleware, a view), routes built from
+# variables, copies through a loop of single inserts, data hooks wrapped in a custom hook.
+# POSIX sh + awk. Read-only, no network.
+set -eu
+
+if [ "${1:-}" = "--check" ]; then
+    [ $# -eq 3 ] || { echo "usage: gather-diff-signals --check <diff-signals.tsv> <findings.md>" >&2; exit 2; }
+    awk -F'\t' '
+    FNR == NR {
+        if ($0 ~ /^#/ || NF < 5) next
+        n++; key[n] = $1 " " $2 ":" $3
+        next
+    }
+    {
+        if ($0 ~ /^[-* ]*Signal:/) { ns++; sl[ns] = $0 " "; next }
+        if (match($0, /^[#* ]*F[0-9]+/)) { id = substr($0, RSTART, RLENGTH); sub(/^[#* ]*/, "", id); block[id] = 1 }
+    }
+    END {
+        bad = 0
+        for (r = 1; r <= n; r++) {
+            hit = 0
+            for (s = 1; s <= ns; s++) if (index(sl[s], "Signal: " key[r] " ")) { hit = 1; break }
+            if (!hit) { print "UNACCOUNTED: " key[r] " has no Signal line"; bad++ }
+        }
+        for (s = 1; s <= ns; s++) {
+            if (match(sl[s], / verdict=finding\(F[0-9]+\) /)) {
+                f = substr(sl[s], RSTART + 17, RLENGTH - 19)
+                if (!(f in block)) { print "DANGLING: " f " has no " f " block: " sl[s]; bad++ }
+            } else if (sl[s] !~ / verdict=clear\([^)]+\)/) {
+                print "BAD-VERDICT: needs finding(F<n>) or clear(<reason>): " sl[s]; bad++
+            }
+        }
+        if (bad) exit 1
+        print "OK: " n " signals accounted, " ns " Signal lines"
+    }' "$2" "$3"
+    exit $?
+fi
+
+DIFF=${1:-}; OUT=${2:-}; ROOT=${3:-}
+[ -n "$DIFF" ] && [ -n "$OUT" ] || { echo "usage: gather-diff-signals <pr.diff> <out-dir> [repo-root]" >&2; exit 2; }
+[ -f "$DIFF" ] || { echo "gather-diff-signals: diff not found: $DIFF" >&2; exit 2; }
+[ -z "$ROOT" ] || [ -d "$ROOT" ] || { echo "gather-diff-signals: repo root not a directory: $ROOT" >&2; exit 2; }
+mkdir -p "$OUT"
+OUTFILE=$OUT/diff-signals.tsv
+RAW=$OUT/.diff-signals.raw
+SQLS=$OUT/.diff-signals.sql
+
+# access calls on table t in one line: SELECT fn('t'), (ENABLE|FORCE) ROW LEVEL SECURITY,
+# CREATE POLICY ... ON t, GRANT ... ON t. Shared by the diff pass and the sibling pass.
+ACCESS_AWK='
+function hasname(s, t) { return match(s, "(^|[^A-Za-z0-9_])\"?" t "\"?([^A-Za-z0-9_]|$)") }
+function access(s, t,   u, f) {
+    if (!hasname(s, t)) return ""
+    u = toupper(s)
+    if (match(s, /[Ss][Ee][Ll][Ee][Cc][Tt][ \t]+[A-Za-z_][A-Za-z0-9_.]*[ \t]*\([ \t]*["\047]/)) {
+        f = substr(s, RSTART, RLENGTH); sub(/^[Ss][Ee][Ll][Ee][Cc][Tt][ \t]+/, "", f); sub(/[ \t]*\(.*/, "", f); return f
+    }
+    if (index(u, "ENABLE ROW LEVEL SECURITY")) return "ENABLE ROW LEVEL SECURITY"
+    if (index(u, "FORCE ROW LEVEL SECURITY")) return "FORCE ROW LEVEL SECURITY"
+    if (index(u, "CREATE POLICY")) return "CREATE POLICY"
+    if (u ~ /^[ \t]*GRANT[ \t]/) return "GRANT"
+    return ""
+}
+function addto(list, a) { if (a == "" || index("," list ",", "," a ",")) return list; return list == "" ? a : list "," a }
+'
+
+awk "$ACCESS_AWK"'
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+function istest(p) { return p ~ /(\.spec\.|\.test\.|\.stories\.|\/__tests__\/|\/e2e\/|\/tests?\/|\/fixtures?\/)/ }
+function iscode(p) { return p ~ /\.(ts|tsx|js|jsx|mjs|cjs|vue)$/ }
+function emit(c, p, l, s, e) { printf "%s\t%s\t%d\t%s\t%s\n", c, p, l, s, e }
+function flushsql(   i, j, a, t, k, w, n, W, cand) {
+    if (!issql) return
+    for (i = 1; i <= nt; i++) {
+        t = TB[i]; a = ""
+        for (j = 1; j <= ns; j++) a = addto(a, access(SL[j], t))
+        cand = ""
+        for (j = 1; j <= ns; j++) {
+            if (SL[j] !~ /^[ \t]*--/) continue
+            n = split(SL[j], W, /[^A-Za-z0-9_]+/)
+            for (k = 1; k <= n; k++) {
+                w = W[k]
+                if (w !~ /^[A-Za-z_][A-Za-z0-9_]*$/ || (w in NEW)) continue
+                if (!index(" " cand " ", " " w " ")) cand = cand (cand == "" ? "" : " ") w
+            }
+        }
+        print "NT\t" file "\t" TL[i] "\t" t "\t" (a == "" ? "none" : a) "\t" cand
+    }
+    for (i = 1; i <= ns; i++) {
+        if (toupper(SL[i]) !~ /^[ \t]*INSERT[ \t]+INTO/) continue
+        for (j = i; j <= ns && j <= i + 8; j++) {
+            if (toupper(SL[j]) ~ /(^|[^A-Z])SELECT([^A-Z]|$)/) { emit("bulk-copy", file, SLN[i], trim(SL[i]), "sql=INSERT INTO ... SELECT"); break }
+            if (index(SL[j], ";")) break
+        }
+    }
+}
+function classify(buf, ln,   pre, name, pat) {
+    if (!match(buf, /=[ \t]*(await[ \t]+)?use[A-Za-z0-9_]*[ \t]*\(/)) return
+    pre = substr(buf, 1, RSTART - 1); name = substr(buf, RSTART, RLENGTH)
+    sub(/^=[ \t]*(await[ \t]+)?/, "", name); sub(/[ \t]*\($/, "", name)
+    pat = pre; sub(/^[ \t]*(const|let|var)[ \t]+/, "", pat); pat = trim(pat); gsub(/[ \t]+/, " ", pat)
+    if (name ~ /^useLazy/ || name ~ /Suspense/) return
+    if (name ~ /Mutation$/) {
+        if (pat !~ /isLoading|isPending|isMutating|status|isSuccess/)
+            emit("mutation-no-pending-state", file, ln, name, "hook=" name " reads=" pat)
+    } else if (name ~ /Query$/ || name ~ /^useSWR/) {
+        if (pat ~ /^\[/) return
+        if (pat !~ /isError|error|status|isSuccess/)
+            emit("query-no-error-state", file, ln, name, "hook=" name " reads=" pat)
+    }
+}
+function endstmt() { if (inst) classify(BUF, BLN); inst = 0 }
+BEGIN { issql = 0 }
+/^diff --git / { endstmt(); flushsql(); file = ""; issql = 0; nt = 0; ns = 0; delete NEW; delete TB; delete TL; delete SL; delete SLN; inhunk = 0; next }
+/^\+\+\+ / { file = substr($0, 5); sub(/^b\//, "", file); issql = (file ~ /\.sql$/); next }
+/^--- / && !inhunk { next }
+/^@@ / { endstmt(); inhunk = 1; h = $0; sub(/^@@ -[0-9,]+ \+/, "", h); sub(/[, ].*/, "", h); nl = h + 0; next }
+!inhunk { next }
+{
+    c = substr($0, 1, 1); body = substr($0, 2)
+    if (c == "-") next
+    if (c != "+") { endstmt(); nl++; next }
+    if (issql) {
+        SL[++ns] = body; SLN[ns] = nl
+        if (match(toupper(body), /CREATE[ \t]+TABLE[ \t]+(IF[ \t]+NOT[ \t]+EXISTS[ \t]+)?/)) {
+            t = substr(body, RSTART + RLENGTH); sub(/[ \t(].*/, "", t); gsub(/"/, "", t); sub(/^.*\./, "", t)
+            if (t != "") { TB[++nt] = t; TL[nt] = nl; NEW[t] = 1 }
+        }
+        nl++; next
+    }
+    if (iscode(file) && !istest(file)) {
+        if (inst) {
+            BUF = BUF " " body; nb++
+            if (BUF ~ /=[ \t]*(await[ \t]+)?use[A-Za-z0-9_]*[ \t]*\(/ || nb >= 6) endstmt()
+        } else if (body ~ /^[ \t]*(const|let|var)[ \t]+[{[]/) {
+            inst = 1; BUF = body; BLN = nl; nb = 1
+            if (BUF ~ /=[ \t]*(await[ \t]+)?use[A-Za-z0-9_]*[ \t]*\(/) endstmt()
+            else if (BUF ~ /[}\]][ \t]*=[ \t]*[^ \t=]/) inst = 0
+        }
+        if (match(body, /@(Get|Post|Put|Patch|Delete|All|Controller)\([ \t]*["\047`][^"\047`]*/) || match(body, /([Rr]outer|app|server)\.(get|post|put|patch|delete|all)\([ \t]*["\047`][^"\047`]*/)) {
+            r = substr(body, RSTART, RLENGTH); sub(/^[^"\047`]*["\047`]/, "", r)
+            p = ""; s = r
+            while (match(s, /:[A-Za-z_][A-Za-z0-9_]*/)) { p = p (p == "" ? "" : ",") substr(s, RSTART + 1, RLENGTH - 1); s = substr(s, RSTART + RLENGTH) }
+            if (p != "") emit("entity-route", file, nl, r, "route=" r " params=" p)
+        }
+        if (match(body, /\.(createMany|insertMany|bulkCreate|bulkInsert|bulkWrite)\(/))
+            emit("bulk-copy", file, nl, substr(body, RSTART + 1, RLENGTH - 1), "call=" substr(body, RSTART + 1, RLENGTH - 1))
+    }
+    nl++
+}
+END { endstmt(); flushsql() }' "$DIFF" > "$RAW"
+
+# sibling lookup: every comment word that names an existing table in repo-root .sql files
+if [ -n "$ROOT" ]; then
+    find "$ROOT" -name '*.sql' -not -path '*/node_modules/*' -not -path '*/.git/*' -print0 | xargs -0 cat > "$SQLS"
+else
+    : > "$SQLS"
+fi
+{
+    echo "# diff-signals.tsv - code shapes stage 04 step 18 judges (added lines only)"
+    echo "# class	path	new-line	subject	evidence"
+    awk -F'\t' '$1 != "NT"' "$RAW"
+    awk -F'\t' '$1 == "NT"' "$RAW" | while IFS='	' read -r _ path line table acc cands; do
+        if [ -z "$ROOT" ]; then
+            sib="sibling=NOT-RUN(no repo root)"
+        else
+            sib=""
+            for w in $cands; do
+                awk -v t="$w" 'match(toupper($0), /CREATE[ \t]+TABLE[ \t]+(IF[ \t]+NOT[ \t]+EXISTS[ \t]+)?/) {
+                    n = substr($0, RSTART + RLENGTH); sub(/[ \t(].*/, "", n); gsub(/"/, "", n); sub(/^.*\./, "", n)
+                    if (n == t) { f = 1; exit }
+                } END { exit !f }' "$SQLS" || continue
+                sacc=$(awk -v t="$w" "$ACCESS_AWK"'{ a = addto(a, access($0, t)) } END { print (a == "" ? "none" : a) }' "$SQLS")
+                sib="${sib:+$sib }sibling=$w($sacc)"
+            done
+            [ -n "$sib" ] || sib="sibling=none-named"
+        fi
+        printf 'new-table-access\t%s\t%s\t%s\taccess=%s %s\n' "$path" "$line" "$table" "$acc" "$sib"
+    done
+} > "$OUTFILE.tmp"
+n=$(grep -vc '^#' "$OUTFILE.tmp" || true)
+if [ "$n" -eq 0 ]; then
+    echo "# NONE: no new table, entity route, bulk copy or unread request state on added lines" >> "$OUTFILE.tmp"
+else
+    echo "# TOTAL: $n signals - stage 04 accounts for each with a Signal: line" >> "$OUTFILE.tmp"
+fi
+mv "$OUTFILE.tmp" "$OUTFILE"
+rm -f "$RAW" "$SQLS"
+echo "gather-diff-signals: $n signals -> $OUTFILE" >&2
